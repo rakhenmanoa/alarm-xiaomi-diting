@@ -22,7 +22,7 @@ Il n'y a donc pas d'extraction au premier démarrage.
 
 | # | Script | Où | Durée |
 |---|---|---|---|
-| 1 | `scripts/01-collecter-android.sh [--userdata]` | PC, téléphone sous Android + root temporaire | 10 min (+1 h avec `--userdata`) |
+| 1 | `scripts/01-collecter-android.sh [--fichiers] [--userdata]` | PC, téléphone sous Android + root temporaire | 10 min (+ selon les options) |
 | 2 | `scripts/10-construire-firmware.sh` | conteneur | 2 min |
 | 3 | `scripts/20-construire-paquets.sh` | conteneur | 1 à 3 h (émulation) |
 | 4 | `scripts/30-construire-rootfs.sh` | conteneur | 30 à 60 min |
@@ -56,7 +56,8 @@ Rien n'est écrit sur le téléphone : `fastboot boot` démarre une image une se
 6. Lancez :
    ```sh
    scripts/01-collecter-android.sh            # firmwares + toutes les partitions sauf userdata/super
-   scripts/01-collecter-android.sh --userdata # en plus, copie brute de vos données (chiffrées)
+   scripts/01-collecter-android.sh --fichiers # + vos photos, documents… (taille ≈ espace utilisé)
+   scripts/01-collecter-android.sh --userdata # + copie brute de userdata (retour à Android « tel quel »)
    ```
 7. Acceptez la demande root « Shell » dans Magisk.
 8. Redémarrez normalement : le téléphone revient exactement à son état d'origine.
