@@ -1,0 +1,49 @@
+# libcamera 0.7.0 + patches diting (capteurs S5K4H7/S5KHP1, mise au point du
+# software ISP, autofocus par contraste). Les patches visent la 0.7.0 ;
+# scripts/20-construire-paquets.sh ne remplace libcamera que si la version
+# d'ALARM est une 0.7.x (même soname).
+pkgname=libcamera-diting
+_tag=v0.7.0
+_ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
+pkgver=0.7.0
+pkgrel=1
+pkgdesc="libcamera avec la prise en charge des caméras arrière du Xiaomi diting"
+arch=(aarch64)
+url="https://libcamera.org"
+license=(LGPL-2.1-or-later GPL-2.0-or-later)
+depends=(gcc-libs glibc gnutls libyaml libelf libunwind libdrm systemd-libs
+         gstreamer gst-plugins-base-libs)
+makedepends=(git meson ninja python-jinja python-ply python-yaml pybind11 openssl)
+provides=(libcamera=${pkgver} libcamera-ipa=${pkgver} libcamera-tools=${pkgver} gst-plugin-libcamera=${pkgver})
+conflicts=(libcamera libcamera-ipa libcamera-tools gst-plugin-libcamera)
+# pas de strip : il invaliderait la signature des modules IPA
+options=(!strip !debug)
+source=("libcamera::git+https://github.com/libcamera-org/libcamera.git#tag=${_tag}"
+        "diting-ubuntu::git+https://github.com/royka1/diting-ubuntu.git#commit=${_ditingcommit}")
+sha256sums=('SKIP' 'SKIP')
+
+prepare() {
+  cd libcamera
+  local p
+  for p in "$srcdir"/diting-ubuntu/ubuntu-diting/packages/libcamera/*.patch; do
+    echo "patch : ${p##*/}"
+    patch -Np1 --no-backup-if-mismatch -s < "$p"
+  done
+}
+build() {
+  arch-meson libcamera build \
+    -Dpipelines=simple,uvcvideo \
+    -Dipas=simple \
+    -Dgstreamer=enabled \
+    -Dv4l2=enabled \
+    -Dcam=enabled \
+    -Dqcam=disabled \
+    -Dlc-compliance=disabled \
+    -Dtest=false \
+    -Ddocumentation=disabled \
+    -Dpycamera=disabled
+  meson compile -C build
+}
+package() {
+  meson install -C build --destdir "$pkgdir"
+}

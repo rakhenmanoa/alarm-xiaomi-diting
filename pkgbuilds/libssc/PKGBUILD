@@ -1,0 +1,21 @@
+# Client QMI pour le cœur capteurs (SSC) du SLPI
+pkgname=libssc
+_commit=54dd13e36d65c21263cf5b0f4a70c230a77b26bc
+pkgver=0.4.4.r${_commit:0:7}
+pkgrel=1
+pkgdesc="Bibliothèque client du Snapdragon Sensor Core"
+arch=(aarch64)
+url="https://codeberg.org/DylanVanAssche/libssc"
+license=(GPL-3.0-or-later)
+depends=(glib2 libqmi protobuf-c)
+makedepends=(git meson ninja protobuf python-protobuf)
+source=("libssc::git+https://codeberg.org/DylanVanAssche/libssc.git#commit=${_commit}")
+sha256sums=('SKIP')
+
+build() {
+  arch-meson libssc build
+  meson compile -C build
+}
+package() {
+  meson install -C build --destdir "$pkgdir"
+}

@@ -1,0 +1,23 @@
+# iio-sensor-proxy 3.9 avec la prise en charge SSC (rotation, proximité, lumière, boussole)
+pkgname=iio-sensor-proxy-diting
+_commit=0085ddf8ecb173a1c5fcf2344aa40e561125354f
+pkgver=3.9.r${_commit:0:7}
+pkgrel=1
+pkgdesc="Proxy D-Bus des capteurs IIO, avec SSC (Qualcomm)"
+arch=(aarch64)
+url="https://gitlab.freedesktop.org/hadess/iio-sensor-proxy"
+license=(GPL-3.0-or-later)
+depends=(glib2 libgudev polkit libssc systemd-libs)
+makedepends=(git meson ninja systemd)
+provides=(iio-sensor-proxy)
+conflicts=(iio-sensor-proxy)
+source=("iio-sensor-proxy::git+https://gitlab.freedesktop.org/hadess/iio-sensor-proxy.git#commit=${_commit}")
+sha256sums=('SKIP')
+
+build() {
+  arch-meson iio-sensor-proxy build -Dssc-support=enabled -Dgtk-tests=false
+  meson compile -C build
+}
+package() {
+  meson install -C build --destdir "$pkgdir"
+}

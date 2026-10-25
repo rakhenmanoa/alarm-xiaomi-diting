@@ -1,0 +1,18 @@
+# diting-callaudio remplace le service D-Bus de callaudiod (équivalent de la
+# dpkg-divert du paquet Ubuntu) : écouteur et haut-parleur partagent un PCM.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Path
+Target = usr/share/dbus-1/services/org.mobian_project.CallAudio.service
+
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = diting-device
+
+[Action]
+Description = Service CallAudio de diting…
+When = PostTransaction
+Exec = /usr/lib/diting/diting-callaudio-override

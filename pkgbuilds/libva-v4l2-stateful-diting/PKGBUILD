@@ -1,0 +1,36 @@
+# Pilote VA-API sur le décodeur vidéo iris (H.264, HEVC, VP9 matériels)
+pkgname=libva-v4l2-stateful-diting
+_commit=6447ebbdd0bbbb7dd29c25d10986470f087ac436
+_ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
+pkgver=r${_commit:0:7}
+pkgrel=1
+pkgdesc="Pilote VA-API pour décodeurs V4L2 stateful, patché pour l'iris du diting"
+arch=(aarch64)
+url="https://github.com/sky1-linux/libva-v4l2-stateful"
+license=(MIT)
+depends=(libva libdrm mesa)
+makedepends=(git meson ninja)
+source=("libva-v4l2-stateful::git+https://github.com/sky1-linux/libva-v4l2-stateful.git#commit=${_commit}"
+        "diting-ubuntu::git+https://github.com/royka1/diting-ubuntu.git#commit=${_ditingcommit}")
+sha256sums=('SKIP' 'SKIP')
+
+_pkg() { echo "$srcdir/diting-ubuntu/ubuntu-diting/packages/libva-v4l2-stateful"; }
+
+prepare() {
+  cd libva-v4l2-stateful
+  local p
+  for p in "$(_pkg)"/*.patch; do
+    patch -Np1 --no-backup-if-mismatch -s < "$p"
+  done
+}
+build() {
+  arch-meson libva-v4l2-stateful build
+  meson compile -C build
+}
+package() {
+  meson install -C build --destdir "$pkgdir"
+  # libva déduit le nom « msm » du pilote DRM : aucun LIBVA_DRIVER_NAME requis
+  ln -s v4l2_drv_video.so "$pkgdir/usr/lib/dri/msm_drv_video.so"
+  install -Dm644 "$(_pkg)/debian/firefox-vaapi.js" "$pkgdir/usr/lib/firefox/defaults/pref/diting-vaapi.js"
+  install -Dm644 libva-v4l2-stateful/LICENSE* -t "$pkgdir/usr/share/licenses/$pkgname/" 2>/dev/null || true
+}

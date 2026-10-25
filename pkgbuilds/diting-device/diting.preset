@@ -1,0 +1,16 @@
+# Xiaomi diting (alarm-diting)
+enable NetworkManager.service
+enable ModemManager.service
+enable bluetooth.service
+enable sddm.service
+enable sshd.service
+enable rmtfs.service
+enable tqftpserv.service
+disable systemd-networkd.service
+disable systemd-networkd-wait-online.service
+enable diting-usb-gadget.service
+enable diting-boot-successful.service
+enable diting-modem-setup.service
+enable diting-voice-call.service
+enable diting-speaker-protection.service
+enable diting-wifi-band-steer.service

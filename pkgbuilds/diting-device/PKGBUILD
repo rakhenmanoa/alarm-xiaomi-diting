@@ -1,0 +1,99 @@
+# Intégration matérielle du Xiaomi diting, reprise du paquet Debian
+# device-xiaomi-diting de royka1/diting-ubuntu et adaptée à Arch :
+# mkinitcpio au lieu d'initramfs-tools, hook pacman au lieu de dpkg-divert.
+
+pkgname=diting-device
+_ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
+_artcommit=b4c1510fe6686ab8053715a02c34bec875ca5c6c
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Intégration du Xiaomi 12T Pro (diting) : images de démarrage, audio, appels, modem, capteurs, USB"
+arch=(any)
+url="https://github.com/royka1/diting-ubuntu"
+license=(GPL-2.0-or-later)
+# mkbootimg (AOSP) : fourni par android-tools ou, à défaut, par mkbootimg-aosp
+depends=(bash python python-gobject alsa-utils iproute2 dtc mkinitcpio
+         libqmi qrtr rmtfs tqftpserv modemmanager networkmanager
+         hexagonrpc-diting fastrpc-diting)
+optdepends=('android-tools: mkbootimg (sinon mkbootimg-aosp)'
+            'firmware-xiaomi-diting: firmware signé extrait de votre téléphone'
+            'callaudiod: requis par plasma-dialer (le service D-Bus est remplacé)')
+makedepends=(git m4 alsa-utils)
+install=diting-device.install
+backup=(etc/diting/cmdline etc/mkinitcpio.conf.d/diting.conf)
+source=("diting-ubuntu::git+https://github.com/royka1/diting-ubuntu.git#commit=${_ditingcommit}"
+        "audioreach-topology::git+https://github.com/linux-msm/audioreach-topology.git#commit=${_artcommit}"
+        mkinitcpio-diting.conf
+        initcpio-post-diting
+        diting-install-bootimg
+        diting-callaudio.hook
+        diting-callaudio-override
+        diting.preset)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+_ud() { echo "$srcdir/diting-ubuntu/ubuntu-diting"; }
+
+build() {
+  local ud; ud="$(_ud)"
+  # topologie AudioReach des haut-parleurs (comme build-packages.sh)
+  m4 -I "$srcdir/audioreach-topology" -I "$ud/packages/audio-topology" \
+    "$ud/packages/audio-topology/XIAOMI-DITING.m4" > XIAOMI-DITING.conf
+  alsatplg -c XIAOMI-DITING.conf -o XIAOMI-DITING-tplg.bin
+
+  # sous-ensemble « disposition de démarrage » de diting.conf pour diting-mkbootimg
+  (
+    set +u
+    . "$ud/config/diting.conf"
+    echo "# Généré depuis ubuntu-diting/config/diting.conf (${_ditingcommit:0:12})"
+    for v in BOOT_HEADER_VERSION BOOT_PAGESIZE BOOT_OS_VERSION BOOT_OS_PATCH_LEVEL \
+      VENDOR_BOOT_BASE VENDOR_BOOT_KERNEL_OFFSET VENDOR_BOOT_RAMDISK_OFFSET \
+      VENDOR_BOOT_TAGS_OFFSET VENDOR_BOOT_DTB_OFFSET BOOT_PARTITION_SIZE \
+      VENDOR_BOOT_PARTITION_SIZE ABL_MSM_ID ABL_BOARD_ID ABL_SPLASH_ADDR \
+      BOOT_CMDLINE_BASE KERNEL_DTB; do
+      printf '%s="%s"\n' "$v" "${!v}"
+    done
+  ) > bootimg.conf
+}
+
+package() {
+  local ud pkg src dest
+  ud="$(_ud)"
+  pkg="$ud/packages/device-xiaomi-diting"
+
+  # fichiers du paquet Debian, sauf ce qui est propre à Debian/Ubuntu
+  while read -r src dest; do
+    [ -n "$src" ] || continue
+    case "$src" in
+      initramfs-tools/*|etc/zz-diting-bootimg|etc/*.pref|systemd/10-diting.preset|bootimg.conf) continue ;;
+    esac
+    case "$dest" in usr/sbin) dest=usr/bin ;; esac
+    if [ -d "$pkg/$src" ]; then
+      install -d "$pkgdir/$dest"
+      cp -a "$pkg/$src" "$pkgdir/$dest/"
+    else
+      local mode=644
+      [ -x "$pkg/$src" ] && mode=755
+      install -Dm"$mode" "$pkg/$src" "$pkgdir/$dest/${src##*/}"
+    fi
+  done < "$pkg/debian/install"
+
+  # NetworkManager ignore les connexions lisibles par d'autres
+  chmod 600 "$pkgdir"/usr/lib/NetworkManager/system-connections/*.nmconnection
+
+  install -Dm644 XIAOMI-DITING-tplg.bin "$pkgdir/usr/lib/firmware/qcom/sm8450/XIAOMI-DITING-tplg.bin"
+  install -Dm644 bootimg.conf "$pkgdir/etc/diting/bootimg.conf"
+  echo "root=PARTLABEL=userdata rw rootwait" | install -Dm644 /dev/stdin "$pkgdir/etc/diting/cmdline"
+
+  # Arch : mkinitcpio + hook post-génération → /boot/diting/*.img
+  install -Dm644 "$srcdir/mkinitcpio-diting.conf" "$pkgdir/etc/mkinitcpio.conf.d/diting.conf"
+  install -Dm755 "$srcdir/initcpio-post-diting" "$pkgdir/usr/lib/initcpio/post/diting-bootimg"
+  install -Dm755 "$srcdir/diting-install-bootimg" "$pkgdir/usr/bin/diting-install-bootimg"
+  install -Dm644 "$srcdir/diting-callaudio.hook" "$pkgdir/usr/share/libalpm/hooks/90-diting-callaudio.hook"
+  install -Dm755 "$srcdir/diting-callaudio-override" "$pkgdir/usr/lib/diting/diting-callaudio-override"
+  install -Dm644 "$srcdir/diting.preset" "$pkgdir/usr/lib/systemd/system-preset/10-diting.preset"
+
+  # le service D-Bus est géré par le hook (sinon conflit de fichier avec callaudiod)
+  rm -f "$pkgdir/usr/share/dbus-1/services/org.mobian_project.CallAudio.service"
+
+  install -Dm644 "$srcdir/diting-ubuntu/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -1,0 +1,4 @@
+post_install() {
+	echo ">>> boot.img/vendor_boot.img : mkinitcpio -P, puis diting-install-bootimg"
+}
+post_upgrade() { post_install; }

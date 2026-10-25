@@ -1,0 +1,29 @@
+# Bibliothèques FastRPC Qualcomm + adsprpcd (PD audio de l'ADSP pour les appels)
+pkgname=fastrpc-diting
+_commit=a56e9d4de3614a8d8f4b0e15ff561350c4b686e3
+pkgver=r${_commit:0:7}
+pkgrel=1
+pkgdesc="Espace utilisateur FastRPC Qualcomm (adsprpcd, cdsprpcd, libadsprpc)"
+arch=(aarch64)
+url="https://github.com/qualcomm/fastrpc"
+license=(BSD-3-Clause)
+depends=(glibc)
+makedepends=(git autoconf automake libtool)
+provides=(fastrpc)
+conflicts=(fastrpc)
+source=("fastrpc::git+https://github.com/qualcomm/fastrpc.git#commit=${_commit}")
+sha256sums=('SKIP')
+
+build() {
+  cd fastrpc
+  sh ./autogen.sh
+  ./configure --prefix=/usr --sbindir=/usr/bin --libdir=/usr/lib
+  make
+}
+package() {
+  cd fastrpc
+  make DESTDIR="$pkgdir" install
+  # les services diting lancent eux-mêmes adsprpcd (diting-audiopd.service)
+  rm -rf "$pkgdir"/usr/lib/systemd "$pkgdir"/lib "$pkgdir"/usr/include "$pkgdir"/usr/lib/pkgconfig
+  install -Dm644 LICENSE.txt "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

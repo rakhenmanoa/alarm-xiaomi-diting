@@ -1,0 +1,28 @@
+# Utilisé seulement si android-tools ne fournit pas la commande « mkbootimg »
+pkgname=mkbootimg-aosp
+pkgver=r0
+pkgrel=1
+pkgdesc="mkbootimg d'AOSP (images de démarrage Android, en-tête v4)"
+arch=(any)
+url="https://android.googlesource.com/platform/system/tools/mkbootimg"
+license=(Apache-2.0)
+depends=(python)
+makedepends=(git)
+provides=(mkbootimg)
+conflicts=(mkbootimg)
+source=("mkbootimg::git+https://android.googlesource.com/platform/system/tools/mkbootimg")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd mkbootimg
+  printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+package() {
+  cd mkbootimg
+  install -d "$pkgdir/usr/lib/mkbootimg" "$pkgdir/usr/bin"
+  cp -a mkbootimg.py unpack_bootimg.py repack_bootimg.py gki "$pkgdir/usr/lib/mkbootimg/" 2>/dev/null ||
+    cp -a mkbootimg.py unpack_bootimg.py "$pkgdir/usr/lib/mkbootimg/"
+  ln -s ../lib/mkbootimg/mkbootimg.py "$pkgdir/usr/bin/mkbootimg"
+  ln -s ../lib/mkbootimg/unpack_bootimg.py "$pkgdir/usr/bin/unpack_bootimg"
+  chmod 755 "$pkgdir"/usr/lib/mkbootimg/*.py
+}

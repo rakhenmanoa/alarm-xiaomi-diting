@@ -1,0 +1,22 @@
+#!/bin/bash
+# Écrit /boot/diting/boot.img et vendor_boot.img sur les partitions du slot
+# en cours (après une mise à jour du noyau). Demande confirmation.
+#   diting-install-bootimg [--yes]
+set -euo pipefail
+[ "$(id -u)" = 0 ] || { echo "à lancer en root" >&2; exit 1; }
+slot="$(/usr/lib/diting/diting-mark-boot-successful --print-slot)"
+case "$slot" in a|b) ;; *) echo "slot actif inconnu" >&2; exit 1 ;; esac
+for p in boot vendor_boot; do
+	[ -s "/boot/diting/$p.img" ] || { echo "/boot/diting/$p.img manquant (mkinitcpio -P)" >&2; exit 1; }
+	[ -e "/dev/disk/by-partlabel/${p}_$slot" ] || { echo "partition ${p}_$slot introuvable" >&2; exit 1; }
+done
+echo "Écriture de boot.img → boot_$slot et vendor_boot.img → vendor_boot_$slot"
+if [ "${1:-}" != --yes ]; then
+	read -r -p "Continuer ? [o/N] " r
+	case "$r" in o|O|y|Y) ;; *) echo "annulé"; exit 1 ;; esac
+fi
+for p in boot vendor_boot; do
+	dd if="/boot/diting/$p.img" of="/dev/disk/by-partlabel/${p}_$slot" bs=4M conv=fsync status=none
+done
+sync
+echo "fait ; redémarrez pour utiliser le nouveau noyau"

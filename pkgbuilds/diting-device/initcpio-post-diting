@@ -1,0 +1,11 @@
+#!/bin/bash
+# Hook post-génération de mkinitcpio : reconstruit boot.img et vendor_boot.img
+# (Android boot v4) dans /boot/diting/. Ne flashe jamais rien.
+#   $1 = noyau, $2 = initramfs généré
+kernel="$1" image="$2"
+[ "$image" = /boot/initramfs-linux-diting.img ] || exit 0
+[ -s "$kernel" ] || kernel=/boot/vmlinuz-linux-diting
+. /etc/diting/bootimg.conf
+exec /usr/bin/diting-mkbootimg --kernel "$kernel" --initrd "$image" \
+	--dtb "/boot/dtbs/$KERNEL_DTB" --out /boot/diting \
+	--cmdline "$(cat /etc/diting/cmdline 2>/dev/null)"

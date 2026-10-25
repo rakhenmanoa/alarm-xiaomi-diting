@@ -1,0 +1,29 @@
+# Firmware signé de VOTRE téléphone, extrait par scripts/01-collecter-android.sh
+# et assemblé par le constructeur de diting-ubuntu (scripts/10-construire-firmware.sh).
+# NE PAS REDISTRIBUER ce paquet ni l'image qui le contient.
+pkgname=firmware-xiaomi-diting
+pkgver=0.9.5
+pkgrel=1
+pkgdesc="Firmware propre à l'appareil du Xiaomi 12T Pro (local, non redistribuable)"
+arch=(any)
+url="https://github.com/royka1/diting-ubuntu"
+license=(LicenseRef-proprietary)
+options=(!strip !debug)
+source=("firmware-xiaomi-diting.deb")
+noextract=("firmware-xiaomi-diting.deb")
+sha256sums=('SKIP')
+
+package() {
+  cd "$pkgdir"
+  local data
+  data="$(bsdtar -tf "$srcdir/firmware-xiaomi-diting.deb" | grep -m1 '^data\.tar')"
+  bsdtar -xf "$srcdir/firmware-xiaomi-diting.deb" "$data"
+  bsdtar -xpf "$data"
+  rm -f "$data"
+  # documentation Debian → emplacement Arch
+  if [ -d usr/share/doc/firmware-xiaomi-diting ]; then
+    install -d "usr/share/licenses/$pkgname"
+    mv usr/share/doc/firmware-xiaomi-diting/* "usr/share/licenses/$pkgname/" 2>/dev/null || true
+    rm -rf usr/share/doc
+  fi
+}

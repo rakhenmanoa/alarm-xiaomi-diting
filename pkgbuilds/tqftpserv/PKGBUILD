@@ -1,0 +1,22 @@
+# Utilisé seulement si le dépôt ALARM ne fournit pas « tqftpserv »
+pkgname=tqftpserv
+_commit=0bf5b98c24229b0042554d99bb1509d813219f36
+pkgver=1.3.r2.g${_commit:0:7}
+pkgrel=1
+pkgdesc="Serveur TFTP sur QRTR (configuration du modem Qualcomm)"
+arch=(aarch64)
+url="https://github.com/linux-msm/tqftpserv"
+license=(BSD-3-Clause)
+depends=(qrtr zstd xz)
+makedepends=(git meson ninja)
+source=("tqftpserv::git+https://github.com/linux-msm/tqftpserv.git#commit=${_commit}")
+sha256sums=('SKIP')
+
+build() {
+  arch-meson tqftpserv build -Dsystemd-unit-prefix=/usr/lib/systemd/system
+  meson compile -C build
+}
+package() {
+  meson install -C build --destdir "$pkgdir"
+  install -Dm644 tqftpserv/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

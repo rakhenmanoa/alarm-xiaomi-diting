@@ -1,0 +1,92 @@
+# Noyau Linux stable + série de patches diting de royka1/diting-ubuntu
+# Construit en croisé sur un hôte x86_64 (scripts/20-construire-paquets.sh)
+# ou nativement sur aarch64.
+
+pkgbase=linux-diting
+pkgname=linux-diting
+_kver=7.2.10
+_ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
+pkgver=${_kver}
+pkgrel=1
+pkgdesc="Linux ${_kver} pour le Xiaomi 12T Pro / Redmi K50 Ultra (diting, SM8475)"
+arch=(aarch64)
+url="https://github.com/royka1/diting-ubuntu"
+license=(GPL-2.0-only)
+depends=(coreutils kmod mkinitcpio)
+optdepends=('diting-device: images boot/vendor_boot et intégration matérielle')
+makedepends=(bc flex bison git perl python cpio)
+options=(!strip !debug)
+backup=("etc/mkinitcpio.d/${pkgbase}.preset")
+source=("https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${_kver}.tar.xz"
+        "diting-ubuntu::git+https://github.com/royka1/diting-ubuntu.git#commit=${_ditingcommit}")
+sha256sums=('2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3'
+            'SKIP')
+
+_make() {
+  local cross=()
+  if [ "$(uname -m)" != aarch64 ]; then
+    cross=(CROSS_COMPILE="${DITING_CROSS_COMPILE:-aarch64-linux-gnu-}")
+  fi
+  make ARCH=arm64 "${cross[@]}" \
+    KBUILD_BUILD_USER=alarm KBUILD_BUILD_HOST=alarm-diting \
+    LOCALVERSION= "$@"
+}
+
+prepare() {
+  cd "linux-${_kver}"
+  local p
+  for p in "$srcdir"/diting-ubuntu/kernel/patches/*.patch; do
+    echo "patch : ${p##*/}"
+    patch -Np1 --no-backup-if-mismatch -s < "$p"
+  done
+
+  _make defconfig
+  scripts/kconfig/merge_config.sh -m .config "$srcdir/diting-ubuntu/kernel/config/diting.config"
+  _make olddefconfig
+
+  # chaque option du fragment doit survivre à olddefconfig (comme diting-ubuntu)
+  local line missing=0
+  while IFS= read -r line; do
+    case "$line" in
+      CONFIG_*=*|"# CONFIG_"*" is not set")
+        grep -qxF "$line" .config || { echo "option perdue : $line"; missing=1; } ;;
+    esac
+  done < "$srcdir/diting-ubuntu/kernel/config/diting.config"
+  [ "$missing" = 0 ]
+
+  _make -s kernelrelease > version
+  echo "version du noyau : $(<version)"
+}
+
+build() {
+  cd "linux-${_kver}"
+  _make -j"$(nproc)" Image modules dtbs
+}
+
+package() {
+  cd "linux-${_kver}"
+  local kernver modulesdir
+  kernver="$(<version)"
+  modulesdir="$pkgdir/usr/lib/modules/$kernver"
+
+  # Image arm64 non compressée (comme le noyau stock, voir BOOT_LAYOUT.md).
+  # Le hook pacman de mkinitcpio la copie dans /boot/vmlinuz-linux-diting.
+  install -Dm644 arch/arm64/boot/Image "$modulesdir/vmlinuz"
+  echo "$pkgbase" | install -Dm644 /dev/stdin "$modulesdir/pkgbase"
+
+  _make INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 DEPMOD=/doesnt/exist modules_install
+  rm -f "$modulesdir"/{build,source}
+
+  install -Dm644 arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dtb \
+    "$pkgdir/boot/dtbs/qcom/sm8475-xiaomi-diting.dtb"
+  install -Dm644 .config "$pkgdir/usr/share/doc/$pkgname/config"
+  install -Dm644 System.map "$modulesdir/System.map"
+
+  # une seule image (pas de « fallback » : vendor_boot ne fait que 96 Mio)
+  install -Dm644 /dev/stdin "$pkgdir/etc/mkinitcpio.d/${pkgbase}.preset" <<EOF
+# mkinitcpio preset pour ${pkgbase} (diting)
+ALL_kver="/boot/vmlinuz-${pkgbase}"
+PRESETS=('default')
+default_image="/boot/initramfs-${pkgbase}.img"
+EOF
+}

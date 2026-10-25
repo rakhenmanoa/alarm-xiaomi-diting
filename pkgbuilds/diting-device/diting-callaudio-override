@@ -1,0 +1,11 @@
+#!/bin/sh
+# N'agit que si callaudiod est installé (sinon pacman refuserait plus tard de
+# l'installer à cause d'un fichier non possédé).
+f=/usr/share/dbus-1/services/org.mobian_project.CallAudio.service
+[ -e "$f" ] || exit 0
+cat > "$f" <<S
+# remplacé par diting-device (hook pacman diting-callaudio.hook)
+[D-BUS Service]
+Name=org.mobian_project.CallAudio
+Exec=/usr/libexec/diting/diting-callaudio
+S

@@ -1,0 +1,9 @@
+# Environnement de construction (x86_64) : Arch Linux + outils croisés aarch64
+FROM docker.io/library/archlinux:latest
+RUN pacman -Syu --noconfirm --needed \
+      base-devel git arch-install-scripts aarch64-linux-gnu-gcc \
+      bc cpio perl python python-yaml dpkg alsa-utils m4 dtc \
+      e2fsprogs zstd libarchive curl sudo pacman-contrib \
+ && useradd -m builder \
+ && echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder \
+ && pacman -Scc --noconfirm

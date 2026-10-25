@@ -1,0 +1,35 @@
+# hexagonrpcd avec les méthodes du registre capteurs (patches diting-ubuntu)
+pkgname=hexagonrpc-diting
+_commit=da7a3742ab8d5273a281b70ee11f16fb2cb6a690
+_ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
+pkgver=0.5.r${_commit:0:7}
+pkgrel=1
+pkgdesc="Serveur de fichiers FastRPC pour les DSP Qualcomm (capteurs du diting)"
+arch=(aarch64)
+url="https://github.com/linux-msm/hexagonrpc"
+license=(GPL-3.0-or-later)
+depends=(glibc)
+makedepends=(git meson ninja)
+provides=(hexagonrpc hexagonrpcd)
+conflicts=(hexagonrpc hexagonrpcd)
+source=("hexagonrpc::git+https://github.com/linux-msm/hexagonrpc.git#commit=${_commit}"
+        "diting-ubuntu::git+https://github.com/royka1/diting-ubuntu.git#commit=${_ditingcommit}")
+sha256sums=('SKIP' 'SKIP')
+
+prepare() {
+  cd hexagonrpc
+  local p
+  for p in "$srcdir"/diting-ubuntu/ubuntu-diting/packages/hexagonrpc/patches/*.patch; do
+    patch -Np1 --no-backup-if-mismatch -s < "$p"
+  done
+}
+build() {
+  arch-meson hexagonrpc build
+  meson compile -C build
+}
+check() { meson test -C build; }
+package() {
+  meson install -C build --destdir "$pkgdir"
+  # diting-sensors.service remplace le service générique
+  rm -rf "$pkgdir"/usr/lib/systemd "$pkgdir"/usr/include "$pkgdir"/usr/lib/pkgconfig "$pkgdir"/usr/lib/libhexagonrpc.so
+}
