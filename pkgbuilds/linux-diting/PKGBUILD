@@ -7,7 +7,7 @@ pkgname=linux-diting
 _kver=7.2.10
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=${_kver}
-pkgrel=5
+pkgrel=6
 pkgdesc="Linux ${_kver} pour le Xiaomi 12T Pro / Redmi K50 Ultra (diting, SM8475)"
 arch=(aarch64)
 url="https://github.com/royka1/diting-ubuntu"
@@ -21,8 +21,10 @@ source=("https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${_kver}.tar.xz"
         "diting-ubuntu::git+https://github.com/royka1/diting-ubuntu.git#commit=${_ditingcommit}"
         0900-arm64-dts-diting-Goodix-GT9916-touchscreen.patch
         0901-drm-panel-xiaomi-l12-Add-the-42-02-0a-panel.patch
-        0902-drm-msm-dsi-DSC-slice-per-packet-option.patch)
+        0902-drm-msm-dsi-DSC-slice-per-packet-option.patch
+        0903-arm64-dts-diting-separate-TX-SoundWire-mic-ports.patch)
 sha256sums=('2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -51,6 +53,8 @@ prepare() {
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0901-drm-panel-xiaomi-l12-Add-the-42-02-0a-panel.patch"
   # option msm.dsc_slice_per_pkt (la 42 02 0a veut les 2 tranches DSC par paquet)
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0902-drm-msm-dsi-DSC-slice-per-packet-option.patch"
+  # micros : ports SoundWire TX séparés (sinon ADC1 et ADC4 se brouillent)
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0903-arm64-dts-diting-separate-TX-SoundWire-mic-ports.patch"
 
   _make defconfig
   scripts/kconfig/merge_config.sh -m .config "$srcdir/diting-ubuntu/kernel/config/diting.config"

@@ -76,6 +76,7 @@ compilé **sur le téléphone**, par SSH.
 - **`linux-firmware` d'ALARM sans `linux-firmware-qcom`** : il faut l'installer, sinon
   `a730_sqe.fw` manque et le GPU ne démarre pas.
 - **Audio** : le profil UCM d'origine ne passe pas avec PipeWire 1.6 (capture non routée → profil HiFi rejeté) et mélange gauche/droite sur les deux amplis ; corrigé par `pkgbuilds/diting-device/ucm-diting.py`.
+- **Micros** : bruit blanc même ADC coupés, car les ports 1 et 2 du codec WCD938x (ADC1 et ADC4) partageaient le port maître SoundWire 1 et se brouillaient. Le patch noyau `0903` (`qcom,tx-port-mapping = <1 2 3 4>`) les sépare et le micro du haut passe sur `SWR_MIC5` dans l'UCM. Pour tester sans recompiler : `fdtput -t u /boot/dtbs/qcom/sm8475-xiaomi-diting.dtb /soc@0/soundwire@33b0000/codec@0,3 qcom,tx-port-mapping 1 2 3 4`, puis `mkinitcpio -P` et `diting-install-bootimg`.
 - **libssc** demande `gobject-introspection`, et **libcamera** a besoin de `-Dwerror=false` avec
   GCC 16.
 - Après un échec de `makepkg`, relancez avec **`-C`** : les fichiers créés par les patches restent
