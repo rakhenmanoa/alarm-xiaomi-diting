@@ -4,22 +4,41 @@ Subject: [PATCH] arm64: dts: qcom: sm8475-xiaomi-diting: Separate the TX
 
 With codec ports 1 and 2 both on master port 1, ADC1 and ADC4 are sent
 in the same bit slot and the capture is white noise (seen on a unit
-with the Goodix touchscreen and the 42 02 0a panel). Map codec port 2
-to master port 2 (lane 2); ADC4 is then TX macro input SWR_MIC5.
+with the Goodix touchscreen and the 42 02 0a panel). Lane 2 gives no
+data on this board, so codec port 2 goes to master port 2 on lane 1 at
+offset 1. ADC4 then arrives on TX macro input SWR_MIC5, and the DAPM
+route has to follow, otherwise ADC4 and MIC BIAS4 stay off.
 ---
 --- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts	2026-10-26 14:53:06.970849931 +0300
-+++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts	2026-10-26 14:53:21.708080181 +0300
-@@ -1116,7 +1116,13 @@
++++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts	2026-10-26 15:14:14.314336701 +0300
+@@ -1057,7 +1057,7 @@
+ 	audio-routing = "AMIC1", "MIC BIAS1",
+ 			"AMIC5", "MIC BIAS4",
+ 			"TX SWR_INPUT0", "ADC1_OUTPUT",
+-			"TX SWR_INPUT1", "ADC4_OUTPUT";
++			"TX SWR_INPUT5", "ADC4_OUTPUT";
+ 
+ 	speaker-playback-dai-link {
+ 		link-name = "Speaker Playback";
+@@ -1111,12 +1111,21 @@
+ };
+ 
+ &swr2 {
++	/*
++	 * AMIC1 (ADC1, codec port 1) and AMIC5 (ADC4, codec port 2) are used
++	 * together. With both codec ports on master port 1 they are sent in
++	 * the same bit slot (white noise), and lane 2 does not reach the
++	 * codec on this board. Codec port 2 goes to master port 2, on lane 1
++	 * at offset 1 (the slot next to ADC1); ADC4 is then TX SWR_INPUT5.
++	 */
++	qcom,ports-offset1 = /bits/ 8 <0x00 0x01 0x01 0x01>;
++	qcom,ports-lane-control = /bits/ 8 <0x01 0x01 0x00 0x00>;
+ 	status = "okay";
+ 
  	wcd_tx: codec@0,3 {
  		compatible = "sdw20217010d00";
  		reg = <0 3>;
 -		qcom,tx-port-mapping = <1 1 2 3>;
-+		/*
-+		 * AMIC1 (ADC1, codec port 1) and AMIC5 (ADC4, codec port 2) are
-+		 * used together: with both codec ports on master port 1 they drive
-+		 * the same bit slot (white noise). Codec port 2 goes to master
-+		 * port 2 (lane 2), where ADC4 arrives as SWR_MIC5.
-+		 */
 +		qcom,tx-port-mapping = <1 2 3 4>;
  	};
  };
