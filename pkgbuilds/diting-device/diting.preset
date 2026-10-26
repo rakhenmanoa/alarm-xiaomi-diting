@@ -14,3 +14,4 @@ enable diting-modem-setup.service
 enable diting-voice-call.service
 enable diting-speaker-protection.service
 enable diting-wifi-band-steer.service
+enable diting-perf.service
