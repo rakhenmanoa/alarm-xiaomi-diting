@@ -42,6 +42,9 @@ prepare() {
 
   _make defconfig
   scripts/kconfig/merge_config.sh -m .config "$srcdir/diting-ubuntu/kernel/config/diting.config"
+  # Landlock (bac à sable de pacman 7), absent de la config diting-ubuntu
+  scripts/config --enable SECURITY_LANDLOCK
+  scripts/config --set-str LSM "landlock,lockdown,yama,integrity,apparmor,bpf"
   _make olddefconfig
 
   # chaque option du fragment doit survivre à olddefconfig (comme diting-ubuntu)

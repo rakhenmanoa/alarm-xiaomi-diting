@@ -177,8 +177,8 @@ alarm_remove_local_repo "$ROOT"
 mkdir -p "$ROOT/var/lib/diting-repo"
 cp -a "$REPO"/. "$ROOT/var/lib/diting-repo/"
 sed -i '/^\[core\]/i [diting]\nSigLevel = Optional TrustAll\nServer = file:///var/lib/diting-repo\n' "$ROOT/etc/pacman.conf"
-# sur le téléphone, le bac à sable de pacman fonctionne : le réactiver
-sed -i '/^DisableSandbox$/d' "$ROOT/etc/pacman.conf"
+# le compte du bac à sable de pacman 7 (alpm) doit exister sur le téléphone
+ch "$ROOT" systemd-sysusers
 
 # --- Images de démarrage ---------------------------------------------------------
 log "initramfs et images boot/vendor_boot"
