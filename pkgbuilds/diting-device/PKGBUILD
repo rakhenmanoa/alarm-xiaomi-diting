@@ -5,7 +5,7 @@
 pkgname=diting-device
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 _artcommit=b4c1510fe6686ab8053715a02c34bec875ca5c6c
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
 pkgdesc="Intégration du Xiaomi 12T Pro (diting) : images de démarrage, audio, appels, modem, capteurs, USB"
 arch=(any)
@@ -29,8 +29,9 @@ source=("diting-ubuntu::git+https://github.com/royka1/diting-ubuntu.git#commit=$
         diting-callaudio.hook
         diting-callaudio-override
         diting.preset
-        diting-dsc.conf)
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+        diting-dsc.conf
+        ucm-diting.py)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 _ud() { echo "$srcdir/diting-ubuntu/ubuntu-diting"; }
 
@@ -77,6 +78,10 @@ package() {
       install -Dm"$mode" "$pkg/$src" "$pkgdir/$dest/${src##*/}"
     fi
   done < "$pkg/debian/install"
+
+  # profil UCM : micro activé avec le profil, stéréo des deux amplis
+  python3 "$srcdir/ucm-diting.py" \
+    "$pkgdir/usr/share/alsa/ucm2/Qualcomm/sm8450/XIAOMI-DITING/HiFi.conf"
 
   # NetworkManager ignore les connexions lisibles par d'autres
   chmod 600 "$pkgdir"/usr/lib/NetworkManager/system-connections/*.nmconnection

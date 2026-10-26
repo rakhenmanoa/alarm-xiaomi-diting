@@ -75,6 +75,7 @@ compilé **sur le téléphone**, par SSH.
   7 démarrages.**
 - **`linux-firmware` d'ALARM sans `linux-firmware-qcom`** : il faut l'installer, sinon
   `a730_sqe.fw` manque et le GPU ne démarre pas.
+- **Audio** : le profil UCM d'origine ne passe pas avec PipeWire 1.6 (capture non routée → profil HiFi rejeté) et mélange gauche/droite sur les deux amplis ; corrigé par `pkgbuilds/diting-device/ucm-diting.py`.
 - **libssc** demande `gobject-introspection`, et **libcamera** a besoin de `-Dwerror=false` avec
   GCC 16.
 - Après un échec de `makepkg`, relancez avec **`-C`** : les fichiers créés par les patches restent
