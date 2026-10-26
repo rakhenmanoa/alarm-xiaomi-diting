@@ -107,6 +107,8 @@ alarm_prepare_root() {
 	fi
 	sed -i 's/^#\?ParallelDownloads.*/ParallelDownloads = 5/' "$r/etc/pacman.conf"
 	sed -i 's/^CheckSpace/#CheckSpace/' "$r/etc/pacman.conf"
+	# pacman 7 : le bac à sable (Landlock, utilisateur alpm) échoue sous qemu-user
+	grep -q '^DisableSandbox' "$r/etc/pacman.conf" || sed -i '/^\[options\]/a DisableSandbox' "$r/etc/pacman.conf"
 	ch "$r" pacman-key --init
 	ch "$r" pacman-key --populate archlinuxarm
 	ch "$r" pacman -Syu --noconfirm
