@@ -80,6 +80,7 @@ compilé **sur le téléphone**, par SSH.
 - **Modem** : ModemManager 1.24.2 plante toutes les 20 à 30 s (SIGSEGV dans `mm-netlink.c`), la 4G coupe ; recompiler avec le correctif officiel, voir `pkgbuilds/modemmanager-fix/`.
 - **Wi-Fi** : l'économie d'énergie fait couper le Wi-Fi ; diting-device la désactive (`60-diting-wifi-powersave.conf` pour NetworkManager).
 - **Fluidité** : le GPU et les petits cœurs montaient trop tard en fréquence (interface saccadée) ; `diting-perf.service` relève les minima (GPU 439 MHz, cœurs 1056 et 1113,6 MHz). À désactiver si la batterie compte plus que la fluidité.
+- **Tactile, coins du bas** : le firmware Goodix retient les touchers des coins du bas jusqu'au relâchement (`&123` et Entrée du clavier en retard). `diting-touch-cmd game 0` (commande Goodix 0x17, trame du pilote Xiaomi `goodix_9916`) les rend immédiats ; `diting-touch.service` et le hook de veille l'appliquent. Bus SPI du tactile à 12 MHz comme sous Android.
 - **PolicyKit** : sans règle, appels et USSD sont refusés à plasma-dialer ; diting-device installe `50-diting-modemmanager.rules` (groupe wheel).
 - **libssc** demande `gobject-introspection`, et **libcamera** a besoin de `-Dwerror=false` avec
   GCC 16.
