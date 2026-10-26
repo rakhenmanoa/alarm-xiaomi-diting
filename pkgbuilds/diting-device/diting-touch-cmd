@@ -4,11 +4,17 @@ goodix_berlin) par son fichier sysfs « registers », comme le pilote Xiaomi
 goodix_9916 (MiCode, bsp-diting-s-oss, goodix_brl_hw.c).
 
   diting-touch-cmd info                  adresses lues dans IC_INFO
-  diting-touch-cmd mode EDGE [ORIENT]    commande 0x18 (mode normal) :
+  diting-touch-cmd mode EDGE [ORIENT] [CLÉ=VAL ...]   commande 0x18 (normal)
+  diting-touch-cmd game EDGE [ORIENT] [CLÉ=VAL ...]   commande 0x17 (jeu)
         EDGE   = filtre de bord 0..3 (Android : 2)
         ORIENT = 0 portrait, 1 = 90°, 2 = 270° (défaut 0)
-  diting-touch-cmd game EDGE [ORIENT]    commande 0x17 (mode jeu, latence réduite)
+        réglages du pilote Xiaomi, 0..4, 0 par défaut comme Android :
+        seuil=N (Touch_UP_THRESHOLD, sensibilité au toucher)
+        tolerance=N (Touch_Tolerance, « latency » dans le pilote)
+        visee=N (Touch_Aim_Sensitivity) stabilite=N (Touch_Tap_Stability)
   diting-touch-cmd rate 480|240          fréquence de rapport (commande 0xC0)
+  diting-touch-cmd palm on|off           détection de paume (commande 0x70)
+  diting-touch-cmd charger on|off        mode chargeur, anti-bruit (0xAF)
   diting-touch-cmd raw CMD [D0 ...]      commande brute (valeurs hexa)
 
 Trame (struct goodix_ts_cmd) : state, ack, len = 4 + nombre de données, cmd,
@@ -26,6 +32,8 @@ IC_INFO_ADDR = 0x10070          # GOODIX_BERLIN_IC_INFO_ADDR_D (GT9916)
 CMD_GAME = 0x17
 CMD_NORMAL = 0x18
 CMD_RATE = 0xC0
+CMD_PALM = 0x70
+CMD_CHARGER = 0xAF
 ACK_OK = 0x80
 
 
@@ -79,14 +87,25 @@ def main():
         print(f"cmd_addr 0x{cmd_addr:x}  touch_data_addr 0x{touch_addr:x}")
         return
     if a[0] in ("mode", "game"):
-        edge = int(a[1])
-        orient = int(a[2]) if len(a) > 2 else 0
-        if not (0 <= edge <= 3 and 0 <= orient <= 2):
-            sys.exit("EDGE 0..3, ORIENT 0..2")
+        pos = [x for x in a[1:] if "=" not in x]
+        kv = dict(x.split("=", 1) for x in a[1:] if "=" in x)
+        edge = int(pos[0])
+        orient = int(pos[1]) if len(pos) > 1 else 0
+        f = {k: int(kv.pop(k, 0)) for k in ("seuil", "tolerance", "visee", "stabilite")}
+        if kv:
+            sys.exit(f"clé inconnue : {', '.join(kv)}")
+        if not (0 <= edge <= 3 and 0 <= orient <= 2 and all(0 <= v <= 4 for v in f.values())):
+            sys.exit("EDGE 0..3, ORIENT 0..2, réglages 0..4")
         cmd = CMD_NORMAL if a[0] == "mode" else CMD_GAME
-        data = [orient << 6, edge << 6]
+        # goodix_set_game_work() : data0 = orientation<<6 | tolerance<<3 | seuil
+        #                          data1 = bord<<6 | visee<<3 | stabilite
+        data = [orient << 6 | f["tolerance"] << 3 | f["seuil"],
+                edge << 6 | f["visee"] << 3 | f["stabilite"]]
     elif a[0] == "rate":
         cmd, data = CMD_RATE, [1 if a[1] == "480" else 0]
+    elif a[0] in ("palm", "charger"):
+        cmd = CMD_PALM if a[0] == "palm" else CMD_CHARGER
+        data = [1 if a[1] == "on" else 0]
     elif a[0] == "raw":
         cmd, data = int(a[1], 16), [int(x, 16) for x in a[2:]]
         if len(data) > 10:
