@@ -5,7 +5,7 @@
 pkgname=diting-device
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 _artcommit=b4c1510fe6686ab8053715a02c34bec875ca5c6c
-pkgver=0.1.4
+pkgver=0.1.5
 pkgrel=1
 pkgdesc="Intégration du Xiaomi 12T Pro (diting) : images de démarrage, audio, appels, modem, capteurs, USB"
 arch=(any)
@@ -30,8 +30,9 @@ source=("diting-ubuntu::git+https://github.com/royka1/diting-ubuntu.git#commit=$
         diting-callaudio-override
         diting.preset
         diting-dsc.conf
-        ucm-diting.py)
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+        ucm-diting.py
+        diting-wifi-powersave.conf)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 _ud() { echo "$srcdir/diting-ubuntu/ubuntu-diting"; }
 
@@ -98,6 +99,7 @@ package() {
   install -Dm755 "$srcdir/diting-callaudio-override" "$pkgdir/usr/lib/diting/diting-callaudio-override"
   install -Dm644 "$srcdir/diting.preset" "$pkgdir/usr/lib/systemd/system-preset/10-diting.preset"
   install -Dm644 "$srcdir/diting-dsc.conf" "$pkgdir/usr/lib/modprobe.d/diting-dsc.conf"
+  install -Dm644 "$srcdir/diting-wifi-powersave.conf" "$pkgdir/usr/lib/NetworkManager/conf.d/60-diting-wifi-powersave.conf"
 
   # le service D-Bus est géré par le hook (sinon conflit de fichier avec callaudiod)
   rm -f "$pkgdir/usr/share/dbus-1/services/org.mobian_project.CallAudio.service"
