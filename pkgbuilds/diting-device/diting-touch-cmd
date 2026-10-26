@@ -1,0 +1,90 @@
+#!/usr/bin/python3 -I
+"""Envoie une commande au contrôleur tactile Goodix GT9916 (pilote mainline
+goodix_berlin) par son fichier sysfs « registers », comme le pilote Xiaomi
+goodix_9916 (MiCode, bsp-diting-s-oss, goodix_brl_hw.c).
+
+  diting-touch-cmd info                  adresses lues dans IC_INFO
+  diting-touch-cmd mode EDGE [ORIENT]    commande 0x18 (mode normal) :
+        EDGE   = filtre de bord 0..3 (Android : 2)
+        ORIENT = 0 portrait, 1 = 90°, 2 = 270° (défaut 0)
+  diting-touch-cmd raw CMD D0 D1         commande brute (valeurs hexa)
+
+Trame (struct goodix_ts_cmd) : state, ack, len = 6, cmd, data0, data1,
+somme des octets 2..5 sur 16 bits LE ; écrite à cmd_addr, puis l'octet
+ack doit passer à 0x80. Mode normal : data0 = orientation << 6 ;
+data1 = filtre de bord << 6 (sensibilités à 0 comme Android par défaut).
+"""
+import glob
+import os
+import struct
+import sys
+import time
+
+IC_INFO_ADDR = 0x10070          # GOODIX_BERLIN_IC_INFO_ADDR_D (GT9916)
+CMD_NORMAL = 0x18
+ACK_OK = 0x80
+
+
+def regs():
+    p = glob.glob("/sys/bus/spi/drivers/goodix-berlin-spi/*/registers")
+    if not p:
+        sys.exit("fichier registers du goodix-berlin-spi introuvable")
+    return os.open(p[0], os.O_RDWR)
+
+
+def ic_info(fd):
+    length = struct.unpack("<H", os.pread(fd, 2, IC_INFO_ADDR))[0]
+    if not 64 <= length < 1024:
+        sys.exit(f"longueur IC_INFO invalide : {length}")
+    d = os.pread(fd, length, IC_INFO_ADDR)
+    if sum(d[:-2]) & 0xFFFF != struct.unpack("<H", d[-2:])[0]:
+        sys.exit("somme de contrôle IC_INFO invalide")
+    # comme goodix_berlin_parse_ic_info() : longueur, version (16 octets),
+    # features (10), 4 compteurs, puis 5 tableaux de le16 de taille variable
+    off = 2 + 16 + 10 + 4
+    for _ in range(5):
+        off += 1 + 2 * d[off]
+    cmd_addr = struct.unpack_from("<I", d, off)[0]
+    touch_addr = struct.unpack_from("<I", d, off + 44)[0]
+    return cmd_addr, touch_addr
+
+
+def send(fd, cmd_addr, cmd, d0, d1):
+    buf = bytearray(16)
+    buf[2], buf[3], buf[4], buf[5] = 6, cmd, d0, d1
+    struct.pack_into("<H", buf, 6, sum(buf[2:6]) & 0xFFFF)
+    for _ in range(6):
+        os.pwrite(fd, bytes(buf), cmd_addr)
+        for _ in range(6):
+            ack = os.pread(fd, 16, cmd_addr)[1]
+            if ack == ACK_OK:
+                return True
+            time.sleep(0.002 if ack in (0x00, 0x02) else 0.011)
+    return False
+
+
+def main():
+    a = sys.argv[1:]
+    if not a:
+        sys.exit(__doc__)
+    fd = regs()
+    cmd_addr, touch_addr = ic_info(fd)
+    if a[0] == "info":
+        print(f"cmd_addr 0x{cmd_addr:x}  touch_data_addr 0x{touch_addr:x}")
+        return
+    if a[0] == "mode":
+        edge = int(a[1])
+        orient = int(a[2]) if len(a) > 2 else 0
+        if not (0 <= edge <= 3 and 0 <= orient <= 2):
+            sys.exit("EDGE 0..3, ORIENT 0..2")
+        cmd, d0, d1 = CMD_NORMAL, orient << 6, edge << 6
+    elif a[0] == "raw":
+        cmd, d0, d1 = (int(x, 16) for x in a[1:4])
+    else:
+        sys.exit(__doc__)
+    ok = send(fd, cmd_addr, cmd, d0, d1)
+    print(f"commande 0x{cmd:02x} {d0:02x} {d1:02x} : {'acceptée' if ok else 'PAS d’accusé'}")
+    sys.exit(0 if ok else 1)
+
+
+main()
