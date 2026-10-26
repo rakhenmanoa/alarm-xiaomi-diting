@@ -7,7 +7,7 @@ pkgname=linux-diting
 _kver=7.2.10
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=${_kver}
-pkgrel=1
+pkgrel=2
 pkgdesc="Linux ${_kver} pour le Xiaomi 12T Pro / Redmi K50 Ultra (diting, SM8475)"
 arch=(aarch64)
 url="https://github.com/royka1/diting-ubuntu"
@@ -18,8 +18,10 @@ makedepends=(bc flex bison git perl python cpio)
 options=(!strip !debug)
 backup=("etc/mkinitcpio.d/${pkgbase}.preset")
 source=("https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${_kver}.tar.xz"
-        "diting-ubuntu::git+https://github.com/royka1/diting-ubuntu.git#commit=${_ditingcommit}")
+        "diting-ubuntu::git+https://github.com/royka1/diting-ubuntu.git#commit=${_ditingcommit}"
+        0900-arm64-dts-diting-Goodix-GT9916-touchscreen.patch)
 sha256sums=('2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3'
+            'SKIP'
             'SKIP')
 
 _make() {
@@ -39,12 +41,16 @@ prepare() {
     echo "patch : ${p##*/}"
     patch -Np1 --no-backup-if-mismatch -s < "$p"
   done
+  # variante d'écran tactile Goodix GT9916 (au lieu du ST FTM5)
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0900-arm64-dts-diting-Goodix-GT9916-touchscreen.patch"
 
   _make defconfig
   scripts/kconfig/merge_config.sh -m .config "$srcdir/diting-ubuntu/kernel/config/diting.config"
   # Landlock (bac à sable de pacman 7), absent de la config diting-ubuntu
   scripts/config --enable SECURITY_LANDLOCK
   scripts/config --set-str LSM "landlock,lockdown,yama,integrity,apparmor,bpf"
+  # pilote du tactile Goodix GT9916 (variante Goodix du diting)
+  scripts/config --module TOUCHSCREEN_GOODIX_BERLIN_SPI
   _make olddefconfig
 
   # chaque option du fragment doit survivre à olddefconfig (comme diting-ubuntu)
