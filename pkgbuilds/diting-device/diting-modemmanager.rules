@@ -1,0 +1,9 @@
+// Appels, SMS et USSD depuis la session (plasma-dialer, spacebar, mmcli) :
+// sans cette règle, PolicyKit refuse org.freedesktop.ModemManager1.Voice
+// et les autres actions de ModemManager.
+polkit.addRule(function(action, subject) {
+    if (action.id.indexOf("org.freedesktop.ModemManager1.") == 0 &&
+        subject.isInGroup("wheel")) {
+        return polkit.Result.YES;
+    }
+});
