@@ -2,3 +2,4 @@ work/
 out/
 device-data/
 files/authorized_keys
+__pycache__/
