@@ -41,7 +41,8 @@ build() {
     -Dlc-compliance=disabled \
     -Dtest=false \
     -Ddocumentation=disabled \
-    -Dpycamera=disabled
+    -Dpycamera=disabled \
+    -Dwerror=false
   meson compile -C build
 }
 package() {
