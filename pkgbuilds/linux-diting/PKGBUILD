@@ -7,7 +7,7 @@ pkgname=linux-diting
 _kver=7.2.10
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=${_kver}
-pkgrel=2
+pkgrel=3
 pkgdesc="Linux ${_kver} pour le Xiaomi 12T Pro / Redmi K50 Ultra (diting, SM8475)"
 arch=(aarch64)
 url="https://github.com/royka1/diting-ubuntu"
@@ -19,8 +19,10 @@ options=(!strip !debug)
 backup=("etc/mkinitcpio.d/${pkgbase}.preset")
 source=("https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${_kver}.tar.xz"
         "diting-ubuntu::git+https://github.com/royka1/diting-ubuntu.git#commit=${_ditingcommit}"
-        0900-arm64-dts-diting-Goodix-GT9916-touchscreen.patch)
+        0900-arm64-dts-diting-Goodix-GT9916-touchscreen.patch
+        0901-drm-panel-xiaomi-l12-Add-the-42-02-0a-panel.patch)
 sha256sums=('2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3'
+            'SKIP'
             'SKIP'
             'SKIP')
 
@@ -43,6 +45,8 @@ prepare() {
   done
   # variante d'écran tactile Goodix GT9916 (au lieu du ST FTM5)
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0900-arm64-dts-diting-Goodix-GT9916-touchscreen.patch"
+  # écran « 42 02 0a » (choisi d'après le panneau signalé par le bootloader)
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0901-drm-panel-xiaomi-l12-Add-the-42-02-0a-panel.patch"
 
   _make defconfig
   scripts/kconfig/merge_config.sh -m .config "$srcdir/diting-ubuntu/kernel/config/diting.config"
