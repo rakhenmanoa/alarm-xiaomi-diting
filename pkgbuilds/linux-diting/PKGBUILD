@@ -46,9 +46,9 @@ prepare() {
 
   _make defconfig
   scripts/kconfig/merge_config.sh -m .config "$srcdir/diting-ubuntu/kernel/config/diting.config"
-  # Landlock (bac à sable de pacman 7), absent de la config diting-ubuntu
+  # Landlock (bac à sable de pacman 7) : déjà dans CONFIG_LSM de diting-ubuntu,
+  # mais l'option elle-même n'y est pas activée
   scripts/config --enable SECURITY_LANDLOCK
-  scripts/config --set-str LSM "landlock,lockdown,yama,integrity,apparmor,bpf"
   # pilote du tactile Goodix GT9916 (variante Goodix du diting)
   scripts/config --module TOUCHSCREEN_GOODIX_BERLIN_SPI
   _make olddefconfig
