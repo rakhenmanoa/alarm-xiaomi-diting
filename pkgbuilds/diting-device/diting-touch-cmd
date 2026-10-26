@@ -22,6 +22,10 @@ goodix_9916 (MiCode, bsp-diting-s-oss, goodix_brl_hw.c).
         un goodix_cfg_group_*.bin de /vendor/firmware ou une sauvegarde de
         config-read. Refusé si le firmware visé (fw_pid/fw_vid) n'est pas
         celui du contrôleur. Sans --oui, vérifie seulement.
+        Pour restaurer, préférer la sauvegarde de config-read : sur le
+        diting, le firmware a ajusté un tableau de 39 octets (dalle FPC2L,
+        même config_id) ; le fichier d'Android remettrait les valeurs
+        génériques.
 
 Trame (struct goodix_ts_cmd) : state, ack, len = 4 + nombre de données, cmd,
 données, puis la somme des octets 2..len-1 sur 16 bits LE ; écrite à
