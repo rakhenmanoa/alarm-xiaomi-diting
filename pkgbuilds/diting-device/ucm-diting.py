@@ -7,7 +7,9 @@
 #    B : RX1 = droite). ASPRX1 sur les deux entrées des deux amplis donne
 #    gauche en haut, droite en bas ;
 #  - micro du haut (ADC4) sur SWR_MIC5 : avec le patch noyau 0903, le port 2
-#    du codec passe sur le port maître 2 (sinon bruit blanc).
+#    du codec passe sur le port maître 2 (sinon bruit blanc) ;
+#  - gain des décimateurs +24 dB (108 au lieu de 84) : voix vers -42 dBFS,
+#    pics vers -18 dBFS sans écrêtage (ADC 20 sature à -12 dBFS).
 import sys
 p = sys.argv[1]
 s = open(p).read()
@@ -21,4 +23,6 @@ assert a in verb and b in verb, "profil HiFi inattendu"
 if add_on[0] not in verb:
     s = s.replace(a, a + ''.join(add_on), 1).replace(b, b + ''.join(add_off), 1)
 s = s.replace("name='TX SMIC MUX1' SWR_MIC1", "name='TX SMIC MUX1' SWR_MIC5")
+for d in (0, 1):
+    s = s.replace(f"name='TX_DEC{d} Volume' 84", f"name='TX_DEC{d} Volume' 108")
 open(p, 'w').write(s)
