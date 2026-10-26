@@ -2,9 +2,11 @@ From: alarm-diting
 Subject: [PATCH] drm/panel: xiaomi-l12: Add the 42 02 0a panel variant
 
 The diting ships with a "36 02 0b" or a "42 02 0a" panel. Add the 42 02 0a
-init sequence, refresh rate commands and DSC 1.1 rate control from the
-vendor qcom,mdss_dsi_l12_42_02_0a_dsc_cmd node, selected from the panel the
-bootloader reports in the command line.
+init sequence and refresh rate commands from the vendor
+qcom,mdss_dsi_l12_42_02_0a_dsc_cmd node, selected from the panel the
+bootloader reports in the command line. The DSC rate control table and
+first_line_bpg_offset can be overridden with the dsc_rc / dsc_fl module
+parameters for bring-up.
 ---
 diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c
 --- a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c
@@ -32,7 +34,25 @@ diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm
  #include <linux/regulator/consumer.h>
  
  #include <video/mipi_display.h>
-@@ -31,8 +40,22 @@
+@@ -28,11 +37,41 @@
+ #include <drm/drm_panel.h>
+ #include <drm/drm_probe_helper.h>
+ 
++/*
++ * DSC rate control used by the host encoder; it must match the DDIC's
++ * decoder. Selectable at load time for bring-up of new panel variants
++ * (e.g. options panel_xiaomi_l12_36_02_0b dsc_rc=2 dsc_fl=12):
++ *   dsc_rc: -1 = panel default, 0 = standard DSC 1.1 table (msm default),
++ *            1 = Novatek-tuned table, 2 = Qualcomm DSC 1.1 SCR table
++ *   dsc_fl: first_line_bpg_offset, 0 = panel default
++ */
++static int dsc_rc = -1;
++module_param(dsc_rc, int, 0444);
++MODULE_PARM_DESC(dsc_rc, "DSC RC table: -1 auto, 0 DSC 1.1, 1 Novatek, 2 DSC 1.1 SCR");
++static int dsc_fl;
++module_param(dsc_fl, int, 0444);
++MODULE_PARM_DESC(dsc_fl, "DSC first_line_bpg_offset (0 = auto)");
++
  /* Vendor normal range; 2048..4095 is the high-brightness (HBM) range. */
  #define XIAOMI_L12_MAX_BRIGHTNESS	2047
  
@@ -46,7 +66,8 @@ diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm
 +	const struct xiaomi_l12_mode *modes;
 +	unsigned int num_modes;
 +	unsigned int reset_last_ms;
-+	bool nvt_rc;		/* Novatek-tuned RC parameters instead of DSC 1.1 */
++	int rc_table;		/* default dsc_rc */
++	u8 first_line_bpg_offset;
 +};
 +
  struct xiaomi_l12 {
@@ -55,7 +76,7 @@ diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm
  	struct mipi_dsi_device *dsi;
  	struct drm_dsc_config dsc;
  	struct drm_connector *connector;
-@@ -47,7 +70,10 @@
+@@ -47,7 +86,10 @@
  	return container_of_const(panel, struct xiaomi_l12, panel);
  }
  
@@ -67,7 +88,7 @@ diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm
  static void xiaomi_l12_reset(struct xiaomi_l12 *ctx)
  {
  	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
-@@ -55,7 +81,7 @@
+@@ -55,7 +97,7 @@
  	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
  	usleep_range(1000, 2000);
  	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
@@ -76,7 +97,7 @@ diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm
  }
  
  /* Vendor dsi_panel_pwr_supply_L12: vddio, vddd, vci with these delays */
-@@ -98,7 +124,7 @@
+@@ -98,7 +140,7 @@
  	usleep_range(10000, 11000);
  }
  
@@ -85,7 +106,7 @@ diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm
  {
  	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
  
-@@ -301,11 +327,98 @@
+@@ -301,11 +343,98 @@
  	return dsi_ctx.accum_err;
  }
  
@@ -184,7 +205,7 @@ diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm
  	mipi_dsi_dcs_enter_sleep_mode_multi(&dsi_ctx);
  	mipi_dsi_msleep(&dsi_ctx, 100);
  
-@@ -320,11 +433,13 @@
+@@ -320,11 +449,13 @@
   * the DSC-compressed width (1220 * 8 / 30 = 326 pixels per line), so the
   * front porch of each mode is sized to land at that rate.
   */
@@ -199,7 +220,7 @@ diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm
  	.clock = (1220 + XIAOMI_L12_HFP(fps) + 16 + 86) *			\
  		 XIAOMI_L12_VTOTAL * (fps) / 1000,				\
  	.hdisplay = 1220,							\
-@@ -332,8 +447,8 @@
+@@ -332,8 +463,8 @@
  	.hsync_end = 1220 + XIAOMI_L12_HFP(fps) + 16,				\
  	.htotal = 1220 + XIAOMI_L12_HFP(fps) + 16 + 86,				\
  	.vdisplay = 2712,							\
@@ -210,7 +231,7 @@ diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm
  	.vtotal = XIAOMI_L12_VTOTAL,						\
  	.width_mm = 70,								\
  	.height_mm = 155,							\
-@@ -348,9 +463,14 @@
+@@ -348,9 +479,14 @@
  	u8 e2_12[3];		/* 0xe2 at offset 0x12 */
  	u8 ea_0[9];		/* 0xea */
  	u8 ea_17[4];		/* 0xea at offset 0x17 */
@@ -226,7 +247,7 @@ diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm
  	{
  		.mode = XIAOMI_L12_MODE(60, DRM_MODE_TYPE_PREFERRED),
  		.rate = { 0x2f, 0x00 },
-@@ -375,26 +495,42 @@
+@@ -375,26 +511,42 @@
  	},
  };
  
@@ -276,7 +297,7 @@ diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm
  {
  	struct mipi_dsi_multi_context dsi_ctx_ = { .dsi = ctx->dsi };
  	struct mipi_dsi_multi_context *dsi_ctx = &dsi_ctx_;
-@@ -414,6 +550,29 @@
+@@ -414,6 +566,29 @@
  	return dsi_ctx->accum_err;
  }
  
@@ -306,7 +327,7 @@ diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm
  static int xiaomi_l12_prepare(struct drm_panel *panel)
  {
  	struct xiaomi_l12 *ctx = to_xiaomi_l12(panel);
-@@ -430,7 +589,7 @@
+@@ -430,7 +605,7 @@
  
  	xiaomi_l12_reset(ctx);
  
@@ -315,7 +336,7 @@ diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm
  	if (ret < 0) {
  		dev_err(dev, "failed to initialize panel: %d\n", ret);
  		goto err_off;
-@@ -452,8 +611,8 @@
+@@ -452,8 +627,8 @@
  
  	/* on() sets up 60 Hz; switch like the vendor driver does at runtime */
  	mode = xiaomi_l12_current_mode(ctx);
@@ -326,7 +347,7 @@ diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm
  		if (ret < 0) {
  			dev_err(dev, "failed to set refresh rate: %d\n", ret);
  			goto err_off;
-@@ -496,18 +655,18 @@
+@@ -496,18 +671,18 @@
  
  	ctx->connector = connector;
  
@@ -350,7 +371,60 @@ diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm
  }
  
  static const struct drm_panel_funcs xiaomi_l12_panel_funcs = {
-@@ -584,6 +743,49 @@
+@@ -555,19 +730,39 @@
+  * vendor 0x91 command is derived from the same values. The host encoder has
+  * to use them as well.
+  */
+-static void xiaomi_l12_set_rc_params(struct drm_dsc_config *dsc)
++static void xiaomi_l12_set_rc_params(struct drm_dsc_config *dsc, int table,
++				     u8 first_line_bpg_offset)
+ {
+-	static const u8 min_qp[DSC_NUM_BUF_RANGES] = {
++	/* Novatek-tuned (vendor "nvt") */
++	static const u8 nvt_min_qp[DSC_NUM_BUF_RANGES] = {
+ 		0, 4, 5, 5, 7, 7, 7, 7, 7, 8, 9, 9, 9, 12, 16
+ 	};
+-	static const u8 max_qp[DSC_NUM_BUF_RANGES] = {
++	static const u8 nvt_max_qp[DSC_NUM_BUF_RANGES] = {
+ 		8, 8, 9, 10, 11, 11, 11, 12, 13, 14, 14, 15, 15, 16, 17
+ 	};
+-	static const s8 bpg_offset[DSC_NUM_BUF_RANGES] = {
++	static const s8 nvt_bpg[DSC_NUM_BUF_RANGES] = {
+ 		2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -10, -12, -12, -12
+ 	};
++	/* Qualcomm sde_dsc_helper.c, DSC v1.1 SCR, 10 bpc / 8 bpp */
++	static const u8 scr_min_qp[DSC_NUM_BUF_RANGES] = {
++		0, 4, 5, 5, 7, 7, 7, 7, 7, 7, 9, 9, 9, 13, 16
++	};
++	static const u8 scr_max_qp[DSC_NUM_BUF_RANGES] = {
++		8, 8, 9, 10, 11, 11, 11, 12, 13, 14, 14, 15, 15, 16, 17
++	};
++	static const s8 scr_bpg[DSC_NUM_BUF_RANGES] = {
++		2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12
++	};
++	const u8 *min_qp, *max_qp;
++	const s8 *bpg_offset;
+ 	int i;
+ 
++	if (table == 1) {
++		min_qp = nvt_min_qp; max_qp = nvt_max_qp; bpg_offset = nvt_bpg;
++	} else {
++		min_qp = scr_min_qp; max_qp = scr_max_qp; bpg_offset = scr_bpg;
++	}
++
+ 	for (i = 0; i < DSC_NUM_BUF_RANGES; i++) {
+ 		dsc->rc_range_params[i].range_min_qp = min_qp[i];
+ 		dsc->rc_range_params[i].range_max_qp = max_qp[i];
+@@ -575,7 +770,7 @@
+ 		dsc->rc_range_params[i].range_bpg_offset =
+ 			bpg_offset[i] & DSC_RANGE_BPG_OFFSET_MASK;
+ 	}
+-	dsc->first_line_bpg_offset = 13;
++	dsc->first_line_bpg_offset = first_line_bpg_offset;
+ 	dsc->initial_offset = 6144;
+ 	dsc->initial_xmit_delay = 512;
+ 	dsc->flatness_min_qp = 7;
+@@ -584,6 +779,55 @@
  	dsc->rc_quant_incr_limit1 = 15;
  }
  
@@ -361,7 +435,8 @@ diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm
 +	.modes = xiaomi_l12_36_modes,
 +	.num_modes = ARRAY_SIZE(xiaomi_l12_36_modes),
 +	.reset_last_ms = 20,
-+	.nvt_rc = true,
++	.rc_table = 1,
++	.first_line_bpg_offset = 13,
 +};
 +
 +static const struct xiaomi_l12_desc xiaomi_l12_42_02_0a_desc = {
@@ -371,8 +446,13 @@ diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm
 +	.modes = xiaomi_l12_42_modes,
 +	.num_modes = ARRAY_SIZE(xiaomi_l12_42_modes),
 +	.reset_last_ms = 11,
-+	/* vendor qcom,mdss-dsc-scr-version 0: standard DSC 1.1 RC table */
-+	.nvt_rc = false,
++	/*
++	 * Vendor 0x91 command: first_line_bpg_offset 12. The standard DSC 1.1
++	 * table (msm default) gives corrupted output on this DDIC; it is
++	 * Novatek-based like the 36 02 0b.
++	 */
++	.rc_table = 1,
++	.first_line_bpg_offset = 12,
 +};
 +
 +/* The bootloader passes msm_drm.dsi_display0=qcom,mdss_dsi_<panel>... */
@@ -400,7 +480,7 @@ diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm
  static int xiaomi_l12_probe(struct mipi_dsi_device *dsi)
  {
  	struct device *dev = &dsi->dev;
-@@ -611,6 +813,8 @@
+@@ -611,6 +855,8 @@
  		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
  				     "failed to get reset-gpios\n");
  
@@ -409,13 +489,21 @@ diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm
  	ctx->dsi = dsi;
  	mipi_dsi_set_drvdata(dsi, ctx);
  
-@@ -640,13 +844,15 @@
+@@ -640,13 +886,23 @@
  	ctx->dsc.bits_per_component = 10;
  	ctx->dsc.bits_per_pixel = 8 << 4; /* 4 fractional bits */
  	ctx->dsc.block_pred_enable = true;
 -	xiaomi_l12_set_rc_params(&ctx->dsc);
-+	if (ctx->desc->nvt_rc)
-+		xiaomi_l12_set_rc_params(&ctx->dsc);
++	{
++		int table = dsc_rc >= 0 ? dsc_rc : ctx->desc->rc_table;
++		u8 fl = dsc_fl > 0 ? dsc_fl : ctx->desc->first_line_bpg_offset;
++
++		/* table 0: leave rc_range_params empty, msm uses DSC 1.1 */
++		if (table > 0)
++			xiaomi_l12_set_rc_params(&ctx->dsc, table, fl);
++		dev_info(dev, "DSC rate control: table %d, first_line_bpg_offset %u\n",
++			 table, table > 0 ? fl : 12);
++	}
  
  	return devm_mipi_dsi_attach(dev, dsi);
  }
@@ -427,7 +515,7 @@ diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm
  	{ }
  };
  MODULE_DEVICE_TABLE(of, xiaomi_l12_of_match);
-@@ -660,5 +866,5 @@
+@@ -660,5 +916,5 @@
  };
  module_mipi_dsi_driver(xiaomi_l12_driver);
  
