@@ -15,8 +15,70 @@ Ce dépôt le réutilise tel quel, épinglé au commit `c68ff47`, et remplace la
 L'image produite contient **déjà le firmware de votre téléphone**, extrait avant d'effacer Android.
 Il n'y a donc pas d'extraction au premier démarrage.
 
-> Port expérimental, construit à partir d'un projet testé sur un seul exemplaire (22081212UG, EEA,
-> HyperOS OS3.0.5.0). Les paquets Arch n'ont pas encore été essayés sur un vrai téléphone.
+> Port expérimental. **Testé le 2026-10-26 sur un 12T Pro avec dalle « 42 02 0a » et tactile
+> Goodix** (variante absente de diting-ubuntu) : démarrage, écran 60 Hz, tactile, GPU, Wi-Fi,
+> modem 4G (Airtel), DSP (audio, capteurs, calcul), SSH par USB et Wi-Fi, Plasma Mobile.
+> Les scripts tout-en-un (étapes 2 à 4 du conteneur) n'ont pas été exécutés de bout en bout :
+> la méthode réellement suivie est décrite dans « Méthode testée » ci-dessous.
+
+## Variantes matérielles du diting
+
+Xiaomi monte deux écrans et deux contrôleurs tactiles différents selon les lots. Le bootloader
+indique la dalle dans la ligne de commande du noyau :
+
+```sh
+tr ' ' '\n' < /proc/cmdline | grep dsi_display
+```
+
+| Élément | Variante A (diting-ubuntu) | Variante B (ce dépôt) |
+|---|---|---|
+| Dalle | `mdss_dsi_l12_36_02_0b` | `mdss_dsi_l12_42_02_0a` |
+| Tactile | ST FTM5 (`st,ftm5-spi`) | Goodix GT9916 (`goodix,gt9916`, pilote `goodix_berlin_spi`) |
+
+- Le pilote de dalle (patch `0901`) gère les deux dalles et choisit seul d'après le bootloader.
+  Pour la 42 02 0a : table DSC Novatek, `first_line_bpg_offset` 12, et **deux tranches DSC par
+  paquet DSI** (`msm.dsc_slice_per_pkt=2`, patch `0902`, réglé par `diting-device`). Sans ce
+  dernier réglage, la moitié gauche de l'écran est brouillée.
+- Le patch `0900` **remplace** le tactile ST par le Goodix dans le DTB. Sur une unité à tactile ST,
+  retirez ce patch du PKGBUILD de `linux-diting`.
+- Réglages DSC modifiables sans recompiler, pour une nouvelle variante :
+  `options panel_xiaomi_l12_36_02_0b dsc_rc=… dsc_fl=…` dans `/etc/modprobe.d/` (voir le patch `0901`).
+
+## Méthode testée
+
+Plus rapide que l'émulation complète : une image minimale construite sur le PC, puis le reste
+compilé **sur le téléphone**, par SSH.
+
+1. Collecte Android (étape 1 ci-dessous). Le firmware est assemblé sur le PC avec
+   `tools/firmware/diting-build-firmware` de diting-ubuntu, puis reconditionné par
+   `pkgbuilds/firmware-xiaomi-diting`.
+2. Noyau compilé en croisé sur le PC :
+   `makepkg -fC --config files/makepkg-cross-aarch64.conf --nodeps --skippgpcheck`.
+3. `diting-device` construit sur le PC (`makepkg -d`, paquet `any`).
+4. Rootfs ALARM minimal en chroot qemu : `linux-diting`, `firmware-xiaomi-diting`,
+   `linux-firmware-qcom` et `-atheros`, `android-tools` (mkbootimg), NetworkManager, openssh,
+   `diting-device` installé avec `-Sdd`. Puis `mkinitcpio -P`, qui produit `/boot/diting/*.img`,
+   et une image ext4 `diting-root` créée avec `mkfs.ext4 -d`.
+5. Flash de `boot_a`, `vendor_boot_a` et `userdata`, effacement de `dtbo_a`.
+6. Sur le téléphone, par SSH (USB : `172.16.42.1`) : `makepkg -si` de `tqftpserv`,
+   `hexagonrpc-diting`, `fastrpc-diting`, `libssc`, `iio-sensor-proxy-diting`,
+   `libva-v4l2-stateful-diting` et `libcamera-diting`. Ensuite, Plasma Mobile depuis ALARM,
+   puis `plasma-dialer` et `mobile-config-firefox` depuis l'AUR (`yay-bin`).
+
+### Pièges rencontrés
+
+- **pacman 7 sous qemu-user ou sans Landlock** : « restricting filesystem access failed ». Ajoutez
+  `DisableSandbox` dans `[options]` de `pacman.conf`. Le noyau `-5` active Landlock.
+- **`diting-boot-successful` en échec** (« bad partition entry CRC ») : sur cette unité, la table
+  GPT de secours de `sde` n'avait pas été mise à jour correctement par le bootloader. Il a fallu la
+  reconstruire depuis la table principale. **Sans ce service, le slot devient inutilisable après
+  7 démarrages.**
+- **`linux-firmware` d'ALARM sans `linux-firmware-qcom`** : il faut l'installer, sinon
+  `a730_sqe.fw` manque et le GPU ne démarre pas.
+- **libssc** demande `gobject-introspection`, et **libcamera** a besoin de `-Dwerror=false` avec
+  GCC 16.
+- Après un échec de `makepkg`, relancez avec **`-C`** : les fichiers créés par les patches restent
+  sinon dans `src/`.
 
 ## Étapes
 
@@ -142,7 +204,9 @@ Spécifique à cette version Arch :
 
 - le correctif ModemManager (crash après une sortie de veille) n'est pas inclus : systemd relance le
   service ;
-- le patch phoc (choix de fréquence d'affichage) est inutile, KWin gère les modes lui-même.
+- le patch phoc (choix de fréquence d'affichage) est inutile, KWin gère les modes lui-même ;
+- dalle 42 02 0a : seul le 60 Hz a été vérifié ; les commandes 90 et 120 Hz viennent du DT
+  vendeur mais n'ont pas été testées.
 
 ## Licences
 
