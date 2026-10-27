@@ -1,4 +1,6 @@
-# Tactile Goodix GT9916 : le pilote mainline n'envoie jamais au contrôleur
+# Tactile Goodix GT9916 : retenue des coins du bas coupée (module 0x64 de
+# la configuration, trouvé par essais le 2026-10-27, perdu à chaque mise sous
+# tension du contrôleur), puis réglage d'Android. Le pilote mainline n'envoie jamais au contrôleur
 # le réglage d'Android (commande 0x18, mode normal, filtre de bord 2) ; le
 # firmware garde alors un réglage de démarrage qui retarde les touchers des
 # coins du bas (&123 et Entrée du clavier). Choisi sur le téléphone le
@@ -6,12 +8,12 @@
 # normal a été préféré). Réappliqué après chaque veille par
 # /usr/lib/systemd/system-sleep/diting-touch.
 [Unit]
-Description=Diting : réglage tactile d'Android (filtre de bord)
+Description=Diting : tactile sans retenue des coins, réglage d'Android
 After=systemd-modules-load.service
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'for i in $(seq 30); do ls /sys/bus/spi/drivers/goodix-berlin-spi/*/registers >/dev/null 2>&1 && break; sleep 1; done; sleep 2; /usr/bin/diting-touch-cmd mode 2'
+ExecStart=/bin/sh -c 'for i in $(seq 30); do ls /sys/bus/spi/drivers/goodix-berlin-spi/*/registers >/dev/null 2>&1 && break; sleep 1; done; sleep 2; /usr/bin/diting-touch-cmd grip off; /usr/bin/diting-touch-cmd mode 2'
 
 [Install]
 WantedBy=multi-user.target

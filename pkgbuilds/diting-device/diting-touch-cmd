@@ -31,6 +31,9 @@ goodix_9916 (MiCode, bsp-diting-s-oss, goodix_brl_hw.c).
         le début de la configuration, OCTETS en hexa, ex. 1316=0002) et
         recalcule les sommes de contrôle ; n'écrit rien dans le contrôleur.
   diting-touch-cmd config-dump FICHIER   modules de paramètres (longueur, id)
+  diting-touch-cmd grip [on|off]         retenue des touchers des coins du bas
+        jusqu'au relâchement (module 0x64 de la configuration) ; sans
+        argument, affiche l'état. Perdu à la mise sous tension du contrôleur.
 
 Trame (struct goodix_ts_cmd) : state, ack, len = 4 + nombre de données, cmd,
 données, puis la somme des octets 2..len-1 sur 16 bits LE ; écrite à
@@ -203,6 +206,41 @@ def offline(a):
     return False
 
 
+def read_config(fd, cmd_addr):
+    """brl_read_config()"""
+    addr, maxlen = ic_info.fw_buffer
+    cfg_cmd(fd, cmd_addr, CFG_READ_START)
+    try:
+        head = os.pread(fd, CFG_HEAD_LEN, addr)
+        ln = struct.unpack_from("<H", head, 59)[0]
+        if ln > maxlen:
+            sys.exit(f"longueur annoncée {ln} > {maxlen}")
+        cfg = head + os.pread(fd, ln, addr + CFG_HEAD_LEN)
+    finally:
+        cfg_cmd(fd, cmd_addr, CFG_READ_EXIT)
+    err = cfg_check(cfg)
+    if err:
+        sys.exit(f"configuration lue invalide : {err}")
+    return cfg
+
+
+def write_config(fd, cmd_addr, cfg):
+    """brl_send_config()"""
+    addr, _ = ic_info.fw_buffer
+    cfg_cmd(fd, cmd_addr, CFG_START)
+    ok = False
+    try:
+        os.pwrite(fd, cfg, addr)
+        if os.pread(fd, len(cfg), addr) != cfg:
+            sys.exit("relecture différente : configuration NON appliquée")
+        cfg_cmd(fd, cmd_addr, CFG_WRITE)
+        ok = True
+    finally:
+        cfg_cmd(fd, cmd_addr, CFG_EXIT)
+    time.sleep(0.1)
+    return ok
+
+
 def main():
     a = sys.argv[1:]
     if not a:
@@ -222,18 +260,7 @@ def main():
         addr, maxlen = ic_info.fw_buffer
         v = os.pread(fd, 28, FW_VERSION_ADDR)
         if a[0] == "config-read":
-            cfg_cmd(fd, cmd_addr, CFG_READ_START)
-            try:
-                head = os.pread(fd, CFG_HEAD_LEN, addr)
-                ln = struct.unpack_from("<H", head, 59)[0]
-                if ln > maxlen:
-                    sys.exit(f"longueur annoncée {ln} > {maxlen}")
-                cfg = head + os.pread(fd, ln, addr + CFG_HEAD_LEN)
-            finally:
-                cfg_cmd(fd, cmd_addr, CFG_READ_EXIT)
-            err = cfg_check(cfg)
-            if err:
-                sys.exit(f"configuration lue invalide : {err}")
+            cfg = read_config(fd, cmd_addr)
             open(a[1], "wb").write(cfg)
             print(f"enregistrée dans {a[1]} : {describe(cfg)}")
             return
@@ -251,21 +278,35 @@ def main():
         if "--oui" not in a:
             print("vérification seulement ; ajouter --oui pour écrire")
             return
-        cfg_cmd(fd, cmd_addr, CFG_START)       # brl_send_config()
-        ok = False
-        try:
-            os.pwrite(fd, cfg, addr)
-            if os.pread(fd, len(cfg), addr) != cfg:
-                sys.exit("relecture différente : configuration NON appliquée")
-            cfg_cmd(fd, cmd_addr, CFG_WRITE)
-            ok = True
-        finally:
-            cfg_cmd(fd, cmd_addr, CFG_EXIT)
-        time.sleep(0.1)
+        ok = write_config(fd, cmd_addr, cfg)
         cmd_addr, _ = ic_info(fd)
         print(f"configuration envoyée ; config_id du contrôleur maintenant "
               f"0x{ic_info.config[0]:08x}" if ok else "échec")
         return
+    if a[0] == "grip":
+        # module 0x64, premier octet : retenue des touchers dans les coins
+        # du bas jusqu'au relâchement (trouvé par essais le 2026-10-27).
+        # Pas conservé à la mise sous tension : à réappliquer.
+        want = {"on": 1, "off": 0}.get(a[1] if len(a) > 1 else "")
+        cfg = bytearray(read_config(fd, cmd_addr))
+        mods = {mid: pos for pos, mid, _ in cfg_modules(bytes(cfg))}
+        if 0x64 not in mods or cfg[mods[0x64] + 2] not in (0, 1):
+            sys.exit("module 0x64 introuvable ou inattendu : rien changé")
+        cur = cfg[mods[0x64] + 2]
+        if want is None:
+            print(f"retenue des coins : {'on' if cur else 'off'}")
+            return
+        if cur == want:
+            print(f"retenue des coins déjà {a[1]}")
+            return
+        cfg[mods[0x64] + 2] = want
+        cfg = cfg_fix(cfg)
+        err = cfg_check(cfg)
+        if err:
+            sys.exit(f"échec : {err}")
+        ok = write_config(fd, cmd_addr, cfg)
+        print(f"retenue des coins : {a[1]}" if ok else "échec")
+        sys.exit(0 if ok else 1)
     if a[0] in ("mode", "game"):
         pos = [x for x in a[1:] if "=" not in x]
         kv = dict(x.split("=", 1) for x in a[1:] if "=" in x)

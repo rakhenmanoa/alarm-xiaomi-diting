@@ -1,4 +1,4 @@
 #!/bin/sh
-# le contrôleur tactile est éteint pendant la veille : remettre le réglage d'Android
+# le contrôleur tactile est éteint pendant la veille : couper la retenue des coins et remettre le réglage d'Android
 [ "$1" = post ] || exit 0
-( sleep 1; /usr/bin/diting-touch-cmd mode 2 >/dev/null 2>&1 ) &
+( sleep 1; /usr/bin/diting-touch-cmd grip off; /usr/bin/diting-touch-cmd mode 2 ) >/dev/null 2>&1 &
