@@ -26,6 +26,11 @@ goodix_9916 (MiCode, bsp-diting-s-oss, goodix_brl_hw.c).
         diting, le firmware a ajusté un tableau de 39 octets (dalle FPC2L,
         même config_id) ; le fichier d'Android remettrait les valeurs
         génériques.
+  diting-touch-cmd config-patch ENTRÉE SORTIE POS=OCTETS ...
+        copie une configuration en changeant des octets (POS décimal depuis
+        le début de la configuration, OCTETS en hexa, ex. 1316=0002) et
+        recalcule les sommes de contrôle ; n'écrit rien dans le contrôleur.
+  diting-touch-cmd config-dump FICHIER   modules de paramètres (longueur, id)
 
 Trame (struct goodix_ts_cmd) : state, ack, len = 4 + nombre de données, cmd,
 données, puis la somme des octets 2..len-1 sur 16 bits LE ; écrite à
@@ -147,10 +152,63 @@ def describe(cfg):
             f"{len(cfg)} octets")
 
 
+def cfg_fix(cfg):
+    """recalcule la somme du corps (u32 des mots u16), l'entête ne change pas"""
+    cfg = bytearray(cfg)
+    ln = struct.unpack_from("<H", cfg, 59)[0]
+    body = cfg[CFG_HEAD_LEN:]
+    w = sum(struct.unpack_from(f"<{(ln - 4) // 2}H", body, 0))
+    struct.pack_into("<I", cfg, CFG_HEAD_LEN + ln - 4, w & 0xFFFFFFFF)
+    return bytes(cfg)
+
+
+def cfg_modules(cfg):
+    """après la partie fixe, des modules « longueur, id, données » (id 0x51..)"""
+    i = cfg.find(bytes([0x0E, 0x51]), CFG_HEAD_LEN)
+    out = []
+    while 0 <= i < len(cfg) - 4 and cfg[i] >= 2 and 0x50 <= cfg[i + 1] <= 0x7F:
+        out.append((i, cfg[i + 1], cfg[i + 2:i + cfg[i]]))
+        i += cfg[i]
+    return out
+
+
+def offline(a):
+    if a[0] == "config-dump":
+        cfg = cfg_from_file(a[1], 255)
+        print(describe(cfg))
+        for pos, mid, data in cfg_modules(cfg):
+            words = " ".join(str(struct.unpack_from("<H", data, k)[0])
+                             for k in range(0, len(data) - 1, 2))
+            print(f"{pos:5d} module 0x{mid:02x} ({len(data)} o) : {data.hex(' ')}\n"
+                  f"      en u16 : {words}")
+        return True
+    if a[0] == "config-patch":
+        cfg = bytearray(cfg_from_file(a[1], 255))
+        if cfg_check(bytes(cfg)):
+            sys.exit("configuration d'entrée invalide")
+        for spec in a[3:]:
+            pos, val = spec.split("=")
+            pos, val = int(pos), bytes.fromhex(val)
+            if pos < CFG_HEAD_LEN or pos + len(val) > len(cfg) - 4:
+                sys.exit(f"position {pos} hors du corps de la configuration")
+            print(f"{pos} : {cfg[pos:pos + len(val)].hex()} → {val.hex()}")
+            cfg[pos:pos + len(val)] = val
+        cfg = cfg_fix(cfg)
+        err = cfg_check(cfg)
+        if err:
+            sys.exit(f"échec : {err}")
+        open(a[2], "wb").write(cfg)
+        print(f"écrit dans {a[2]} (rien envoyé au contrôleur)")
+        return True
+    return False
+
+
 def main():
     a = sys.argv[1:]
     if not a:
         sys.exit(__doc__)
+    if offline(a):
+        return
     fd = regs()
     cmd_addr, touch_addr = ic_info(fd)
     if a[0] == "info":
