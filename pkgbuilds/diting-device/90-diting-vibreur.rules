@@ -1,0 +1,3 @@
+# Vibreur (pilote qcom-pm8350b-haptics, patch noyau 0904) pour feedbackd,
+# que Plasma Mobile utilise (org.sigxcpu.Feedback.Haptic).
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="pm8350b-haptics", ENV{FEEDBACKD_TYPE}="vibra", TAG+="uaccess"
