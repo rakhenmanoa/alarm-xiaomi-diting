@@ -5,7 +5,7 @@
 pkgname=diting-device
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 _artcommit=b4c1510fe6686ab8053715a02c34bec875ca5c6c
-pkgver=0.1.10
+pkgver=0.1.11
 pkgrel=1
 pkgdesc="Intégration du Xiaomi 12T Pro (diting) : images de démarrage, audio, appels, modem, capteurs, USB"
 arch=(any)
@@ -14,7 +14,7 @@ license=(GPL-2.0-or-later)
 # mkbootimg (AOSP) : fourni par android-tools ou, à défaut, par mkbootimg-aosp
 depends=(bash python python-gobject alsa-utils iproute2 dtc mkinitcpio
          libqmi qrtr rmtfs tqftpserv modemmanager networkmanager
-         hexagonrpc-diting fastrpc-diting feedbackd)
+         hexagonrpc-diting fastrpc-diting feedbackd zram-generator)
 optdepends=('android-tools: mkbootimg (sinon mkbootimg-aosp)'
             'firmware-xiaomi-diting: firmware signé extrait de votre téléphone'
             'callaudiod: requis par plasma-dialer (le service D-Bus est remplacé)')
@@ -38,8 +38,9 @@ source=("diting-ubuntu::git+https://github.com/royka1/diting-ubuntu.git#commit=$
         diting-touch.service
         diting-touch.sleep
         diting-vibrate
-        90-diting-vibreur.rules)
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+        90-diting-vibreur.rules
+        zram-generator.conf)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 _ud() { echo "$srcdir/diting-ubuntu/ubuntu-diting"; }
 
@@ -113,6 +114,7 @@ package() {
   install -Dm755 "$srcdir/diting-callaudio-override" "$pkgdir/usr/lib/diting/diting-callaudio-override"
   install -Dm644 "$srcdir/diting.preset" "$pkgdir/usr/lib/systemd/system-preset/10-diting.preset"
   install -Dm644 "$srcdir/diting-dsc.conf" "$pkgdir/usr/lib/modprobe.d/diting-dsc.conf"
+  install -Dm644 "$srcdir/zram-generator.conf" "$pkgdir/usr/lib/systemd/zram-generator.conf"
   install -Dm644 "$srcdir/90-diting-vibreur.rules" "$pkgdir/usr/lib/udev/rules.d/90-diting-vibreur.rules"
   install -Dm755 "$srcdir/diting-vibrate" "$pkgdir/usr/bin/diting-vibrate"
   install -Dm755 "$srcdir/diting-touch-cmd" "$pkgdir/usr/bin/diting-touch-cmd"

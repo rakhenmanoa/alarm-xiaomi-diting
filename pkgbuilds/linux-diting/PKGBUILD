@@ -7,7 +7,7 @@ pkgname=linux-diting
 _kver=7.2.10
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=${_kver}
-pkgrel=7
+pkgrel=8
 pkgdesc="Linux ${_kver} pour le Xiaomi 12T Pro / Redmi K50 Ultra (diting, SM8475)"
 arch=(aarch64)
 url="https://github.com/royka1/diting-ubuntu"
@@ -69,6 +69,9 @@ prepare() {
   scripts/config --module TOUCHSCREEN_GOODIX_BERLIN_SPI
   # vibreur (patch 0904)
   scripts/config --module INPUT_QCOM_PM8350B_HAPTICS
+  # zram (swap compressé en mémoire, zram-generator dans diting-device)
+  scripts/config --module ZRAM --enable ZRAM_BACKEND_LZ4 --enable ZRAM_BACKEND_ZSTD \
+    --enable ZRAM_DEF_COMP_ZSTD
   _make olddefconfig
 
   # chaque option du fragment doit survivre à olddefconfig (comme diting-ubuntu)
