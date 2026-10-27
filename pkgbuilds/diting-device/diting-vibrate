@@ -1,0 +1,45 @@
+#!/usr/bin/python3 -I
+"""Fait vibrer le téléphone par l'interface force feedback du noyau
+(pilote qcom-pm8350b-haptics, effet FF_RUMBLE).
+
+  diting-vibrate [DURÉE_MS [INTENSITÉ_%]]      défaut : 200 ms, 100 %
+"""
+import fcntl
+import glob
+import os
+import struct
+import sys
+import time
+
+EV_FF = 0x15
+FF_RUMBLE = 0x50
+# struct ff_effect sur arm64 : 48 octets, union alignée sur 8 (offset 16)
+FF_EFFECT = "<HhHHHHH2xHH28x"
+EVIOCSFF = 0x40000000 | (struct.calcsize(FF_EFFECT) << 16) | (ord("E") << 8) | 0x80
+EVIOCRMFF = 0x40044581
+
+
+def device():
+    for name in glob.glob("/sys/class/input/event*/device/name"):
+        if open(name).read().strip() == "pm8350b-haptics":
+            return "/dev/input/" + name.split("/")[4]
+    sys.exit("vibreur pm8350b-haptics introuvable (module chargé ?)")
+
+
+def main():
+    ms = int(sys.argv[1]) if len(sys.argv) > 1 else 200
+    pct = int(sys.argv[2]) if len(sys.argv) > 2 else 100
+    if not (1 <= ms <= 5000 and 1 <= pct <= 100):
+        sys.exit(__doc__)
+    mag = 0xFFFF * pct // 100
+    fd = os.open(device(), os.O_RDWR)
+    buf = bytearray(struct.pack(FF_EFFECT, FF_RUMBLE, -1, 0, 0, 0, ms, 0, mag, mag))
+    fcntl.ioctl(fd, EVIOCSFF, buf)
+    eid = struct.unpack_from("<h", buf, 2)[0]
+    os.write(fd, struct.pack("<qqHHi", 0, 0, EV_FF, eid, 1))
+    time.sleep(ms / 1000 + 0.05)
+    fcntl.ioctl(fd, EVIOCRMFF, eid)
+    os.close(fd)
+
+
+main()
