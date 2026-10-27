@@ -58,6 +58,11 @@
 /* this driver refuses anything higher (the diting runs at 1250 mV) */
 #define SAFE_VMAX_MV			3600
 
+/* Android: 1250 mV for constant vibration, 3600 mV for its effects */
+static unsigned int vmax_mv;
+module_param(vmax_mv, uint, 0444);
+MODULE_PARM_DESC(vmax_mv, "override qcom,vmax-mv (max 3600)");
+
 struct pm8350b_haptics {
 	struct device *dev;
 	struct regmap *regmap;
@@ -241,6 +246,13 @@ static int pm8350b_haptics_probe(struct platform_device *pdev)
 		return dev_err_probe(dev, -EINVAL,
 				     "qcom,vmax-mv missing or above %u\n",
 				     SAFE_VMAX_MV);
+
+	if (vmax_mv) {
+		if (vmax_mv > SAFE_VMAX_MV)
+			return dev_err_probe(dev, -EINVAL, "vmax_mv above %u\n",
+					     SAFE_VMAX_MV);
+		h->vmax_mv = vmax_mv;
+	}
 
 	ret = of_property_read_u32(np, "qcom,lra-period-us", &t_lra_us);
 	if (ret || !t_lra_us || t_lra_us > TLRA_MAX_US)
