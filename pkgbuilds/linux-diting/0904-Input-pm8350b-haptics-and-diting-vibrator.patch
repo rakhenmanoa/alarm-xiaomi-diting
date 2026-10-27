@@ -5,25 +5,26 @@ Subject: [PATCH] Input: add a minimal Qualcomm PM8350B haptics driver; diting:
 The PM8350B high-voltage haptics block drives the LRA of the Xiaomi
 12T Pro. Mainline has no driver for it; this one only does constant
 vibration in DIRECT_PLAY mode (ff-memless, FF_RUMBLE), with the register
-sequence of the downstream qcom-hv-haptics driver. Vmax 1250 mV and
-T_LRA 5882 us as in the vendor DT.
+sequence of the downstream qcom-hv-haptics driver.
+T_LRA 5882 us as in the vendor DT, Vmax 2000 mV (1250 felt weak).
 ---
 diff -urN a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
 --- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts	2026-10-27 10:12:39.649928824 +0300
-+++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts	2026-10-27 10:12:39.675656701 +0300
-@@ -1142,6 +1142,20 @@
++++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts	2026-10-27 10:50:38.262939328 +0300
+@@ -1142,6 +1142,21 @@
  	status = "okay";
  };
  
 +&pm8350b {
 +	/*
-+	 * LRA vibrator on the PM8350B high-voltage haptics block; Vmax,
-+	 * T_LRA and drive shape as in the vendor DT (qcom,hv-haptics).
++	 * LRA vibrator on the PM8350B high-voltage haptics block. Vmax 2000 mV
++	 * (vendor: 1250 for constant vibration, 3600 for effects; 1250 felt
++	 * weak); T_LRA and drive shape as in the vendor DT (qcom,hv-haptics).
 +	 */
 +	haptics@f000 {
 +		compatible = "qcom,pm8350b-haptics";
 +		reg = <0xf000>, <0xf100>, <0xf200>;
-+		qcom,vmax-mv = <1250>;
++		qcom,vmax-mv = <2000>;
 +		qcom,lra-period-us = <5882>;
 +		qcom,drv-sig-shape = <1>;
 +	};
