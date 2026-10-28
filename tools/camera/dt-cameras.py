@@ -120,7 +120,9 @@ def main():
                 nom = c.rsplit('/', 1)[-1]
                 if c.startswith('/__') or c.endswith('/__overlay__') or '/' not in c[1:] and c.startswith('/fragment'):
                     continue
-                if INTERESSANTS.search(compat) or INTERESSANTS.search(nom):
+                parent_choisi = any(c.startswith(pc + '/') for pc, _ in choisis)
+                if (INTERESSANTS.search(compat) or INTERESSANTS.search(nom) or parent_choisi
+                        or nom.startswith('gpio-regulator') or 'regulator-fixed' in compat):
                     choisis.append((c, p))
             if not choisis:
                 continue
