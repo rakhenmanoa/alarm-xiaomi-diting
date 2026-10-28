@@ -199,6 +199,8 @@ scripts/restaurer-android.sh --donnees  # + userdata/metadata d'origine (si sauv
   `sudo diting-install-bootimg`, qui écrit les images sur le slot actif après confirmation.
 - Si ALARM passe à libcamera 0.8+, pacman signalera un conflit avec `libcamera-diting`.
   Gardez-le, ou acceptez la version d'ALARM : la caméra arrière ne fonctionnera alors plus.
+- Pour tester un pilote ou le device tree sans reconstruire tout le noyau : compiler seulement les
+  modules et le DTB sur le téléphone, voir [docs/modules-sur-le-telephone.md](docs/modules-sur-le-telephone.md).
 
 ## Limites connues
 
