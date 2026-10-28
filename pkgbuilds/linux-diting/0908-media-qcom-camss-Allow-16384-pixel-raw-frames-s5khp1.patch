@@ -1,0 +1,141 @@
+From 296ec8c5448b8dd438cc8b709212902def6e5c06 Mon Sep 17 00:00:00 2001
+From: alarm <alarm@localhost>
+Date: Wed, 28 Oct 2026 18:03:10 +0300
+Subject: [PATCH] media: qcom: camss: Allow 16384-pixel raw frames, s5khp1:
+ Drop the full resolution mode
+
+The S5KHP1 2x2 binned mode (50 MP) is 8192 pixels wide, one more than the
+CAMSS limit of 8191, so the simple pipeline never offered it.
+---
+ drivers/media/i2c/s5khp1.c                    | 20 +++++++------------
+ .../media/platform/qcom/camss/camss-csid.c    |  8 ++++----
+ .../media/platform/qcom/camss/camss-csiphy.c  |  4 ++--
+ drivers/media/platform/qcom/camss/camss-vfe.c |  4 ++--
+ .../media/platform/qcom/camss/camss-video.c   |  4 ++--
+ drivers/media/platform/qcom/camss/camss.h     |  7 +++++++
+ 6 files changed, 24 insertions(+), 23 deletions(-)
+
+diff --git a/drivers/media/i2c/s5khp1.c b/drivers/media/i2c/s5khp1.c
+index d41b69a17..91e8cbfd7 100644
+--- a/drivers/media/i2c/s5khp1.c
++++ b/drivers/media/i2c/s5khp1.c
+@@ -198,19 +198,13 @@ static const struct s5khp1_mode s5khp1_supported_modes[] = {
+ 		.crop = { 0, 0, 16384, 12288 },
+ 		.table = "mode1",
+ 	},
+-	{
+-		/* full resolution, 6.5 fps */
+-		.width = 16384,
+-		.height = 12288,
+-		.hts = 19200,
+-		.vts = 12698,
+-		.exposure = 12000,
+-		.pixel_rate = 1584710400,
+-		.again_max = S5KHP1_AGAIN_MAX_FULL,
+-		.link_freq_index = 2,
+-		.crop = { 0, 0, 16384, 12288 },
+-		.table = "mode0",
+-	},
++	/*
++	 * The full resolution mode (16384x12288, "mode0", 6.5 fps) is left
++	 * out: its frame is wider than the GPU software ISP can take as a
++	 * texture (20480 bytes per line) and its RGB output (800 MB) is of no
++	 * use; it would also become the default of applications asking for
++	 * the largest size.
++	 */
+ 	{
+ 		/* 4x4 binned 16:9, 60 fps */
+ 		.width = 4096,
+diff --git a/drivers/media/platform/qcom/camss/camss-csid.c b/drivers/media/platform/qcom/camss/camss-csid.c
+index 28375bc89..c2ae2d803 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid.c
++++ b/drivers/media/platform/qcom/camss/camss-csid.c
+@@ -834,8 +834,8 @@ static void csid_try_format(struct csid_device *csid,
+ 		if (i >= csid->res->formats->nformats)
+ 			fmt->code = MEDIA_BUS_FMT_UYVY8_1X16;
+ 
+-		fmt->width = clamp_t(u32, fmt->width, 1, 8191);
+-		fmt->height = clamp_t(u32, fmt->height, 1, 8191);
++		fmt->width = clamp_t(u32, fmt->width, 1, CAMSS_RDI_MAX_SIZE);
++		fmt->height = clamp_t(u32, fmt->height, 1, CAMSS_RDI_MAX_SIZE);
+ 
+ 		fmt->field = V4L2_FIELD_NONE;
+ 		fmt->colorspace = V4L2_COLORSPACE_SRGB;
+@@ -864,8 +864,8 @@ static void csid_try_format(struct csid_device *csid,
+ 			if (i >= csid->res->formats->nformats)
+ 				fmt->code = MEDIA_BUS_FMT_UYVY8_1X16;
+ 
+-			fmt->width = clamp_t(u32, fmt->width, 1, 8191);
+-			fmt->height = clamp_t(u32, fmt->height, 1, 8191);
++			fmt->width = clamp_t(u32, fmt->width, 1, CAMSS_RDI_MAX_SIZE);
++			fmt->height = clamp_t(u32, fmt->height, 1, CAMSS_RDI_MAX_SIZE);
+ 
+ 			fmt->field = V4L2_FIELD_NONE;
+ 		}
+diff --git a/drivers/media/platform/qcom/camss/camss-csiphy.c b/drivers/media/platform/qcom/camss/camss-csiphy.c
+index 539ac4888..d7b9ecff9 100644
+--- a/drivers/media/platform/qcom/camss/camss-csiphy.c
++++ b/drivers/media/platform/qcom/camss/camss-csiphy.c
+@@ -381,8 +381,8 @@ static void csiphy_try_format(struct csiphy_device *csiphy,
+ 		if (i >= csiphy->res->formats->nformats)
+ 			fmt->code = MEDIA_BUS_FMT_UYVY8_1X16;
+ 
+-		fmt->width = clamp_t(u32, fmt->width, 1, 8191);
+-		fmt->height = clamp_t(u32, fmt->height, 1, 8191);
++		fmt->width = clamp_t(u32, fmt->width, 1, CAMSS_RDI_MAX_SIZE);
++		fmt->height = clamp_t(u32, fmt->height, 1, CAMSS_RDI_MAX_SIZE);
+ 
+ 		fmt->field = V4L2_FIELD_NONE;
+ 		fmt->colorspace = V4L2_COLORSPACE_SRGB;
+diff --git a/drivers/media/platform/qcom/camss/camss-vfe.c b/drivers/media/platform/qcom/camss/camss-vfe.c
+index b86f9ad8f..4f15d97fe 100644
+--- a/drivers/media/platform/qcom/camss/camss-vfe.c
++++ b/drivers/media/platform/qcom/camss/camss-vfe.c
+@@ -1352,8 +1352,8 @@ static void vfe_try_format(struct vfe_line *line,
+ 		if (i >= line->nformats)
+ 			fmt->code = MEDIA_BUS_FMT_UYVY8_1X16;
+ 
+-		fmt->width = clamp_t(u32, fmt->width, 1, 8191);
+-		fmt->height = clamp_t(u32, fmt->height, 1, 8191);
++		fmt->width = clamp_t(u32, fmt->width, 1, CAMSS_RDI_MAX_SIZE);
++		fmt->height = clamp_t(u32, fmt->height, 1, CAMSS_RDI_MAX_SIZE);
+ 
+ 		fmt->field = V4L2_FIELD_NONE;
+ 		fmt->colorspace = V4L2_COLORSPACE_SRGB;
+diff --git a/drivers/media/platform/qcom/camss/camss-video.c b/drivers/media/platform/qcom/camss/camss-video.c
+index 0852eb6f1..b4f785644 100644
+--- a/drivers/media/platform/qcom/camss/camss-video.c
++++ b/drivers/media/platform/qcom/camss/camss-video.c
+@@ -19,9 +19,9 @@
+ #include "camss.h"
+ 
+ #define CAMSS_FRAME_MIN_WIDTH		1
+-#define CAMSS_FRAME_MAX_WIDTH		8191
++#define CAMSS_FRAME_MAX_WIDTH		CAMSS_RDI_MAX_SIZE
+ #define CAMSS_FRAME_MIN_HEIGHT		1
+-#define CAMSS_FRAME_MAX_HEIGHT_RDI	8191
++#define CAMSS_FRAME_MAX_HEIGHT_RDI	CAMSS_RDI_MAX_SIZE
+ #define CAMSS_FRAME_MAX_HEIGHT_PIX	4096
+ 
+ /* -----------------------------------------------------------------------------
+diff --git a/drivers/media/platform/qcom/camss/camss.h b/drivers/media/platform/qcom/camss/camss.h
+index aeb98f527..be1c8ebc6 100644
+--- a/drivers/media/platform/qcom/camss/camss.h
++++ b/drivers/media/platform/qcom/camss/camss.h
+@@ -44,6 +44,13 @@
+ #define CAMSS_RES_MAX 17
+ #define CAMSS_INIT_BUF_COUNT 2
+ 
++/*
++ * Largest raw frame passed through to RDI (diting: the S5KHP1 50 MP mode is
++ * 8192 pixels wide, 200 MP 16384; the write master takes a 16-bit height and
++ * stride / 16).
++ */
++#define CAMSS_RDI_MAX_SIZE 16384
++
+ struct camss_subdev_resources {
+ 	struct regulator_bulk_data regulators[CAMSS_RES_MAX];
+ 	char *clock[CAMSS_RES_MAX];
+-- 
+2.43.0
+

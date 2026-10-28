@@ -1,0 +1,46 @@
+From eac0ea64623d22a8c96715585ad3782a00e73147 Mon Sep 17 00:00:00 2001
+From: alarm <alarm@localhost>
+Date: Wed, 28 Oct 2026 18:03:40 +0300
+Subject: [PATCH] pipeline: simple: Default streaming roles to a sensor mode of
+ at most 12.6 MP
+
+---
+ src/libcamera/pipeline/simple/simple.cpp | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
+index d199d44..feb96bb 100644
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -1506,11 +1506,28 @@ SimplePipelineHandler::generateConfiguration(Camera *camera, Span<const StreamRo
+ 	 *
+ 	 * \todo Implement a better way to pick the default format
+ 	 */
++	/*
++	 * Default processed size for the streaming roles (diting): the
++	 * largest output of a sensor mode of at most kStreamMaxArea pixels,
++	 * so that a 50 MP mode is used for still captures only and does not
++	 * slow every viewfinder down.
++	 */
++	static constexpr unsigned int kStreamMaxArea = 4096 * 3072;
++	Size streamSize;
++	for (const SimpleCameraData::Configuration &cfg : data->configs_) {
++		if (cfg.captureSize.width * cfg.captureSize.height <= kStreamMaxArea &&
++		    cfg.outputSizes.max > streamSize)
++			streamSize = cfg.outputSizes.max;
++	}
++
+ 	for (StreamRole role : roles) {
+ 		const auto &formats = (role == StreamRole::Raw ? rawFormats : processedFormats);
+ 		StreamConfiguration cfg{ StreamFormats{ formats } };
+ 		cfg.pixelFormat = formats.begin()->first;
+ 		cfg.size = formats.begin()->second[0].max;
++		if (role != StreamRole::Raw && role != StreamRole::StillCapture &&
++		    !streamSize.isNull())
++			cfg.size = std::min(cfg.size, streamSize);
+ 
+ 		config->addConfiguration(cfg);
+ 	}
+-- 
+2.43.0
+

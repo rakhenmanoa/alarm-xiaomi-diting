@@ -1,0 +1,3 @@
+# Mémoire dma-buf du software ISP de libcamera : le tas système n'a pas la
+# limite de 64 Mo par tampon d'udmabuf (une image RGB de 50 MP fait 200 Mo).
+SUBSYSTEM=="dma_heap", KERNEL=="system", GROUP="video", MODE="0660"
