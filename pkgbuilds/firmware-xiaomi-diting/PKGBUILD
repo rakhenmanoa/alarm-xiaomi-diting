@@ -3,7 +3,7 @@
 # NE PAS REDISTRIBUER ce paquet ni l'image qui le contient.
 pkgname=firmware-xiaomi-diting
 pkgver=0.9.5
-pkgrel=2
+pkgrel=3
 pkgdesc="Firmware propre à l'appareil du Xiaomi 12T Pro (local, non redistribuable)"
 arch=(any)
 url="https://github.com/royka1/diting-ubuntu"
@@ -26,6 +26,14 @@ package() {
     mv usr/share/doc/firmware-xiaomi-diting/* "usr/share/licenses/$pkgname/" 2>/dev/null || true
     rm -rf usr/share/doc
   fi
+
+  # Tables de registres des caméras frontale et macro, générées par
+  # scripts/10-construire-firmware.sh (tools/camera/chromatix-to-camregs.py)
+  local f
+  for f in "$startdir"/camregs/*.camregs; do
+    [ -f "$f" ] || continue
+    install -Dm644 "$f" "usr/lib/firmware/qcom/sm8475/xiaomi/diting/${f##*/}"
+  done
 
   # Lever pour réveiller (diting-lever-reveil) : algorithme tilt to wake du
   # SLPI plus réactif que le réglage Xiaomi (fenêtre 1,1 s, écart 45°).

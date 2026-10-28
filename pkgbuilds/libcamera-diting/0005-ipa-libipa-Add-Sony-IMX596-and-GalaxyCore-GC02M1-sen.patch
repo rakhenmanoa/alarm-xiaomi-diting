@@ -1,0 +1,94 @@
+From 522eb202547fcd1733958eb1efb06f66368d9152 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 28 Oct 2026 15:02:37 +0300
+Subject: [PATCH] ipa: libipa: Add Sony IMX596 and GalaxyCore GC02M1 sensor
+ helpers and properties
+
+Front (IMX596) and macro (GC02M1) cameras of the Xiaomi 12T Pro
+(diting). IMX596: Sony analogue gain code (1024 / (1024 - code)),
+black level 0x40 at 10 bits, CCS test patterns, 0.8 um cells.
+GC02M1: global pre-gain code 64 = 1x as the diting kernel driver,
+black level 0x40 at 10 bits, 1.75 um cells. Delays of 2 frames as the
+module data of the IMX596.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/ipa/libipa/camera_sensor_helper.cpp       | 24 +++++++++++++++
+ .../sensor/camera_sensor_properties.cpp       | 29 +++++++++++++++++++
+ 2 files changed, 53 insertions(+)
+
+diff --git a/src/ipa/libipa/camera_sensor_helper.cpp b/src/ipa/libipa/camera_sensor_helper.cpp
+index 1278d32..fb6f8e2 100644
+--- a/src/ipa/libipa/camera_sensor_helper.cpp
++++ b/src/ipa/libipa/camera_sensor_helper.cpp
+@@ -813,6 +813,30 @@ public:
+ };
+ REGISTER_CAMERA_SENSOR_HELPER("s5k4h7", CameraSensorHelperS5k4h7)
+ 
++class CameraSensorHelperImx596 : public CameraSensorHelper
++{
++public:
++	CameraSensorHelperImx596()
++	{
++		/* 0x40 at 10 bits; Sony analogue gain = 1024 / (1024 - code) */
++		blackLevel_ = 4096;
++		gain_ = AnalogueGainLinear{ 0, 1024, -1, 1024 };
++	}
++};
++REGISTER_CAMERA_SENSOR_HELPER("imx596", CameraSensorHelperImx596)
++
++class CameraSensorHelperGc02m1 : public CameraSensorHelper
++{
++public:
++	CameraSensorHelperGc02m1()
++	{
++		/* 0x40 at 10 bits; global pre-gain code 64 = 1x */
++		blackLevel_ = 4096;
++		gain_ = AnalogueGainLinear{ 1, 0, 0, 64 };
++	}
++};
++REGISTER_CAMERA_SENSOR_HELPER("gc02m1", CameraSensorHelperGc02m1)
++
+ class CameraSensorHelperVd55g1 : public CameraSensorHelper
+ {
+ public:
+diff --git a/src/libcamera/sensor/camera_sensor_properties.cpp b/src/libcamera/sensor/camera_sensor_properties.cpp
+index 6d87372..5e74dfa 100644
+--- a/src/libcamera/sensor/camera_sensor_properties.cpp
++++ b/src/libcamera/sensor/camera_sensor_properties.cpp
+@@ -525,6 +525,35 @@ const CameraSensorProperties *CameraSensorProperties::get(const std::string &sen
+ 				.hblankDelay = 2
+ 			},
+ 		} },
++		{ "imx596", {
++			/* 20 MP, 0.8 um (Xiaomi 12T Pro front camera) */
++			.unitCellSize = { 800, 800 },
++			.testPatternModes = {
++				{ controls::draft::TestPatternModeOff, 0 },
++				{ controls::draft::TestPatternModeSolidColor, 1 },
++				{ controls::draft::TestPatternModeColorBars, 2 },
++				{ controls::draft::TestPatternModeColorBarsFadeToGray, 3 },
++				{ controls::draft::TestPatternModePn9, 4 },
++			},
++			/* module data delayInfo: line count, gain, frame length 2 */
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 2,
++				.vblankDelay = 2,
++				.hblankDelay = 2
++			},
++		} },
++		{ "gc02m1", {
++			/* 2 MP, 1.75 um (Xiaomi 12T Pro macro camera) */
++			.unitCellSize = { 1750, 1750 },
++			.testPatternModes = {},
++			.sensorDelays = {
++				.exposureDelay = 2,
++				.gainDelay = 2,
++				.vblankDelay = 2,
++				.hblankDelay = 2
++			},
++		} },
+ 		{ "vd55g1", {
+ 			.unitCellSize = { 2160, 2160 },
+ 			.testPatternModes = {

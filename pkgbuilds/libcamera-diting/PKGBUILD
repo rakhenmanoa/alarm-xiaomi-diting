@@ -1,4 +1,4 @@
-# libcamera 0.7.0 + patches diting (capteurs S5K4H7/S5KHP1, mise au point du
+# libcamera 0.7.0 + patches diting (capteurs S5K4H7/S5KHP1, IMX596/GC02M1, mise au point du
 # software ISP, autofocus par contraste). Les patches visent la 0.7.0 ;
 # scripts/20-construire-paquets.sh ne remplace libcamera que si la version
 # d'ALARM est une 0.7.x (même soname).
@@ -6,8 +6,8 @@ pkgname=libcamera-diting
 _tag=v0.7.0
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=0.7.0
-pkgrel=1
-pkgdesc="libcamera avec la prise en charge des caméras arrière du Xiaomi diting"
+pkgrel=2
+pkgdesc="libcamera avec la prise en charge des caméras du Xiaomi diting"
 arch=(aarch64)
 url="https://libcamera.org"
 license=(LGPL-2.1-or-later GPL-2.0-or-later)
@@ -19,8 +19,9 @@ conflicts=(libcamera libcamera-ipa libcamera-tools gst-plugin-libcamera)
 # pas de strip : il invaliderait la signature des modules IPA
 options=(!strip !debug)
 source=("libcamera::git+https://github.com/libcamera-org/libcamera.git#tag=${_tag}"
-        "diting-ubuntu::git+https://github.com/royka1/diting-ubuntu.git#commit=${_ditingcommit}")
-sha256sums=('SKIP' 'SKIP')
+        "diting-ubuntu::git+https://github.com/royka1/diting-ubuntu.git#commit=${_ditingcommit}"
+        0005-ipa-libipa-Add-Sony-IMX596-and-GalaxyCore-GC02M1-sen.patch)
+sha256sums=('SKIP' 'SKIP' 'SKIP')
 
 prepare() {
   cd libcamera
@@ -29,6 +30,8 @@ prepare() {
     echo "patch : ${p##*/}"
     patch -Np1 --no-backup-if-mismatch -s < "$p"
   done
+  # frontale (IMX596) et macro (GC02M1)
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0005-ipa-libipa-Add-Sony-IMX596-and-GalaxyCore-GC02M1-sen.patch"
 }
 build() {
   arch-meson libcamera build \

@@ -188,7 +188,7 @@ scripts/restaurer-android.sh --donnees  # + userdata/metadata d'origine (si sauv
 | Modem | rmtfs (lecture seule), tqftpserv, qrtr, `diting-modem-setup`, ModemManager |
 | Capteurs | `hexagonrpc-diting`, `libssc`, `iio-sensor-proxy-diting` (rotation, proximité, lumière, boussole) ; gyroscope lisible avec `ssccli --sensor gyroscope` ; `diting-proximite-appel` éteint l'écran contre l'oreille pendant un appel (Plasma Mobile ne le fait pas) ; `diting-lever-reveil` rallume l'écran quand on lève le téléphone (tilt to wake du SLPI, patch libssc 0001 ; réglé plus réactif dans `firmware-xiaomi-diting`, ignoré si la proximité est couverte ou pendant un appel) ; luminosité automatique de Plasma 6.6+ (KWin, via `qt6-sensors` et le capteur de lumière) à cocher dans les paramètres d'affichage (`kcmshell6 kcm_kscreen`) |
 | Vidéo | `libva-v4l2-stateful-diting` (H.264/HEVC/VP9 matériels, VA-API) |
-| Caméra | `libcamera-diting` 0.7.0 + patches (si ALARM est en 0.7.x) |
+| Caméra | `libcamera-diting` 0.7.0 + patches (si ALARM est en 0.7.x) ; frontale IMX596 et macro GC02M1 : pilotes `imx596`/`gc02m1` (patches noyau 0905-0906), tables `imx596-front.camregs`/`gc02m1-macro.camregs` générées par `tools/camera/chromatix-to-camregs.py`, **pas encore testées sur le téléphone** |
 | Bureau | Plasma Mobile (SDDM Wayland, connexion automatique), plasma-dialer, Spacebar, Angelfish… |
 
 ## Mises à jour
@@ -205,7 +205,7 @@ scripts/restaurer-android.sh --donnees  # + userdata/metadata d'origine (si sauv
 Les mêmes que diting-ubuntu :
 
 - pas de VoLTE (les appels passent en 3G) ;
-- ne fonctionnent pas : caméras avant et macro, lecteur d'empreintes, NFC, IR, vibration, encodeur vidéo ;
+- ne fonctionnent pas : lecteur d'empreintes, NFC, IR, vibration, encodeur vidéo (caméras avant et macro : en cours, voir le tableau) ;
 - la caméra principale ne marche pas si votre unité a le capteur Samsung HM6 au lieu du HP1.
 
 Spécifique à cette version Arch :

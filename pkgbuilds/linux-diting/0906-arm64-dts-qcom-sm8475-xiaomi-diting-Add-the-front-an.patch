@@ -1,0 +1,261 @@
+From bb5edbd32c33cccb5149fe7bffda487606df56ee Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 28 Oct 2026 14:59:56 +0300
+Subject: [PATCH 906/906] arm64: dts: qcom: sm8475-xiaomi-diting: Add the front
+ and macro cameras
+
+From the vendor DT (qcom,cam-sensor1 and qcom,cam-sensor3) and the
+module data:
+- front IMX596 on CCI0 master 0 at 0x10, MCLK5 19.2 MHz, reset TLMM 127,
+  AVDD 2.9 V switched by TLMM 64, core and I/O from the WL2866D (DVDD1,
+  AVDD1), CSIPHY 3 with four lanes;
+- macro GC02M1 on CCI1 master 0 at 0x37, MCLK0 19.2 MHz, reset TLMM 128,
+  AVDD 2.8 V (TLMM 118) and I/O 1.8 V (TLMM 7), CSIPHY 0 with one lane.
+Rotations to be checked on the phone.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../boot/dts/qcom/sm8475-xiaomi-diting.dts    | 201 ++++++++++++++++++
+ 1 file changed, 201 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+index 15d272144..62d1191ea 100644
+--- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
++++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+@@ -232,6 +232,51 @@ cam_ultra_avdd: regulator-cam-ultra-avdd {
+ 		pinctrl-names = "default";
+ 	};
+ 
++	/* Front camera 2.9 V AVDD, switched by TLMM 64 (vendor camera_front_avdd_ldo) */
++	cam_front_avdd: regulator-cam-front-avdd {
++		compatible = "regulator-fixed";
++		regulator-name = "cam_front_avdd";
++		regulator-min-microvolt = <2900000>;
++		regulator-max-microvolt = <2900000>;
++		gpio = <&tlmm 64 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		startup-delay-us = <100>;
++		vin-supply = <&vreg_bob>;
++
++		pinctrl-0 = <&cam_front_avdd_en>;
++		pinctrl-names = "default";
++	};
++
++	/* Macro camera 2.8 V AVDD, switched by TLMM 118 (vendor CAMERA_MACRO_AVDD) */
++	cam_macro_avdd: regulator-cam-macro-avdd {
++		compatible = "regulator-fixed";
++		regulator-name = "cam_macro_avdd";
++		regulator-min-microvolt = <2800000>;
++		regulator-max-microvolt = <2800000>;
++		gpio = <&tlmm 118 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		startup-delay-us = <100>;
++		vin-supply = <&vreg_bob>;
++
++		pinctrl-0 = <&cam_macro_avdd_en>;
++		pinctrl-names = "default";
++	};
++
++	/* Macro camera 1.8 V I/O, switched by TLMM 7 (vendor CAMERA_MACRO_IOVDD) */
++	cam_macro_iovdd: regulator-cam-macro-iovdd {
++		compatible = "regulator-fixed";
++		regulator-name = "cam_macro_iovdd";
++		regulator-min-microvolt = <1800000>;
++		regulator-max-microvolt = <1800000>;
++		gpio = <&tlmm 7 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		startup-delay-us = <100>;
++		vin-supply = <&vreg_bob>;
++
++		pinctrl-0 = <&cam_macro_iovdd_en>;
++		pinctrl-names = "default";
++	};
++
+ 	/* Panel 1.2 V core supply, switched by TLMM 66 (vendor display_panel_vddd) */
+ 	panel_vddd: regulator-panel-vddd {
+ 		compatible = "regulator-fixed";
+@@ -676,6 +721,16 @@ &camss {
+ 	status = "okay";
+ 
+ 	ports {
++		/* Rear macro GC02M1, vendor csiphy-sd-index 0: one data lane */
++		port@0 {
++			csiphy0_ep: endpoint {
++				clock-lanes = <7>;
++				data-lanes = <0>;
++				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
++				remote-endpoint = <&cam_macro_ep>;
++			};
++		};
++
+ 		/* Rear ultrawide S5K4H7, vendor csiphy-sd-index 1 */
+ 		port@1 {
+ 			csiphy1_ep: endpoint {
+@@ -694,6 +749,16 @@ csiphy2_ep: endpoint {
+ 				remote-endpoint = <&cam_wide_ep>;
+ 			};
+ 		};
++
++		/* Front IMX596, vendor csiphy-sd-index 3 */
++		port@3 {
++			csiphy3_ep: endpoint {
++				clock-lanes = <7>;
++				data-lanes = <0 1 2 3>;
++				bus-type = <MEDIA_BUS_TYPE_CSI2_DPHY>;
++				remote-endpoint = <&cam_front_ep>;
++			};
++		};
+ 	};
+ };
+ 
+@@ -743,7 +808,94 @@ cam_ultra_ep: endpoint {
+ 			};
+ 		};
+ 	};
++
++	/*
++	 * Front: Sunny module with a Sony IMX596 (vendor qcom,cam-sensor1:
++	 * CCI0 master 0, slave 0x20, MCLK5 19.2 MHz, reset TLMM 127,
++	 * CSIPHY 3, four lanes). Power-up order of the module data: WL2866D
++	 * AVDD1 (type 0xf, 1.8 V I/O), DVDD1 (0xd, core), AVDD 2.9 V, reset
++	 * release, MCLK. Register tables from the module data, see
++	 * firmware-xiaomi-diting.
++	 */
++	camera@10 {
++		compatible = "sony,imx596";
++		reg = <0x10>;
++
++		clocks = <&camcc CAM_CC_MCLK5_CLK>;
++		assigned-clocks = <&camcc CAM_CC_MCLK5_CLK>;
++		assigned-clock-rates = <19200000>;
++
++		reset-gpios = <&tlmm 127 GPIO_ACTIVE_LOW>;
++		pinctrl-0 = <&cam_mclk5_default>, <&cam_front_reset>;
++		pinctrl-names = "default";
++
++		vdda-supply = <&cam_front_avdd>;
++		vddd-supply = <&cam_ldo_dvdd1>;
++		vddio-supply = <&cam_ldo_avdd1>;
++
++		firmware-name = "qcom/sm8475/xiaomi/diting/imx596-front.camregs";
++
++		orientation = <0>;
++		/* vendor sensor-position roll; to check on the phone */
++		rotation = <270>;
++
++		port {
++			cam_front_ep: endpoint {
++				data-lanes = <1 2 3 4>;
++				link-frequencies = /bits/ 64 <822400000 672000000>;
++				remote-endpoint = <&csiphy3_ep>;
++			};
++		};
++	};
+ };
++&cci1 {
++	status = "okay";
++};
++
++&cci1_i2c0 {
++	/*
++	 * Rear macro: O-film module with a GalaxyCore GC02M1 (vendor
++	 * qcom,cam-sensor3: CCI1 master 0, slave 0x6e, MCLK0 19.2 MHz, reset
++	 * TLMM 128, CSIPHY 0, one lane). Power-up order of the module data:
++	 * reset held, I/O 1.8 V (TLMM 7), AVDD 2.8 V (TLMM 118), reset
++	 * release, MCLK. Register tables from the module data (8-bit register
++	 * addresses), see firmware-xiaomi-diting.
++	 */
++	camera@37 {
++		compatible = "galaxycore,gc02m1";
++		reg = <0x37>;
++
++		clocks = <&camcc CAM_CC_MCLK0_CLK>;
++		assigned-clocks = <&camcc CAM_CC_MCLK0_CLK>;
++		assigned-clock-rates = <19200000>;
++
++		reset-gpios = <&tlmm 128 GPIO_ACTIVE_LOW>;
++		pinctrl-0 = <&cam_mclk0_default>, <&cam_macro_reset>;
++		pinctrl-names = "default";
++
++		vdda-supply = <&cam_macro_avdd>;
++		vddio-supply = <&cam_macro_iovdd>;
++
++		firmware-name = "qcom/sm8475/xiaomi/diting/gc02m1-macro.camregs";
++
++		orientation = <1>;
++		/*
++		 * Vendor sensor-position roll 90; the other rear modules needed
++		 * 270 with the readout orientation of their module data. To
++		 * check on the phone.
++		 */
++		rotation = <270>;
++
++		port {
++			cam_macro_ep: endpoint {
++				data-lanes = <1>;
++				link-frequencies = /bits/ 64 <336000000>;
++				remote-endpoint = <&csiphy0_ep>;
++			};
++		};
++	};
++};
++
+ &cci0_i2c1 {
+ 	/*
+ 	 * Rear main: Semco module with a Samsung S5KHP1 (vendor
+@@ -1272,6 +1424,55 @@ cam_ultra_reset: cam-ultra-reset-state {
+ 		bias-disable;
+ 	};
+ 
++	cam_mclk0_default: cam-mclk0-default-state {
++		pins = "gpio100";
++		function = "cam_mclk";
++		drive-strength = <6>;
++		bias-disable;
++	};
++
++	cam_mclk5_default: cam-mclk5-default-state {
++		pins = "gpio105";
++		function = "cam_mclk";
++		drive-strength = <6>;
++		bias-disable;
++	};
++
++	cam_front_avdd_en: cam-front-avdd-en-state {
++		pins = "gpio64";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++
++	cam_front_reset: cam-front-reset-state {
++		pins = "gpio127";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++
++	cam_macro_avdd_en: cam-macro-avdd-en-state {
++		pins = "gpio118";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++
++	cam_macro_iovdd_en: cam-macro-iovdd-en-state {
++		pins = "gpio7";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++
++	cam_macro_reset: cam-macro-reset-state {
++		pins = "gpio128";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++	};
++
+ 	spk_amp_b_reset: spk-amp-b-reset-state {
+ 		pins = "gpio3";
+ 		function = "gpio";

@@ -7,7 +7,7 @@ pkgname=linux-diting
 _kver=7.2.10
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=${_kver}
-pkgrel=8
+pkgrel=9
 pkgdesc="Linux ${_kver} pour le Xiaomi 12T Pro / Redmi K50 Ultra (diting, SM8475)"
 arch=(aarch64)
 url="https://github.com/royka1/diting-ubuntu"
@@ -23,8 +23,12 @@ source=("https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${_kver}.tar.xz"
         0901-drm-panel-xiaomi-l12-Add-the-42-02-0a-panel.patch
         0902-drm-msm-dsi-DSC-slice-per-packet-option.patch
         0903-arm64-dts-diting-separate-TX-SoundWire-mic-ports.patch
-        0904-Input-pm8350b-haptics-and-diting-vibrator.patch)
+        0904-Input-pm8350b-haptics-and-diting-vibrator.patch
+        0905-media-i2c-Add-Sony-IMX596-and-GalaxyCore-GC02M1-sens.patch
+        0906-arm64-dts-qcom-sm8475-xiaomi-diting-Add-the-front-an.patch)
 sha256sums=('2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3'
+            'SKIP'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -59,6 +63,9 @@ prepare() {
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0903-arm64-dts-diting-separate-TX-SoundWire-mic-ports.patch"
   # vibreur : pilote minimal du bloc haptique du PM8350B (+ nœud DT)
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0904-Input-pm8350b-haptics-and-diting-vibrator.patch"
+  # caméras frontale (IMX596) et macro (GC02M1) : pilotes + device tree
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0905-media-i2c-Add-Sony-IMX596-and-GalaxyCore-GC02M1-sens.patch"
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0906-arm64-dts-qcom-sm8475-xiaomi-diting-Add-the-front-an.patch"
 
   _make defconfig
   scripts/kconfig/merge_config.sh -m .config "$srcdir/diting-ubuntu/kernel/config/diting.config"
@@ -69,6 +76,8 @@ prepare() {
   scripts/config --module TOUCHSCREEN_GOODIX_BERLIN_SPI
   # vibreur (patch 0904)
   scripts/config --module INPUT_QCOM_PM8350B_HAPTICS
+  # caméras frontale et macro (patch 0905)
+  scripts/config --module VIDEO_IMX596 --module VIDEO_GC02M1
   # zram (swap compressé en mémoire, zram-generator dans diting-device)
   scripts/config --module ZRAM --enable ZRAM_BACKEND_LZ4 --enable ZRAM_BACKEND_ZSTD \
     --enable ZRAM_DEF_COMP_ZSTD

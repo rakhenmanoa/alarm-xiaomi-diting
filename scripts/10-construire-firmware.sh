@@ -42,6 +42,21 @@ log "paquet pacman"
 pb="$WORK/pkgbuild-firmware"
 rm -rf "$pb" && cp -a "$TOP/pkgbuilds/firmware-xiaomi-diting" "$pb"
 cp "$deb" "$pb/firmware-xiaomi-diting.deb"
+
+# Tables de registres des caméras que le constructeur de diting-ubuntu ne
+# convertit pas encore (frontale IMX596, macro GC02M1 aux adresses 8 bits),
+# avec le convertisseur de tools/camera ; installées par le PKGBUILD.
+mkdir -p "$pb/camregs"
+for c in "com.qti.sensormodule.diting_sunny_imx596_front.bin:imx596-front.camregs" \
+         "com.qti.sensormodule.diting_ofilm_gc02m1_macro.bin:gc02m1-macro.camregs"; do
+	module="${c%%:*}" out="${c##*:}"
+	if [ ! -f "$CAM/$module" ]; then
+		warn "module caméra absent : $module ($out non généré)"
+		continue
+	fi
+	python3 -I -B "$TOP/tools/camera/chromatix-to-camregs.py" "$CAM/$module" "$pb/camregs/$out" >&2 ||
+		die "échec de la conversion de $module"
+done
 ver="$(dpkg-deb -f "$deb" Version)"
 sed -i "s/^pkgver=.*/pkgver=${ver//-/_}/" "$pb/PKGBUILD"
 mapfile -t pkgs < <(host_makepkg "$pb")

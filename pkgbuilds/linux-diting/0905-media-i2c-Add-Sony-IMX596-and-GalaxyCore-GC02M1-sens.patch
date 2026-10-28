@@ -1,0 +1,2076 @@
+From 7eb959fcc9299ffb6b32f8339e7c3cc634b0ebdb Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 28 Oct 2026 14:59:55 +0300
+Subject: [PATCH 905/906] media: i2c: Add Sony IMX596 and GalaxyCore GC02M1
+ sensor drivers
+
+Front (IMX596, 20 MP, 4-lane D-PHY) and macro (GC02M1, 2 MP, 1-lane
+D-PHY) cameras of the Xiaomi 12T Pro (diting). As the s5k4h7 driver,
+both load their initialisation and mode register tables from a
+"camregs" firmware built from the camera module data (CAMREGS1 or
+CAMREGS2 with bursts). The modes, link frequencies, pixel rates, chip
+IDs and power-up orders come from the module data.
+
+IMX596: CCS-style registers (0x0202 exposure, 0x0204 analogue gain,
+0x0340 frame length), modes 5184x3904, 2592x1952, 2592x1458, 1280x720.
+GC02M1: 8-bit register addresses in pages (0xfe), exposure 0x03/0x04,
+frame length 0x41/0x42, global pre-gain 0xb1/0xb2, stream 0x3e.
+The Bayer order is selectable with the "bayer" module parameter for
+the bring-up.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/media/i2c/Kconfig  |   22 +
+ drivers/media/i2c/Makefile |    2 +
+ drivers/media/i2c/gc02m1.c |  974 ++++++++++++++++++++++++++++++++++
+ drivers/media/i2c/imx596.c | 1014 ++++++++++++++++++++++++++++++++++++
+ 4 files changed, 2012 insertions(+)
+ create mode 100644 drivers/media/i2c/gc02m1.c
+ create mode 100644 drivers/media/i2c/imx596.c
+
+diff --git a/drivers/media/i2c/Kconfig b/drivers/media/i2c/Kconfig
+index d8b2ebcf6..8e1e04886 100644
+--- a/drivers/media/i2c/Kconfig
++++ b/drivers/media/i2c/Kconfig
+@@ -793,6 +793,28 @@ config VIDEO_S5K6A3
+ 	  This is a V4L2 sensor driver for Samsung S5K6A3 raw
+ 	  camera sensor.
+ 
++config VIDEO_GC02M1
++	tristate "GalaxyCore GC02M1 sensor support"
++	select V4L2_CCI_I2C
++	help
++	  This is a V4L2 sensor driver for the GalaxyCore GC02M1 2MP raw
++	  camera sensor (macro camera of the Xiaomi 12T Pro). The sensor
++	  register tables are loaded as firmware.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called gc02m1.
++
++config VIDEO_IMX596
++	tristate "Sony IMX596 sensor support"
++	select V4L2_CCI_I2C
++	help
++	  This is a V4L2 sensor driver for the Sony IMX596 20MP raw camera
++	  sensor (front camera of the Xiaomi 12T Pro). The sensor register
++	  tables are loaded as firmware.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called imx596.
++
+ config VIDEO_S5K4H7
+ 	tristate "Samsung S5K4H7 sensor support"
+ 	select V4L2_CCI_I2C
+diff --git a/drivers/media/i2c/Makefile b/drivers/media/i2c/Makefile
+index ef6029456..b9e843300 100644
+--- a/drivers/media/i2c/Makefile
++++ b/drivers/media/i2c/Makefile
+@@ -130,6 +130,8 @@ obj-$(CONFIG_VIDEO_S5C73M3) += s5c73m3/
+ obj-$(CONFIG_VIDEO_S5K3M5) += s5k3m5.o
+ obj-$(CONFIG_VIDEO_S5K5BAF) += s5k5baf.o
+ obj-$(CONFIG_VIDEO_S5K6A3) += s5k6a3.o
++obj-$(CONFIG_VIDEO_GC02M1) += gc02m1.o
++obj-$(CONFIG_VIDEO_IMX596) += imx596.o
+ obj-$(CONFIG_VIDEO_S5K4H7) += s5k4h7.o
+ obj-$(CONFIG_VIDEO_S5KHP1) += s5khp1.o
+ obj-$(CONFIG_VIDEO_S5KJN1) += s5kjn1.o
+diff --git a/drivers/media/i2c/gc02m1.c b/drivers/media/i2c/gc02m1.c
+new file mode 100644
+index 000000000..f00fd6496
+--- /dev/null
++++ b/drivers/media/i2c/gc02m1.c
+@@ -0,0 +1,974 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * GalaxyCore GC02M1 2 MP image sensor driver
++ *
++ * Macro camera of the Xiaomi 12T Pro (diting). Based on the s5k4h7 driver of
++ * the diting kernel: the sensor initialisation and mode register tables are
++ * not part of the driver, they are loaded from a "camregs" firmware file
++ * built from the camera module's own data.
++ *
++ * camregs format (little endian):
++ *   char magic[8] = "CAMREGS1" or "CAMREGS2"; u32 n_tables;
++ *   n_tables x { char name[16]; u32 n_entries;
++ *                n_entries x { u16 addr; u16 value; u8 width; u8 pad;
++ *                              u16 delay_us } }
++ * width 1 or 2: one register write. CAMREGS2 only: width 0 is a burst of
++ * "value" bytes to consecutive registers, the bytes follow the entry,
++ * padded to a multiple of 4.
++ *
++ * Tables used: "init", then "mode0". The sensor has 8-bit register
++ * addresses in pages selected by register 0xfe; the exposure, gain and
++ * frame length registers are in page 0.
++ */
++
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/firmware.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/pm_runtime.h>
++#include <linux/regmap.h>
++#include <linux/regulator/consumer.h>
++#include <linux/units.h>
++#include <linux/unaligned.h>
++#include <media/v4l2-cci.h>
++#include <media/v4l2-ctrls.h>
++#include <media/v4l2-device.h>
++#include <media/v4l2-fwnode.h>
++
++#define GC02M1_MCLK_FREQ		(19200 * HZ_PER_KHZ)
++#define GC02M1_DATA_LANES		1
++
++/* Chip ID in registers 0xf0 (high) and 0xf1 (low), on every page */
++#define GC02M1_REG_CHIP_ID		CCI_REG16(0xf0)
++#define GC02M1_CHIP_ID			0x02e0
++
++#define GC02M1_REG_PAGE			CCI_REG8(0xfe)
++
++/* Page 0 */
++#define GC02M1_REG_STREAM		CCI_REG8(0x3e)
++#define GC02M1_STREAM_ON		0x90
++#define GC02M1_STREAM_OFF		0x00
++
++#define GC02M1_REG_EXPOSURE_H		CCI_REG8(0x03)	/* bits 13:8 */
++#define GC02M1_REG_EXPOSURE_L		CCI_REG8(0x04)
++#define GC02M1_EXPOSURE_MIN		4	/* module data: minLineCount */
++#define GC02M1_EXPOSURE_STEP		1
++#define GC02M1_EXPOSURE_MARGIN		16
++
++/*
++ * Gain: the global pre-gain of registers 0xb1 (integer part) and 0xb2
++ * (6-bit fraction << 2), code 64 = 1x. The analogue gain stages of
++ * register 0xb6 are left at the value of the init table.
++ */
++#define GC02M1_REG_PREGAIN_H		CCI_REG8(0xb1)
++#define GC02M1_REG_PREGAIN_L		CCI_REG8(0xb2)
++#define GC02M1_AGAIN_MIN		64
++#define GC02M1_AGAIN_MAX		1023
++#define GC02M1_AGAIN_STEP		1
++#define GC02M1_AGAIN_DEFAULT		128
++
++#define GC02M1_REG_VTS_H		CCI_REG8(0x41)	/* bits 13:8 */
++#define GC02M1_REG_VTS_L		CCI_REG8(0x42)
++#define GC02M1_VTS_MAX			0x3fff
++
++#define GC02M1_NATIVE_WIDTH		1600
++#define GC02M1_NATIVE_HEIGHT		1200
++
++#define GC02M1_FW_DEFAULT		"gc02m1.camregs"
++
++#define to_gc02m1(_sd)			container_of(_sd, struct gc02m1, sd)
++
++/*
++ * Bayer order of the output. Not known from the module data (the vendor
++ * pipeline reads it from its own sensor XML): RGGB by default,
++ * selectable for the bring-up with the "bayer" module parameter
++ * (0 RGGB, 1 GRBG, 2 GBRG, 3 BGGR).
++ */
++static unsigned int bayer;
++module_param(bayer, uint, 0444);
++MODULE_PARM_DESC(bayer, "Bayer order: 0 RGGB (default), 1 GRBG, 2 GBRG, 3 BGGR");
++
++static const u32 gc02m1_mbus_codes[] = {
++	MEDIA_BUS_FMT_SRGGB10_1X10, MEDIA_BUS_FMT_SGRBG10_1X10,
++	MEDIA_BUS_FMT_SGBRG10_1X10, MEDIA_BUS_FMT_SBGGR10_1X10,
++};
++
++/*
++ * CSI-2 link frequency: output pixel clock of the module data, 67.2
++ * Mpixel/s at 10 bits per pixel on one lane, DDR.
++ */
++static const s64 gc02m1_link_freq_menu[] = {
++	336000000,
++};
++
++struct gc02m1_reg {
++	u16 addr;
++	u16 value;
++	u8 width;		/* 1, 2, or 0 for a burst */
++	u16 delay_us;
++	const u8 *burst;
++};
++
++struct gc02m1_table {
++	const struct gc02m1_reg *regs;
++	unsigned int num_regs;
++};
++
++/*
++ * Mode of the module data: line length 2192 pixel clocks, frame length
++ * 1268 lines, 30.22 fps, so a pixel rate of 84 Mpixel/s.
++ */
++struct gc02m1_mode {
++	u32 width;
++	u32 height;
++	u32 hts;
++	u32 vts;
++	u64 pixel_rate;
++	unsigned int link_freq_index;
++	const char *table;
++};
++
++static const struct gc02m1_mode gc02m1_supported_modes[] = {
++	{
++		.width = 1600, .height = 1200,
++		.hts = 2192, .vts = 1268,
++		.pixel_rate = 84000000,
++		.link_freq_index = 0,
++		.table = "mode0",
++	},
++};
++
++#define GC02M1_DEFAULT_MODE		0
++
++struct gc02m1 {
++	struct device *dev;
++	struct regmap *regmap;
++	struct clk *mclk;
++	struct gpio_desc *reset_gpio;
++	struct regulator *vdda;		/* Analog power */
++	struct regulator *vddio;	/* Digital I/O power */
++
++	struct v4l2_subdev sd;
++	struct media_pad pad;
++
++	struct v4l2_ctrl_handler ctrl_handler;
++	struct v4l2_ctrl *link_freq;
++	struct v4l2_ctrl *pixel_rate;
++	struct v4l2_ctrl *hblank;
++	struct v4l2_ctrl *vblank;
++	struct v4l2_ctrl *exposure;
++
++	struct gc02m1_table init_table;
++	struct gc02m1_table mode_tables[ARRAY_SIZE(gc02m1_supported_modes)];
++
++	const struct gc02m1_mode *mode;
++};
++
++static int gc02m1_write_table(struct gc02m1 *gc02m1,
++			      const struct gc02m1_table *table)
++{
++	unsigned int i;
++	int ret = 0;
++
++	for (i = 0; i < table->num_regs; i++) {
++		const struct gc02m1_reg *r = &table->regs[i];
++
++		if (r->width == 0) {
++			ret = regmap_bulk_write(gc02m1->regmap, r->addr,
++						r->burst, r->value);
++		} else {
++			u32 reg = r->width == 2 ? CCI_REG16(r->addr) :
++						  CCI_REG8(r->addr);
++
++			cci_write(gc02m1->regmap, reg, r->value, &ret);
++		}
++		if (ret)
++			return ret;
++		if (r->delay_us)
++			fsleep(r->delay_us);
++	}
++
++	return 0;
++}
++
++static u32 gc02m1_get_format_code(void)
++{
++	return gc02m1_mbus_codes[bayer % ARRAY_SIZE(gc02m1_mbus_codes)];
++}
++
++static int gc02m1_set_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct gc02m1 *gc02m1 = container_of(ctrl->handler, struct gc02m1,
++					     ctrl_handler);
++	const struct gc02m1_mode *mode = gc02m1->mode;
++	s64 exposure_max;
++	int ret;
++
++	/* Propagate change of current control to all related controls */
++	if (ctrl->id == V4L2_CID_VBLANK) {
++		/* Update max exposure while meeting expected vblanking */
++		exposure_max = mode->height + ctrl->val - GC02M1_EXPOSURE_MARGIN;
++		__v4l2_ctrl_modify_range(gc02m1->exposure,
++					 gc02m1->exposure->minimum,
++					 exposure_max,
++					 gc02m1->exposure->step,
++					 gc02m1->exposure->default_value);
++	}
++
++	/* V4L2 controls are applied, when sensor is powered up for streaming */
++	if (!pm_runtime_get_if_active(gc02m1->dev))
++		return 0;
++
++	ret = cci_write(gc02m1->regmap, GC02M1_REG_PAGE, 0x00, NULL);
++	if (ret)
++		goto out;
++
++	switch (ctrl->id) {
++	case V4L2_CID_ANALOGUE_GAIN:
++		cci_write(gc02m1->regmap, GC02M1_REG_PREGAIN_H,
++			  ctrl->val >> 6, &ret);
++		cci_write(gc02m1->regmap, GC02M1_REG_PREGAIN_L,
++			  (ctrl->val << 2) & 0xfc, &ret);
++		break;
++	case V4L2_CID_EXPOSURE:
++		cci_write(gc02m1->regmap, GC02M1_REG_EXPOSURE_H,
++			  (ctrl->val >> 8) & 0x3f, &ret);
++		cci_write(gc02m1->regmap, GC02M1_REG_EXPOSURE_L,
++			  ctrl->val & 0xff, &ret);
++		break;
++	case V4L2_CID_VBLANK: {
++		u32 vts = ctrl->val + mode->height;
++
++		cci_write(gc02m1->regmap, GC02M1_REG_VTS_H,
++			  (vts >> 8) & 0x3f, &ret);
++		cci_write(gc02m1->regmap, GC02M1_REG_VTS_L, vts & 0xff, &ret);
++		break;
++	}
++	case V4L2_CID_LINK_FREQ:
++	case V4L2_CID_PIXEL_RATE:
++	case V4L2_CID_HBLANK:
++		/* Set by the mode tables */
++		break;
++	default:
++		ret = -EINVAL;
++		break;
++	}
++
++out:
++	pm_runtime_put(gc02m1->dev);
++
++	return ret;
++}
++
++static const struct v4l2_ctrl_ops gc02m1_ctrl_ops = {
++	.s_ctrl = gc02m1_set_ctrl,
++};
++
++static int gc02m1_init_controls(struct gc02m1 *gc02m1)
++{
++	struct v4l2_ctrl_handler *ctrl_hdlr = &gc02m1->ctrl_handler;
++	const struct gc02m1_mode *mode = gc02m1->mode;
++	s64 hblank, vblank, exposure_max;
++	struct v4l2_fwnode_device_properties props;
++	int ret;
++
++	v4l2_ctrl_handler_init(ctrl_hdlr, 8);
++
++	gc02m1->link_freq = v4l2_ctrl_new_int_menu(ctrl_hdlr, &gc02m1_ctrl_ops,
++					V4L2_CID_LINK_FREQ,
++					ARRAY_SIZE(gc02m1_link_freq_menu) - 1,
++					mode->link_freq_index,
++					gc02m1_link_freq_menu);
++	if (gc02m1->link_freq)
++		gc02m1->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
++
++	gc02m1->pixel_rate = v4l2_ctrl_new_std(ctrl_hdlr, &gc02m1_ctrl_ops,
++					       V4L2_CID_PIXEL_RATE,
++					       1, U32_MAX, 1,
++					       mode->pixel_rate);
++	if (gc02m1->pixel_rate)
++		gc02m1->pixel_rate->flags |= V4L2_CTRL_FLAG_READ_ONLY;
++
++	hblank = mode->hts - mode->width;
++	gc02m1->hblank = v4l2_ctrl_new_std(ctrl_hdlr, &gc02m1_ctrl_ops,
++					   V4L2_CID_HBLANK, hblank,
++					   hblank, 1, hblank);
++	if (gc02m1->hblank)
++		gc02m1->hblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
++
++	vblank = mode->vts - mode->height;
++	gc02m1->vblank = v4l2_ctrl_new_std(ctrl_hdlr, &gc02m1_ctrl_ops,
++					   V4L2_CID_VBLANK, vblank,
++					   GC02M1_VTS_MAX - mode->height, 1,
++					   vblank);
++
++	v4l2_ctrl_new_std(ctrl_hdlr, &gc02m1_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,
++			  GC02M1_AGAIN_MIN, GC02M1_AGAIN_MAX,
++			  GC02M1_AGAIN_STEP, GC02M1_AGAIN_DEFAULT);
++
++	exposure_max = mode->vts - GC02M1_EXPOSURE_MARGIN;
++	gc02m1->exposure = v4l2_ctrl_new_std(ctrl_hdlr, &gc02m1_ctrl_ops,
++					     V4L2_CID_EXPOSURE,
++					     GC02M1_EXPOSURE_MIN,
++					     exposure_max,
++					     GC02M1_EXPOSURE_STEP,
++					     exposure_max);
++
++	ret = v4l2_fwnode_device_parse(gc02m1->dev, &props);
++	if (ret)
++		goto error_free_hdlr;
++
++	ret = v4l2_ctrl_new_fwnode_properties(ctrl_hdlr, &gc02m1_ctrl_ops,
++					      &props);
++	if (ret)
++		goto error_free_hdlr;
++
++	if (ctrl_hdlr->error) {
++		ret = ctrl_hdlr->error;
++		goto error_free_hdlr;
++	}
++
++	gc02m1->sd.ctrl_handler = ctrl_hdlr;
++
++	return 0;
++
++error_free_hdlr:
++	v4l2_ctrl_handler_free(ctrl_hdlr);
++
++	return ret;
++}
++
++static int gc02m1_enable_streams(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *state, u32 pad,
++				 u64 streams_mask)
++{
++	struct gc02m1 *gc02m1 = to_gc02m1(sd);
++	unsigned int idx = gc02m1->mode - gc02m1_supported_modes;
++	int ret;
++
++	ret = pm_runtime_resume_and_get(gc02m1->dev);
++	if (ret)
++		return ret;
++
++	ret = gc02m1_write_table(gc02m1, &gc02m1->init_table);
++	if (!ret)
++		ret = gc02m1_write_table(gc02m1, &gc02m1->mode_tables[idx]);
++	if (ret)
++		goto error;
++
++	ret = __v4l2_ctrl_handler_setup(gc02m1->sd.ctrl_handler);
++
++	cci_write(gc02m1->regmap, GC02M1_REG_PAGE, 0x00, &ret);
++	cci_write(gc02m1->regmap, GC02M1_REG_STREAM, GC02M1_STREAM_ON, &ret);
++	if (ret)
++		goto error;
++
++	return 0;
++
++error:
++	dev_err(gc02m1->dev, "failed to start streaming: %d\n", ret);
++	pm_runtime_put_autosuspend(gc02m1->dev);
++
++	return ret;
++}
++
++static int gc02m1_disable_streams(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_state *state, u32 pad,
++				  u64 streams_mask)
++{
++	struct gc02m1 *gc02m1 = to_gc02m1(sd);
++	int ret;
++
++	ret = cci_write(gc02m1->regmap, GC02M1_REG_PAGE, 0x00, NULL);
++	cci_write(gc02m1->regmap, GC02M1_REG_STREAM, GC02M1_STREAM_OFF, &ret);
++	if (ret)
++		dev_err(gc02m1->dev, "failed to stop streaming: %d\n", ret);
++
++	/* The sensor enters standby at the end of the current frame */
++	fsleep(40 * USEC_PER_MSEC);
++
++	pm_runtime_put_autosuspend(gc02m1->dev);
++
++	return ret;
++}
++
++static void gc02m1_update_pad_format(const struct gc02m1_mode *mode,
++				     struct v4l2_mbus_framefmt *fmt)
++{
++	fmt->code = gc02m1_get_format_code();
++	fmt->width = mode->width;
++	fmt->height = mode->height;
++	fmt->field = V4L2_FIELD_NONE;
++	fmt->colorspace = V4L2_COLORSPACE_RAW;
++	fmt->ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
++	fmt->quantization = V4L2_QUANTIZATION_FULL_RANGE;
++	fmt->xfer_func = V4L2_XFER_FUNC_NONE;
++}
++
++static int gc02m1_set_pad_format(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *state,
++				 struct v4l2_subdev_format *fmt)
++{
++	struct gc02m1 *gc02m1 = to_gc02m1(sd);
++	s64 hblank, vblank, exposure_max;
++	const struct gc02m1_mode *mode;
++
++	mode = v4l2_find_nearest_size(gc02m1_supported_modes,
++				      ARRAY_SIZE(gc02m1_supported_modes),
++				      width, height,
++				      fmt->format.width, fmt->format.height);
++
++	gc02m1_update_pad_format(mode, &fmt->format);
++
++	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY || gc02m1->mode == mode)
++		goto set_format;
++
++	/* Update limits and set FPS and exposure to default values */
++	__v4l2_ctrl_s_ctrl(gc02m1->link_freq, mode->link_freq_index);
++	__v4l2_ctrl_modify_range(gc02m1->pixel_rate, mode->pixel_rate,
++				 mode->pixel_rate, 1, mode->pixel_rate);
++
++	hblank = mode->hts - mode->width;
++	__v4l2_ctrl_modify_range(gc02m1->hblank, hblank, hblank, 1, hblank);
++
++	vblank = mode->vts - mode->height;
++	__v4l2_ctrl_modify_range(gc02m1->vblank, vblank,
++				 GC02M1_VTS_MAX - mode->height, 1, vblank);
++	__v4l2_ctrl_s_ctrl(gc02m1->vblank, vblank);
++
++	exposure_max = mode->vts - GC02M1_EXPOSURE_MARGIN;
++	__v4l2_ctrl_modify_range(gc02m1->exposure, GC02M1_EXPOSURE_MIN,
++				 exposure_max, GC02M1_EXPOSURE_STEP,
++				 exposure_max);
++	__v4l2_ctrl_s_ctrl(gc02m1->exposure, exposure_max);
++
++	if (gc02m1->sd.ctrl_handler->error)
++		return gc02m1->sd.ctrl_handler->error;
++
++	gc02m1->mode = mode;
++
++set_format:
++	*v4l2_subdev_state_get_format(state, 0) = fmt->format;
++
++	return 0;
++}
++
++static int gc02m1_enum_mbus_code(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *sd_state,
++				 struct v4l2_subdev_mbus_code_enum *code)
++{
++	if (code->index > 0)
++		return -EINVAL;
++
++	code->code = gc02m1_get_format_code();
++
++	return 0;
++}
++
++static int gc02m1_enum_frame_size(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_state *sd_state,
++				  struct v4l2_subdev_frame_size_enum *fse)
++{
++	if (fse->index >= ARRAY_SIZE(gc02m1_supported_modes))
++		return -EINVAL;
++
++	if (fse->code != gc02m1_get_format_code())
++		return -EINVAL;
++
++	fse->min_width = gc02m1_supported_modes[fse->index].width;
++	fse->max_width = fse->min_width;
++	fse->min_height = gc02m1_supported_modes[fse->index].height;
++	fse->max_height = fse->min_height;
++
++	return 0;
++}
++
++static int gc02m1_get_selection(struct v4l2_subdev *sd,
++				struct v4l2_subdev_state *sd_state,
++				struct v4l2_subdev_selection *sel)
++{
++	switch (sel->target) {
++	case V4L2_SEL_TGT_CROP:
++	case V4L2_SEL_TGT_CROP_DEFAULT:
++	case V4L2_SEL_TGT_CROP_BOUNDS:
++	case V4L2_SEL_TGT_NATIVE_SIZE:
++		sel->r.left = 0;
++		sel->r.top = 0;
++		sel->r.width = GC02M1_NATIVE_WIDTH;
++		sel->r.height = GC02M1_NATIVE_HEIGHT;
++		return 0;
++	default:
++		return -EINVAL;
++	}
++}
++
++static int gc02m1_init_state(struct v4l2_subdev *sd,
++			     struct v4l2_subdev_state *state)
++{
++	struct gc02m1 *gc02m1 = to_gc02m1(sd);
++	struct v4l2_subdev_format fmt = {
++		.which = V4L2_SUBDEV_FORMAT_TRY,
++		.pad = 0,
++		.format = {
++			.width = gc02m1->mode->width,
++			.height = gc02m1->mode->height,
++		},
++	};
++
++	gc02m1_set_pad_format(sd, state, &fmt);
++
++	return 0;
++}
++
++static const struct v4l2_subdev_video_ops gc02m1_video_ops = {
++	.s_stream = v4l2_subdev_s_stream_helper,
++};
++
++static const struct v4l2_subdev_pad_ops gc02m1_pad_ops = {
++	.set_fmt = gc02m1_set_pad_format,
++	.get_fmt = v4l2_subdev_get_fmt,
++	.get_selection = gc02m1_get_selection,
++	.enum_mbus_code = gc02m1_enum_mbus_code,
++	.enum_frame_size = gc02m1_enum_frame_size,
++	.enable_streams = gc02m1_enable_streams,
++	.disable_streams = gc02m1_disable_streams,
++};
++
++static const struct v4l2_subdev_ops gc02m1_subdev_ops = {
++	.video = &gc02m1_video_ops,
++	.pad = &gc02m1_pad_ops,
++};
++
++static const struct v4l2_subdev_internal_ops gc02m1_internal_ops = {
++	.init_state = gc02m1_init_state,
++};
++
++static const struct media_entity_operations gc02m1_subdev_entity_ops = {
++	.link_validate = v4l2_subdev_link_validate,
++};
++
++/* Copy one table of the camregs firmware into driver memory */
++static int gc02m1_parse_table(struct gc02m1 *gc02m1, const u8 *data,
++			      size_t size, size_t *pos, bool v2, char *name,
++			      struct gc02m1_table *out)
++{
++	struct gc02m1_reg *regs;
++	unsigned int i, n;
++	const u8 *e;
++	u8 *burst;
++
++	if (*pos + 20 > size)
++		return -EINVAL;
++	memcpy(name, data + *pos, 16);
++	name[15] = '\0';
++	n = get_unaligned_le32(data + *pos + 16);
++	*pos += 20;
++	if (n > 8192)
++		return -EINVAL;
++
++	regs = devm_kcalloc(gc02m1->dev, n, sizeof(*regs), GFP_KERNEL);
++	if (!regs)
++		return -ENOMEM;
++
++	for (i = 0; i < n; i++) {
++		if (*pos + 8 > size)
++			return -EINVAL;
++		e = data + *pos;
++		regs[i].addr = get_unaligned_le16(e);
++		regs[i].value = get_unaligned_le16(e + 2);
++		regs[i].width = e[4];
++		regs[i].delay_us = get_unaligned_le16(e + 6);
++		*pos += 8;
++
++		if (regs[i].width == 0 && v2) {
++			size_t len = regs[i].value;
++
++			if (!len || *pos + ALIGN(len, 4) > size)
++				return -EINVAL;
++			burst = devm_kmemdup(gc02m1->dev, data + *pos, len,
++					     GFP_KERNEL);
++			if (!burst)
++				return -ENOMEM;
++			regs[i].burst = burst;
++			*pos += ALIGN(len, 4);
++			continue;
++		}
++		if (regs[i].width != 1 && regs[i].width != 2)
++			return -EINVAL;
++		if (regs[i].width == 1 && regs[i].value > 0xff)
++			return -EINVAL;
++	}
++
++	out->regs = regs;
++	out->num_regs = n;
++
++	return 0;
++}
++
++static int gc02m1_load_tables(struct gc02m1 *gc02m1)
++{
++	const char *fw_name = GC02M1_FW_DEFAULT;
++	const struct firmware *fw;
++	struct gc02m1_table table;
++	unsigned int i, j, n;
++	char name[16];
++	size_t pos;
++	bool v2;
++	int ret;
++
++	device_property_read_string(gc02m1->dev, "firmware-name", &fw_name);
++
++	ret = request_firmware(&fw, fw_name, gc02m1->dev);
++	if (ret)
++		return dev_err_probe(gc02m1->dev, ret,
++				     "failed to load register tables %s\n",
++				     fw_name);
++
++	ret = -EINVAL;
++	if (fw->size < 12)
++		goto out;
++	if (!memcmp(fw->data, "CAMREGS1", 8))
++		v2 = false;
++	else if (!memcmp(fw->data, "CAMREGS2", 8))
++		v2 = true;
++	else
++		goto out;
++
++	n = get_unaligned_le32(fw->data + 8);
++	pos = 12;
++	for (i = 0; i < n; i++) {
++		ret = gc02m1_parse_table(gc02m1, fw->data, fw->size, &pos, v2,
++					 name, &table);
++		if (ret)
++			goto out;
++
++		if (!strcmp(name, "init"))
++			gc02m1->init_table = table;
++		for (j = 0; j < ARRAY_SIZE(gc02m1_supported_modes); j++)
++			if (!strcmp(name, gc02m1_supported_modes[j].table))
++				gc02m1->mode_tables[j] = table;
++	}
++
++	ret = 0;
++	if (!gc02m1->init_table.num_regs)
++		ret = -EINVAL;
++	for (j = 0; j < ARRAY_SIZE(gc02m1_supported_modes); j++)
++		if (!gc02m1->mode_tables[j].num_regs)
++			ret = -EINVAL;
++
++out:
++	release_firmware(fw);
++	if (ret)
++		dev_err(gc02m1->dev, "invalid register tables in %s\n", fw_name);
++
++	return ret;
++}
++
++static int gc02m1_identify_sensor(struct gc02m1 *gc02m1)
++{
++	u64 val;
++	int ret;
++
++	ret = cci_read(gc02m1->regmap, GC02M1_REG_CHIP_ID, &val, NULL);
++	if (ret) {
++		dev_err(gc02m1->dev, "failed to read chip id: %d\n", ret);
++		return ret;
++	}
++
++	if (val != GC02M1_CHIP_ID) {
++		dev_err(gc02m1->dev, "chip id mismatch: %x!=%llx\n",
++			GC02M1_CHIP_ID, val);
++		return -ENODEV;
++	}
++
++	return 0;
++}
++
++static int gc02m1_check_hwcfg(struct gc02m1 *gc02m1)
++{
++	struct fwnode_handle *fwnode = dev_fwnode(gc02m1->dev), *ep;
++	struct v4l2_fwnode_endpoint bus_cfg = {
++		.bus_type = V4L2_MBUS_CSI2_DPHY,
++	};
++	unsigned long freq_bitmap;
++	int ret;
++
++	if (!fwnode)
++		return -ENODEV;
++
++	ep = fwnode_graph_get_next_endpoint(fwnode, NULL);
++	if (!ep)
++		return -EINVAL;
++
++	ret = v4l2_fwnode_endpoint_alloc_parse(ep, &bus_cfg);
++	fwnode_handle_put(ep);
++	if (ret)
++		return ret;
++
++	if (bus_cfg.bus.mipi_csi2.num_data_lanes != GC02M1_DATA_LANES) {
++		dev_err(gc02m1->dev, "Invalid number of data lanes: %u\n",
++			bus_cfg.bus.mipi_csi2.num_data_lanes);
++		ret = -EINVAL;
++		goto endpoint_free;
++	}
++
++	ret = v4l2_link_freq_to_bitmap(gc02m1->dev, bus_cfg.link_frequencies,
++				       bus_cfg.nr_of_link_frequencies,
++				       gc02m1_link_freq_menu,
++				       ARRAY_SIZE(gc02m1_link_freq_menu),
++				       &freq_bitmap);
++	if (ret)
++		goto endpoint_free;
++
++endpoint_free:
++	v4l2_fwnode_endpoint_free(&bus_cfg);
++
++	return ret;
++}
++
++/*
++ * Power-up order of the module data: reset held, I/O 1.8 V, analog 2.8 V,
++ * reset release, MCLK 19.2 MHz.
++ */
++static int gc02m1_power_on(struct device *dev)
++{
++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
++	struct gc02m1 *gc02m1 = to_gc02m1(sd);
++	int ret;
++
++	if (gc02m1->vddio) {
++		ret = regulator_enable(gc02m1->vddio);
++		if (ret)
++			return ret;
++	}
++
++	if (gc02m1->vdda) {
++		ret = regulator_enable(gc02m1->vdda);
++		if (ret)
++			goto disable_vddio;
++	}
++
++	usleep_range(USEC_PER_MSEC, 2 * USEC_PER_MSEC);
++
++	gpiod_set_value_cansleep(gc02m1->reset_gpio, 0);
++	usleep_range(USEC_PER_MSEC, 2 * USEC_PER_MSEC);
++
++	ret = clk_prepare_enable(gc02m1->mclk);
++	if (ret)
++		goto disable_vdda;
++
++	usleep_range(5 * USEC_PER_MSEC, 6 * USEC_PER_MSEC);
++
++	return 0;
++
++disable_vdda:
++	gpiod_set_value_cansleep(gc02m1->reset_gpio, 1);
++	if (gc02m1->vdda)
++		regulator_disable(gc02m1->vdda);
++
++disable_vddio:
++	if (gc02m1->vddio)
++		regulator_disable(gc02m1->vddio);
++
++	return ret;
++}
++
++static int gc02m1_power_off(struct device *dev)
++{
++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
++	struct gc02m1 *gc02m1 = to_gc02m1(sd);
++
++	clk_disable_unprepare(gc02m1->mclk);
++
++	gpiod_set_value_cansleep(gc02m1->reset_gpio, 1);
++
++	if (gc02m1->vdda)
++		regulator_disable(gc02m1->vdda);
++
++	if (gc02m1->vddio)
++		regulator_disable(gc02m1->vddio);
++
++	return 0;
++}
++
++static struct regulator *gc02m1_get_supply(struct gc02m1 *gc02m1,
++					   const char *name)
++{
++	struct regulator *reg;
++
++	reg = devm_regulator_get_optional(gc02m1->dev, name);
++	if (IS_ERR(reg) && PTR_ERR(reg) == -ENODEV)
++		return NULL;
++
++	return reg;
++}
++
++static int gc02m1_probe(struct i2c_client *client)
++{
++	struct gc02m1 *gc02m1;
++	unsigned long freq;
++	int ret;
++
++	gc02m1 = devm_kzalloc(&client->dev, sizeof(*gc02m1), GFP_KERNEL);
++	if (!gc02m1)
++		return -ENOMEM;
++
++	gc02m1->dev = &client->dev;
++	v4l2_i2c_subdev_init(&gc02m1->sd, client, &gc02m1_subdev_ops);
++
++	gc02m1->regmap = devm_cci_regmap_init_i2c(client, 8);
++	if (IS_ERR(gc02m1->regmap))
++		return dev_err_probe(gc02m1->dev, PTR_ERR(gc02m1->regmap),
++				     "failed to init CCI\n");
++
++	gc02m1->mclk = devm_v4l2_sensor_clk_get(gc02m1->dev, NULL);
++	if (IS_ERR(gc02m1->mclk))
++		return dev_err_probe(gc02m1->dev, PTR_ERR(gc02m1->mclk),
++				     "failed to get MCLK clock\n");
++
++	freq = clk_get_rate(gc02m1->mclk);
++	if (freq != GC02M1_MCLK_FREQ)
++		return dev_err_probe(gc02m1->dev, -EINVAL,
++				     "MCLK clock frequency %lu is not supported\n",
++				     freq);
++
++	ret = gc02m1_check_hwcfg(gc02m1);
++	if (ret)
++		return dev_err_probe(gc02m1->dev, ret,
++				     "failed to check HW configuration\n");
++
++	gc02m1->reset_gpio = devm_gpiod_get_optional(gc02m1->dev, "reset",
++						     GPIOD_OUT_HIGH);
++	if (IS_ERR(gc02m1->reset_gpio))
++		return dev_err_probe(gc02m1->dev, PTR_ERR(gc02m1->reset_gpio),
++				     "cannot get reset GPIO\n");
++
++	gc02m1->vdda = gc02m1_get_supply(gc02m1, "vdda");
++	if (IS_ERR(gc02m1->vdda))
++		return dev_err_probe(gc02m1->dev, PTR_ERR(gc02m1->vdda),
++				     "Failed to get 'vdda' regulator\n");
++
++	gc02m1->vddio = gc02m1_get_supply(gc02m1, "vddio");
++	if (IS_ERR(gc02m1->vddio))
++		return dev_err_probe(gc02m1->dev, PTR_ERR(gc02m1->vddio),
++				     "Failed to get 'vddio' regulator\n");
++
++	ret = gc02m1_load_tables(gc02m1);
++	if (ret)
++		return ret;
++
++	/* The sensor must be powered on to read the CHIP_ID register */
++	ret = gc02m1_power_on(gc02m1->dev);
++	if (ret)
++		return ret;
++
++	ret = gc02m1_identify_sensor(gc02m1);
++	if (ret) {
++		dev_err_probe(gc02m1->dev, ret, "failed to find sensor\n");
++		goto power_off;
++	}
++
++	gc02m1->mode = &gc02m1_supported_modes[GC02M1_DEFAULT_MODE];
++	ret = gc02m1_init_controls(gc02m1);
++	if (ret) {
++		dev_err_probe(gc02m1->dev, ret, "failed to init controls\n");
++		goto power_off;
++	}
++
++	gc02m1->sd.state_lock = gc02m1->ctrl_handler.lock;
++	gc02m1->sd.internal_ops = &gc02m1_internal_ops;
++	gc02m1->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
++	gc02m1->sd.entity.ops = &gc02m1_subdev_entity_ops;
++	gc02m1->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
++	gc02m1->pad.flags = MEDIA_PAD_FL_SOURCE;
++
++	ret = media_entity_pads_init(&gc02m1->sd.entity, 1, &gc02m1->pad);
++	if (ret) {
++		dev_err_probe(gc02m1->dev, ret,
++			      "failed to init media entity pads\n");
++		goto v4l2_ctrl_handler_free;
++	}
++
++	ret = v4l2_subdev_init_finalize(&gc02m1->sd);
++	if (ret < 0) {
++		dev_err_probe(gc02m1->dev, ret,
++			      "failed to init media entity pads\n");
++		goto media_entity_cleanup;
++	}
++
++	pm_runtime_set_active(gc02m1->dev);
++	pm_runtime_enable(gc02m1->dev);
++
++	ret = v4l2_async_register_subdev_sensor(&gc02m1->sd);
++	if (ret < 0) {
++		dev_err_probe(gc02m1->dev, ret,
++			      "failed to register V4L2 subdev\n");
++		goto subdev_cleanup;
++	}
++
++	pm_runtime_set_autosuspend_delay(gc02m1->dev, 1000);
++	pm_runtime_use_autosuspend(gc02m1->dev);
++	pm_runtime_idle(gc02m1->dev);
++
++	return 0;
++
++subdev_cleanup:
++	v4l2_subdev_cleanup(&gc02m1->sd);
++	pm_runtime_disable(gc02m1->dev);
++	pm_runtime_set_suspended(gc02m1->dev);
++
++media_entity_cleanup:
++	media_entity_cleanup(&gc02m1->sd.entity);
++
++v4l2_ctrl_handler_free:
++	v4l2_ctrl_handler_free(gc02m1->sd.ctrl_handler);
++
++power_off:
++	gc02m1_power_off(gc02m1->dev);
++
++	return ret;
++}
++
++static void gc02m1_remove(struct i2c_client *client)
++{
++	struct v4l2_subdev *sd = i2c_get_clientdata(client);
++	struct gc02m1 *gc02m1 = to_gc02m1(sd);
++
++	v4l2_async_unregister_subdev(sd);
++	v4l2_subdev_cleanup(sd);
++	media_entity_cleanup(&sd->entity);
++	v4l2_ctrl_handler_free(sd->ctrl_handler);
++	pm_runtime_disable(gc02m1->dev);
++
++	if (!pm_runtime_status_suspended(gc02m1->dev)) {
++		gc02m1_power_off(gc02m1->dev);
++		pm_runtime_set_suspended(gc02m1->dev);
++	}
++}
++
++static const struct dev_pm_ops gc02m1_pm_ops = {
++	SET_RUNTIME_PM_OPS(gc02m1_power_off, gc02m1_power_on, NULL)
++};
++
++static const struct of_device_id gc02m1_of_match[] = {
++	{ .compatible = "galaxycore,gc02m1" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, gc02m1_of_match);
++
++static struct i2c_driver gc02m1_i2c_driver = {
++	.driver = {
++		.name = "gc02m1",
++		.pm = &gc02m1_pm_ops,
++		.of_match_table = gc02m1_of_match,
++	},
++	.probe = gc02m1_probe,
++	.remove = gc02m1_remove,
++};
++
++module_i2c_driver(gc02m1_i2c_driver);
++
++MODULE_DESCRIPTION("GalaxyCore GC02M1 image sensor driver");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/media/i2c/imx596.c b/drivers/media/i2c/imx596.c
+new file mode 100644
+index 000000000..51f0ba68f
+--- /dev/null
++++ b/drivers/media/i2c/imx596.c
+@@ -0,0 +1,1014 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * Sony IMX596 20 MP image sensor driver
++ *
++ * Front camera of the Xiaomi 12T Pro (diting). Based on the s5k4h7 driver of
++ * the diting kernel: the sensor initialisation and mode register tables are
++ * not part of the driver, they are loaded from a "camregs" firmware file
++ * built from the camera module's own data.
++ *
++ * camregs format (little endian):
++ *   char magic[8] = "CAMREGS1" or "CAMREGS2"; u32 n_tables;
++ *   n_tables x { char name[16]; u32 n_entries;
++ *                n_entries x { u16 addr; u16 value; u8 width; u8 pad;
++ *                              u16 delay_us } }
++ * width 1 or 2: one register write. CAMREGS2 only: width 0 is a burst of
++ * "value" bytes to consecutive registers, the bytes follow the entry,
++ * padded to a multiple of 4.
++ *
++ * Tables used: "init", then one of "mode0" ... "mode4" (module order).
++ * The register map follows the MIPI CCS layout of Sony sensors.
++ */
++
++#include <linux/clk.h>
++#include <linux/delay.h>
++#include <linux/firmware.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/pm_runtime.h>
++#include <linux/regmap.h>
++#include <linux/regulator/consumer.h>
++#include <linux/units.h>
++#include <linux/unaligned.h>
++#include <media/v4l2-cci.h>
++#include <media/v4l2-ctrls.h>
++#include <media/v4l2-device.h>
++#include <media/v4l2-fwnode.h>
++
++#define IMX596_MCLK_FREQ		(19200 * HZ_PER_KHZ)
++#define IMX596_DATA_LANES		4
++
++#define IMX596_REG_CHIP_ID		CCI_REG16(0x0016)
++#define IMX596_CHIP_ID			0x0596
++
++#define IMX596_REG_MODE_SELECT		CCI_REG8(0x0100)
++#define IMX596_MODE_STREAMING		BIT(0)
++
++#define IMX596_REG_EXPOSURE		CCI_REG16(0x0202)
++#define IMX596_EXPOSURE_MIN		16	/* module data: minLineCount */
++#define IMX596_EXPOSURE_STEP		1
++#define IMX596_EXPOSURE_MARGIN		48
++
++/* Analogue gain code: gain = 1024 / (1024 - code); 960 = 16x */
++#define IMX596_REG_AGAIN		CCI_REG16(0x0204)
++#define IMX596_AGAIN_MIN		0
++#define IMX596_AGAIN_MAX		960
++#define IMX596_AGAIN_STEP		1
++#define IMX596_AGAIN_DEFAULT		512
++
++#define IMX596_REG_VTS			CCI_REG16(0x0340)
++#define IMX596_VTS_MAX			0xffff
++
++#define IMX596_REG_TEST_PATTERN		CCI_REG16(0x0600)
++
++#define IMX596_NATIVE_WIDTH		5184
++#define IMX596_NATIVE_HEIGHT		3904
++
++#define IMX596_FW_DEFAULT		"imx596.camregs"
++
++#define to_imx596(_sd)			container_of(_sd, struct imx596, sd)
++
++/*
++ * Bayer order of the output. Not known from the module data (the vendor
++ * pipeline reads it from its own sensor XML): RGGB as most Sony sensors,
++ * selectable for the bring-up with the "bayer" module parameter
++ * (0 RGGB, 1 GRBG, 2 GBRG, 3 BGGR).
++ */
++static unsigned int bayer;
++module_param(bayer, uint, 0444);
++MODULE_PARM_DESC(bayer, "Bayer order: 0 RGGB (default), 1 GRBG, 2 GBRG, 3 BGGR");
++
++static const u32 imx596_mbus_codes[] = {
++	MEDIA_BUS_FMT_SRGGB10_1X10, MEDIA_BUS_FMT_SGRBG10_1X10,
++	MEDIA_BUS_FMT_SGBRG10_1X10, MEDIA_BUS_FMT_SBGGR10_1X10,
++};
++
++/*
++ * CSI-2 link frequencies: output pixel clock of the module data
++ * (10 bits per pixel, 4 lanes, DDR), 657.92 and 537.6 Mpixel/s.
++ */
++static const s64 imx596_link_freq_menu[] = {
++	822400000,
++	672000000,
++};
++
++struct imx596_reg {
++	u16 addr;
++	u16 value;
++	u8 width;		/* 1, 2, or 0 for a burst */
++	u16 delay_us;
++	const u8 *burst;
++};
++
++struct imx596_table {
++	const struct imx596_reg *regs;
++	unsigned int num_regs;
++};
++
++/*
++ * Modes of the module data. hts/vts are its line length (pixel clocks)
++ * and frame length (lines); the pixel rate is hts * vts * frame rate.
++ * The module's mode 3 (2592x1458 at 30 fps) is mode 2 with a longer
++ * frame, it is not listed.
++ */
++struct imx596_mode {
++	u32 width;
++	u32 height;
++	u32 hts;
++	u32 vts;
++	u64 pixel_rate;
++	unsigned int link_freq_index;
++	const char *table;
++};
++
++static const struct imx596_mode imx596_supported_modes[] = {
++	{	/* full resolution (remosaic), 30 fps */
++		.width = 5184, .height = 3904,
++		.hts = 7288, .vts = 3992,
++		.pixel_rate = 872810880,
++		.link_freq_index = 0,
++		.table = "mode0",
++	},
++	{	/* 2x2 binning, 30 fps */
++		.width = 2592, .height = 1952,
++		.hts = 4644, .vts = 6302,
++		.pixel_rate = 877994640,
++		.link_freq_index = 1,
++		.table = "mode1",
++	},
++	{	/* 2x2 binning, 16:9, 60 fps */
++		.width = 2592, .height = 1458,
++		.hts = 4644, .vts = 3152,
++		.pixel_rate = 878273280,
++		.link_freq_index = 1,
++		.table = "mode2",
++	},
++	{	/* 4x4 binning, 16:9, 120 fps */
++		.width = 1280, .height = 720,
++		.hts = 2324, .vts = 2294,
++		.pixel_rate = 640000000,
++		.link_freq_index = 1,
++		.table = "mode4",
++	},
++};
++
++#define IMX596_DEFAULT_MODE		1
++
++static const char * const imx596_test_pattern_menu[] = {
++	"Disabled",
++	"Solid color",
++	"Color bars",
++	"Fade to grey color bars",
++	"PN9",
++};
++
++struct imx596 {
++	struct device *dev;
++	struct regmap *regmap;
++	struct clk *mclk;
++	struct gpio_desc *reset_gpio;
++	struct regulator *vdda;		/* Analog power */
++	struct regulator *vddd;		/* Digital core power */
++	struct regulator *vddio;	/* Digital I/O power */
++
++	struct v4l2_subdev sd;
++	struct media_pad pad;
++
++	struct v4l2_ctrl_handler ctrl_handler;
++	struct v4l2_ctrl *link_freq;
++	struct v4l2_ctrl *pixel_rate;
++	struct v4l2_ctrl *hblank;
++	struct v4l2_ctrl *vblank;
++	struct v4l2_ctrl *exposure;
++
++	struct imx596_table init_table;
++	struct imx596_table mode_tables[ARRAY_SIZE(imx596_supported_modes)];
++
++	const struct imx596_mode *mode;
++};
++
++static int imx596_write_table(struct imx596 *imx596,
++			      const struct imx596_table *table)
++{
++	unsigned int i;
++	int ret = 0;
++
++	for (i = 0; i < table->num_regs; i++) {
++		const struct imx596_reg *r = &table->regs[i];
++
++		if (r->width == 0) {
++			ret = regmap_bulk_write(imx596->regmap, r->addr,
++						r->burst, r->value);
++		} else {
++			u32 reg = r->width == 2 ? CCI_REG16(r->addr) :
++						  CCI_REG8(r->addr);
++
++			cci_write(imx596->regmap, reg, r->value, &ret);
++		}
++		if (ret)
++			return ret;
++		if (r->delay_us)
++			fsleep(r->delay_us);
++	}
++
++	return 0;
++}
++
++static u32 imx596_get_format_code(void)
++{
++	return imx596_mbus_codes[bayer % ARRAY_SIZE(imx596_mbus_codes)];
++}
++
++static int imx596_set_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct imx596 *imx596 = container_of(ctrl->handler, struct imx596,
++					     ctrl_handler);
++	const struct imx596_mode *mode = imx596->mode;
++	s64 exposure_max;
++	int ret;
++
++	/* Propagate change of current control to all related controls */
++	if (ctrl->id == V4L2_CID_VBLANK) {
++		/* Update max exposure while meeting expected vblanking */
++		exposure_max = mode->height + ctrl->val - IMX596_EXPOSURE_MARGIN;
++		__v4l2_ctrl_modify_range(imx596->exposure,
++					 imx596->exposure->minimum,
++					 exposure_max,
++					 imx596->exposure->step,
++					 imx596->exposure->default_value);
++	}
++
++	/* V4L2 controls are applied, when sensor is powered up for streaming */
++	if (!pm_runtime_get_if_active(imx596->dev))
++		return 0;
++
++	switch (ctrl->id) {
++	case V4L2_CID_ANALOGUE_GAIN:
++		ret = cci_write(imx596->regmap, IMX596_REG_AGAIN, ctrl->val, NULL);
++		break;
++	case V4L2_CID_EXPOSURE:
++		ret = cci_write(imx596->regmap, IMX596_REG_EXPOSURE,
++				ctrl->val, NULL);
++		break;
++	case V4L2_CID_VBLANK:
++		ret = cci_write(imx596->regmap, IMX596_REG_VTS,
++				ctrl->val + mode->height, NULL);
++		break;
++	case V4L2_CID_TEST_PATTERN:
++		ret = cci_write(imx596->regmap, IMX596_REG_TEST_PATTERN,
++				ctrl->val, NULL);
++		break;
++	case V4L2_CID_LINK_FREQ:
++	case V4L2_CID_PIXEL_RATE:
++	case V4L2_CID_HBLANK:
++		/* Set by the mode tables */
++		ret = 0;
++		break;
++	default:
++		ret = -EINVAL;
++		break;
++	}
++
++	pm_runtime_put(imx596->dev);
++
++	return ret;
++}
++
++static const struct v4l2_ctrl_ops imx596_ctrl_ops = {
++	.s_ctrl = imx596_set_ctrl,
++};
++
++static int imx596_init_controls(struct imx596 *imx596)
++{
++	struct v4l2_ctrl_handler *ctrl_hdlr = &imx596->ctrl_handler;
++	const struct imx596_mode *mode = imx596->mode;
++	s64 hblank, vblank, exposure_max;
++	struct v4l2_fwnode_device_properties props;
++	int ret;
++
++	v4l2_ctrl_handler_init(ctrl_hdlr, 10);
++
++	imx596->link_freq = v4l2_ctrl_new_int_menu(ctrl_hdlr, &imx596_ctrl_ops,
++					V4L2_CID_LINK_FREQ,
++					ARRAY_SIZE(imx596_link_freq_menu) - 1,
++					mode->link_freq_index,
++					imx596_link_freq_menu);
++	if (imx596->link_freq)
++		imx596->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
++
++	imx596->pixel_rate = v4l2_ctrl_new_std(ctrl_hdlr, &imx596_ctrl_ops,
++					       V4L2_CID_PIXEL_RATE,
++					       1, U32_MAX, 1,
++					       mode->pixel_rate);
++	if (imx596->pixel_rate)
++		imx596->pixel_rate->flags |= V4L2_CTRL_FLAG_READ_ONLY;
++
++	hblank = mode->hts - mode->width;
++	imx596->hblank = v4l2_ctrl_new_std(ctrl_hdlr, &imx596_ctrl_ops,
++					   V4L2_CID_HBLANK, hblank,
++					   hblank, 1, hblank);
++	if (imx596->hblank)
++		imx596->hblank->flags |= V4L2_CTRL_FLAG_READ_ONLY;
++
++	vblank = mode->vts - mode->height;
++	imx596->vblank = v4l2_ctrl_new_std(ctrl_hdlr, &imx596_ctrl_ops,
++					   V4L2_CID_VBLANK, vblank,
++					   IMX596_VTS_MAX - mode->height, 1,
++					   vblank);
++
++	v4l2_ctrl_new_std(ctrl_hdlr, &imx596_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,
++			  IMX596_AGAIN_MIN, IMX596_AGAIN_MAX,
++			  IMX596_AGAIN_STEP, IMX596_AGAIN_DEFAULT);
++
++	exposure_max = mode->vts - IMX596_EXPOSURE_MARGIN;
++	imx596->exposure = v4l2_ctrl_new_std(ctrl_hdlr, &imx596_ctrl_ops,
++					     V4L2_CID_EXPOSURE,
++					     IMX596_EXPOSURE_MIN,
++					     exposure_max,
++					     IMX596_EXPOSURE_STEP,
++					     exposure_max);
++
++	v4l2_ctrl_new_std_menu_items(ctrl_hdlr, &imx596_ctrl_ops,
++				     V4L2_CID_TEST_PATTERN,
++				     ARRAY_SIZE(imx596_test_pattern_menu) - 1,
++				     0, 0, imx596_test_pattern_menu);
++
++	ret = v4l2_fwnode_device_parse(imx596->dev, &props);
++	if (ret)
++		goto error_free_hdlr;
++
++	ret = v4l2_ctrl_new_fwnode_properties(ctrl_hdlr, &imx596_ctrl_ops,
++					      &props);
++	if (ret)
++		goto error_free_hdlr;
++
++	if (ctrl_hdlr->error) {
++		ret = ctrl_hdlr->error;
++		goto error_free_hdlr;
++	}
++
++	imx596->sd.ctrl_handler = ctrl_hdlr;
++
++	return 0;
++
++error_free_hdlr:
++	v4l2_ctrl_handler_free(ctrl_hdlr);
++
++	return ret;
++}
++
++static int imx596_enable_streams(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *state, u32 pad,
++				 u64 streams_mask)
++{
++	struct imx596 *imx596 = to_imx596(sd);
++	unsigned int idx = imx596->mode - imx596_supported_modes;
++	int ret;
++
++	ret = pm_runtime_resume_and_get(imx596->dev);
++	if (ret)
++		return ret;
++
++	ret = imx596_write_table(imx596, &imx596->init_table);
++	if (!ret)
++		ret = imx596_write_table(imx596, &imx596->mode_tables[idx]);
++	if (ret)
++		goto error;
++
++	ret = __v4l2_ctrl_handler_setup(imx596->sd.ctrl_handler);
++
++	cci_write(imx596->regmap, IMX596_REG_MODE_SELECT,
++		  IMX596_MODE_STREAMING, &ret);
++	if (ret)
++		goto error;
++
++	return 0;
++
++error:
++	dev_err(imx596->dev, "failed to start streaming: %d\n", ret);
++	pm_runtime_put_autosuspend(imx596->dev);
++
++	return ret;
++}
++
++static int imx596_disable_streams(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_state *state, u32 pad,
++				  u64 streams_mask)
++{
++	struct imx596 *imx596 = to_imx596(sd);
++	int ret;
++
++	ret = cci_write(imx596->regmap, IMX596_REG_MODE_SELECT, 0x0, NULL);
++	if (ret)
++		dev_err(imx596->dev, "failed to stop streaming: %d\n", ret);
++
++	/* The sensor enters standby at the end of the current frame */
++	fsleep(40 * USEC_PER_MSEC);
++
++	pm_runtime_put_autosuspend(imx596->dev);
++
++	return ret;
++}
++
++static void imx596_update_pad_format(const struct imx596_mode *mode,
++				     struct v4l2_mbus_framefmt *fmt)
++{
++	fmt->code = imx596_get_format_code();
++	fmt->width = mode->width;
++	fmt->height = mode->height;
++	fmt->field = V4L2_FIELD_NONE;
++	fmt->colorspace = V4L2_COLORSPACE_RAW;
++	fmt->ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT;
++	fmt->quantization = V4L2_QUANTIZATION_FULL_RANGE;
++	fmt->xfer_func = V4L2_XFER_FUNC_NONE;
++}
++
++static int imx596_set_pad_format(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *state,
++				 struct v4l2_subdev_format *fmt)
++{
++	struct imx596 *imx596 = to_imx596(sd);
++	s64 hblank, vblank, exposure_max;
++	const struct imx596_mode *mode;
++
++	mode = v4l2_find_nearest_size(imx596_supported_modes,
++				      ARRAY_SIZE(imx596_supported_modes),
++				      width, height,
++				      fmt->format.width, fmt->format.height);
++
++	imx596_update_pad_format(mode, &fmt->format);
++
++	if (fmt->which == V4L2_SUBDEV_FORMAT_TRY || imx596->mode == mode)
++		goto set_format;
++
++	/* Update limits and set FPS and exposure to default values */
++	__v4l2_ctrl_s_ctrl(imx596->link_freq, mode->link_freq_index);
++	__v4l2_ctrl_modify_range(imx596->pixel_rate, mode->pixel_rate,
++				 mode->pixel_rate, 1, mode->pixel_rate);
++
++	hblank = mode->hts - mode->width;
++	__v4l2_ctrl_modify_range(imx596->hblank, hblank, hblank, 1, hblank);
++
++	vblank = mode->vts - mode->height;
++	__v4l2_ctrl_modify_range(imx596->vblank, vblank,
++				 IMX596_VTS_MAX - mode->height, 1, vblank);
++	__v4l2_ctrl_s_ctrl(imx596->vblank, vblank);
++
++	exposure_max = mode->vts - IMX596_EXPOSURE_MARGIN;
++	__v4l2_ctrl_modify_range(imx596->exposure, IMX596_EXPOSURE_MIN,
++				 exposure_max, IMX596_EXPOSURE_STEP,
++				 exposure_max);
++	__v4l2_ctrl_s_ctrl(imx596->exposure, exposure_max);
++
++	if (imx596->sd.ctrl_handler->error)
++		return imx596->sd.ctrl_handler->error;
++
++	imx596->mode = mode;
++
++set_format:
++	*v4l2_subdev_state_get_format(state, 0) = fmt->format;
++
++	return 0;
++}
++
++static int imx596_enum_mbus_code(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *sd_state,
++				 struct v4l2_subdev_mbus_code_enum *code)
++{
++	if (code->index > 0)
++		return -EINVAL;
++
++	code->code = imx596_get_format_code();
++
++	return 0;
++}
++
++static int imx596_enum_frame_size(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_state *sd_state,
++				  struct v4l2_subdev_frame_size_enum *fse)
++{
++	if (fse->index >= ARRAY_SIZE(imx596_supported_modes))
++		return -EINVAL;
++
++	if (fse->code != imx596_get_format_code())
++		return -EINVAL;
++
++	fse->min_width = imx596_supported_modes[fse->index].width;
++	fse->max_width = fse->min_width;
++	fse->min_height = imx596_supported_modes[fse->index].height;
++	fse->max_height = fse->min_height;
++
++	return 0;
++}
++
++static int imx596_get_selection(struct v4l2_subdev *sd,
++				struct v4l2_subdev_state *sd_state,
++				struct v4l2_subdev_selection *sel)
++{
++	switch (sel->target) {
++	case V4L2_SEL_TGT_CROP:
++	case V4L2_SEL_TGT_CROP_DEFAULT:
++	case V4L2_SEL_TGT_CROP_BOUNDS:
++	case V4L2_SEL_TGT_NATIVE_SIZE:
++		/* Binned modes read the whole array (16:9 ones are cropped) */
++		sel->r.left = 0;
++		sel->r.top = 0;
++		sel->r.width = IMX596_NATIVE_WIDTH;
++		sel->r.height = IMX596_NATIVE_HEIGHT;
++		return 0;
++	default:
++		return -EINVAL;
++	}
++}
++
++static int imx596_init_state(struct v4l2_subdev *sd,
++			     struct v4l2_subdev_state *state)
++{
++	struct imx596 *imx596 = to_imx596(sd);
++	struct v4l2_subdev_format fmt = {
++		.which = V4L2_SUBDEV_FORMAT_TRY,
++		.pad = 0,
++		.format = {
++			.width = imx596->mode->width,
++			.height = imx596->mode->height,
++		},
++	};
++
++	imx596_set_pad_format(sd, state, &fmt);
++
++	return 0;
++}
++
++static const struct v4l2_subdev_video_ops imx596_video_ops = {
++	.s_stream = v4l2_subdev_s_stream_helper,
++};
++
++static const struct v4l2_subdev_pad_ops imx596_pad_ops = {
++	.set_fmt = imx596_set_pad_format,
++	.get_fmt = v4l2_subdev_get_fmt,
++	.get_selection = imx596_get_selection,
++	.enum_mbus_code = imx596_enum_mbus_code,
++	.enum_frame_size = imx596_enum_frame_size,
++	.enable_streams = imx596_enable_streams,
++	.disable_streams = imx596_disable_streams,
++};
++
++static const struct v4l2_subdev_ops imx596_subdev_ops = {
++	.video = &imx596_video_ops,
++	.pad = &imx596_pad_ops,
++};
++
++static const struct v4l2_subdev_internal_ops imx596_internal_ops = {
++	.init_state = imx596_init_state,
++};
++
++static const struct media_entity_operations imx596_subdev_entity_ops = {
++	.link_validate = v4l2_subdev_link_validate,
++};
++
++/* Copy one table of the camregs firmware into driver memory */
++static int imx596_parse_table(struct imx596 *imx596, const u8 *data,
++			      size_t size, size_t *pos, bool v2, char *name,
++			      struct imx596_table *out)
++{
++	struct imx596_reg *regs;
++	unsigned int i, n;
++	const u8 *e;
++	u8 *burst;
++
++	if (*pos + 20 > size)
++		return -EINVAL;
++	memcpy(name, data + *pos, 16);
++	name[15] = '\0';
++	n = get_unaligned_le32(data + *pos + 16);
++	*pos += 20;
++	if (n > 8192)
++		return -EINVAL;
++
++	regs = devm_kcalloc(imx596->dev, n, sizeof(*regs), GFP_KERNEL);
++	if (!regs)
++		return -ENOMEM;
++
++	for (i = 0; i < n; i++) {
++		if (*pos + 8 > size)
++			return -EINVAL;
++		e = data + *pos;
++		regs[i].addr = get_unaligned_le16(e);
++		regs[i].value = get_unaligned_le16(e + 2);
++		regs[i].width = e[4];
++		regs[i].delay_us = get_unaligned_le16(e + 6);
++		*pos += 8;
++
++		if (regs[i].width == 0 && v2) {
++			size_t len = regs[i].value;
++
++			if (!len || *pos + ALIGN(len, 4) > size)
++				return -EINVAL;
++			burst = devm_kmemdup(imx596->dev, data + *pos, len,
++					     GFP_KERNEL);
++			if (!burst)
++				return -ENOMEM;
++			regs[i].burst = burst;
++			*pos += ALIGN(len, 4);
++			continue;
++		}
++		if (regs[i].width != 1 && regs[i].width != 2)
++			return -EINVAL;
++		if (regs[i].width == 1 && regs[i].value > 0xff)
++			return -EINVAL;
++	}
++
++	out->regs = regs;
++	out->num_regs = n;
++
++	return 0;
++}
++
++static int imx596_load_tables(struct imx596 *imx596)
++{
++	const char *fw_name = IMX596_FW_DEFAULT;
++	const struct firmware *fw;
++	struct imx596_table table;
++	unsigned int i, j, n;
++	char name[16];
++	size_t pos;
++	bool v2;
++	int ret;
++
++	device_property_read_string(imx596->dev, "firmware-name", &fw_name);
++
++	ret = request_firmware(&fw, fw_name, imx596->dev);
++	if (ret)
++		return dev_err_probe(imx596->dev, ret,
++				     "failed to load register tables %s\n",
++				     fw_name);
++
++	ret = -EINVAL;
++	if (fw->size < 12)
++		goto out;
++	if (!memcmp(fw->data, "CAMREGS1", 8))
++		v2 = false;
++	else if (!memcmp(fw->data, "CAMREGS2", 8))
++		v2 = true;
++	else
++		goto out;
++
++	n = get_unaligned_le32(fw->data + 8);
++	pos = 12;
++	for (i = 0; i < n; i++) {
++		ret = imx596_parse_table(imx596, fw->data, fw->size, &pos, v2,
++					 name, &table);
++		if (ret)
++			goto out;
++
++		if (!strcmp(name, "init"))
++			imx596->init_table = table;
++		for (j = 0; j < ARRAY_SIZE(imx596_supported_modes); j++)
++			if (!strcmp(name, imx596_supported_modes[j].table))
++				imx596->mode_tables[j] = table;
++	}
++
++	ret = 0;
++	if (!imx596->init_table.num_regs)
++		ret = -EINVAL;
++	for (j = 0; j < ARRAY_SIZE(imx596_supported_modes); j++)
++		if (!imx596->mode_tables[j].num_regs)
++			ret = -EINVAL;
++
++out:
++	release_firmware(fw);
++	if (ret)
++		dev_err(imx596->dev, "invalid register tables in %s\n", fw_name);
++
++	return ret;
++}
++
++static int imx596_identify_sensor(struct imx596 *imx596)
++{
++	u64 val;
++	int ret;
++
++	ret = cci_read(imx596->regmap, IMX596_REG_CHIP_ID, &val, NULL);
++	if (ret) {
++		dev_err(imx596->dev, "failed to read chip id: %d\n", ret);
++		return ret;
++	}
++
++	if (val != IMX596_CHIP_ID) {
++		dev_err(imx596->dev, "chip id mismatch: %x!=%llx\n",
++			IMX596_CHIP_ID, val);
++		return -ENODEV;
++	}
++
++	return 0;
++}
++
++static int imx596_check_hwcfg(struct imx596 *imx596)
++{
++	struct fwnode_handle *fwnode = dev_fwnode(imx596->dev), *ep;
++	struct v4l2_fwnode_endpoint bus_cfg = {
++		.bus_type = V4L2_MBUS_CSI2_DPHY,
++	};
++	unsigned long freq_bitmap;
++	int ret;
++
++	if (!fwnode)
++		return -ENODEV;
++
++	ep = fwnode_graph_get_next_endpoint(fwnode, NULL);
++	if (!ep)
++		return -EINVAL;
++
++	ret = v4l2_fwnode_endpoint_alloc_parse(ep, &bus_cfg);
++	fwnode_handle_put(ep);
++	if (ret)
++		return ret;
++
++	if (bus_cfg.bus.mipi_csi2.num_data_lanes != IMX596_DATA_LANES) {
++		dev_err(imx596->dev, "Invalid number of data lanes: %u\n",
++			bus_cfg.bus.mipi_csi2.num_data_lanes);
++		ret = -EINVAL;
++		goto endpoint_free;
++	}
++
++	ret = v4l2_link_freq_to_bitmap(imx596->dev, bus_cfg.link_frequencies,
++				       bus_cfg.nr_of_link_frequencies,
++				       imx596_link_freq_menu,
++				       ARRAY_SIZE(imx596_link_freq_menu),
++				       &freq_bitmap);
++	if (ret)
++		goto endpoint_free;
++
++	/* All modes are needed: both frequencies must be allowed */
++	if (freq_bitmap != GENMASK(ARRAY_SIZE(imx596_link_freq_menu) - 1, 0)) {
++		dev_err(imx596->dev, "link-frequencies must list %lld and %lld\n",
++			imx596_link_freq_menu[0], imx596_link_freq_menu[1]);
++		ret = -EINVAL;
++	}
++
++endpoint_free:
++	v4l2_fwnode_endpoint_free(&bus_cfg);
++
++	return ret;
++}
++
++/*
++ * Power-up order of the module data: I/O (WL2866D AVDD1), core (WL2866D
++ * DVDD1), analog, reset release, MCLK 19.2 MHz.
++ */
++static int imx596_power_on(struct device *dev)
++{
++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
++	struct imx596 *imx596 = to_imx596(sd);
++	int ret;
++
++	if (imx596->vddio) {
++		ret = regulator_enable(imx596->vddio);
++		if (ret)
++			return ret;
++	}
++
++	if (imx596->vddd) {
++		ret = regulator_enable(imx596->vddd);
++		if (ret)
++			goto disable_vddio;
++	}
++
++	if (imx596->vdda) {
++		ret = regulator_enable(imx596->vdda);
++		if (ret)
++			goto disable_vddd;
++	}
++
++	usleep_range(USEC_PER_MSEC, 2 * USEC_PER_MSEC);
++
++	ret = clk_prepare_enable(imx596->mclk);
++	if (ret)
++		goto disable_vdda;
++
++	gpiod_set_value_cansleep(imx596->reset_gpio, 0);
++	usleep_range(10 * USEC_PER_MSEC, 15 * USEC_PER_MSEC);
++
++	return 0;
++
++disable_vdda:
++	if (imx596->vdda)
++		regulator_disable(imx596->vdda);
++
++disable_vddd:
++	if (imx596->vddd)
++		regulator_disable(imx596->vddd);
++
++disable_vddio:
++	if (imx596->vddio)
++		regulator_disable(imx596->vddio);
++
++	return ret;
++}
++
++static int imx596_power_off(struct device *dev)
++{
++	struct v4l2_subdev *sd = dev_get_drvdata(dev);
++	struct imx596 *imx596 = to_imx596(sd);
++
++	gpiod_set_value_cansleep(imx596->reset_gpio, 1);
++
++	clk_disable_unprepare(imx596->mclk);
++
++	if (imx596->vdda)
++		regulator_disable(imx596->vdda);
++
++	if (imx596->vddd)
++		regulator_disable(imx596->vddd);
++
++	if (imx596->vddio)
++		regulator_disable(imx596->vddio);
++
++	return 0;
++}
++
++static struct regulator *imx596_get_supply(struct imx596 *imx596,
++					   const char *name)
++{
++	struct regulator *reg;
++
++	reg = devm_regulator_get_optional(imx596->dev, name);
++	if (IS_ERR(reg) && PTR_ERR(reg) == -ENODEV)
++		return NULL;
++
++	return reg;
++}
++
++static int imx596_probe(struct i2c_client *client)
++{
++	struct imx596 *imx596;
++	unsigned long freq;
++	int ret;
++
++	imx596 = devm_kzalloc(&client->dev, sizeof(*imx596), GFP_KERNEL);
++	if (!imx596)
++		return -ENOMEM;
++
++	imx596->dev = &client->dev;
++	v4l2_i2c_subdev_init(&imx596->sd, client, &imx596_subdev_ops);
++
++	imx596->regmap = devm_cci_regmap_init_i2c(client, 16);
++	if (IS_ERR(imx596->regmap))
++		return dev_err_probe(imx596->dev, PTR_ERR(imx596->regmap),
++				     "failed to init CCI\n");
++
++	imx596->mclk = devm_v4l2_sensor_clk_get(imx596->dev, NULL);
++	if (IS_ERR(imx596->mclk))
++		return dev_err_probe(imx596->dev, PTR_ERR(imx596->mclk),
++				     "failed to get MCLK clock\n");
++
++	freq = clk_get_rate(imx596->mclk);
++	if (freq != IMX596_MCLK_FREQ)
++		return dev_err_probe(imx596->dev, -EINVAL,
++				     "MCLK clock frequency %lu is not supported\n",
++				     freq);
++
++	ret = imx596_check_hwcfg(imx596);
++	if (ret)
++		return dev_err_probe(imx596->dev, ret,
++				     "failed to check HW configuration\n");
++
++	imx596->reset_gpio = devm_gpiod_get_optional(imx596->dev, "reset",
++						     GPIOD_OUT_HIGH);
++	if (IS_ERR(imx596->reset_gpio))
++		return dev_err_probe(imx596->dev, PTR_ERR(imx596->reset_gpio),
++				     "cannot get reset GPIO\n");
++
++	imx596->vdda = imx596_get_supply(imx596, "vdda");
++	if (IS_ERR(imx596->vdda))
++		return dev_err_probe(imx596->dev, PTR_ERR(imx596->vdda),
++				     "Failed to get 'vdda' regulator\n");
++
++	imx596->vddd = imx596_get_supply(imx596, "vddd");
++	if (IS_ERR(imx596->vddd))
++		return dev_err_probe(imx596->dev, PTR_ERR(imx596->vddd),
++				     "Failed to get 'vddd' regulator\n");
++
++	imx596->vddio = imx596_get_supply(imx596, "vddio");
++	if (IS_ERR(imx596->vddio))
++		return dev_err_probe(imx596->dev, PTR_ERR(imx596->vddio),
++				     "Failed to get 'vddio' regulator\n");
++
++	ret = imx596_load_tables(imx596);
++	if (ret)
++		return ret;
++
++	/* The sensor must be powered on to read the CHIP_ID register */
++	ret = imx596_power_on(imx596->dev);
++	if (ret)
++		return ret;
++
++	ret = imx596_identify_sensor(imx596);
++	if (ret) {
++		dev_err_probe(imx596->dev, ret, "failed to find sensor\n");
++		goto power_off;
++	}
++
++	imx596->mode = &imx596_supported_modes[IMX596_DEFAULT_MODE];
++	ret = imx596_init_controls(imx596);
++	if (ret) {
++		dev_err_probe(imx596->dev, ret, "failed to init controls\n");
++		goto power_off;
++	}
++
++	imx596->sd.state_lock = imx596->ctrl_handler.lock;
++	imx596->sd.internal_ops = &imx596_internal_ops;
++	imx596->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
++	imx596->sd.entity.ops = &imx596_subdev_entity_ops;
++	imx596->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
++	imx596->pad.flags = MEDIA_PAD_FL_SOURCE;
++
++	ret = media_entity_pads_init(&imx596->sd.entity, 1, &imx596->pad);
++	if (ret) {
++		dev_err_probe(imx596->dev, ret,
++			      "failed to init media entity pads\n");
++		goto v4l2_ctrl_handler_free;
++	}
++
++	ret = v4l2_subdev_init_finalize(&imx596->sd);
++	if (ret < 0) {
++		dev_err_probe(imx596->dev, ret,
++			      "failed to init media entity pads\n");
++		goto media_entity_cleanup;
++	}
++
++	pm_runtime_set_active(imx596->dev);
++	pm_runtime_enable(imx596->dev);
++
++	ret = v4l2_async_register_subdev_sensor(&imx596->sd);
++	if (ret < 0) {
++		dev_err_probe(imx596->dev, ret,
++			      "failed to register V4L2 subdev\n");
++		goto subdev_cleanup;
++	}
++
++	pm_runtime_set_autosuspend_delay(imx596->dev, 1000);
++	pm_runtime_use_autosuspend(imx596->dev);
++	pm_runtime_idle(imx596->dev);
++
++	return 0;
++
++subdev_cleanup:
++	v4l2_subdev_cleanup(&imx596->sd);
++	pm_runtime_disable(imx596->dev);
++	pm_runtime_set_suspended(imx596->dev);
++
++media_entity_cleanup:
++	media_entity_cleanup(&imx596->sd.entity);
++
++v4l2_ctrl_handler_free:
++	v4l2_ctrl_handler_free(imx596->sd.ctrl_handler);
++
++power_off:
++	imx596_power_off(imx596->dev);
++
++	return ret;
++}
++
++static void imx596_remove(struct i2c_client *client)
++{
++	struct v4l2_subdev *sd = i2c_get_clientdata(client);
++	struct imx596 *imx596 = to_imx596(sd);
++
++	v4l2_async_unregister_subdev(sd);
++	v4l2_subdev_cleanup(sd);
++	media_entity_cleanup(&sd->entity);
++	v4l2_ctrl_handler_free(sd->ctrl_handler);
++	pm_runtime_disable(imx596->dev);
++
++	if (!pm_runtime_status_suspended(imx596->dev)) {
++		imx596_power_off(imx596->dev);
++		pm_runtime_set_suspended(imx596->dev);
++	}
++}
++
++static const struct dev_pm_ops imx596_pm_ops = {
++	SET_RUNTIME_PM_OPS(imx596_power_off, imx596_power_on, NULL)
++};
++
++static const struct of_device_id imx596_of_match[] = {
++	{ .compatible = "sony,imx596" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, imx596_of_match);
++
++static struct i2c_driver imx596_i2c_driver = {
++	.driver = {
++		.name = "imx596",
++		.pm = &imx596_pm_ops,
++		.of_match_table = imx596_of_match,
++	},
++	.probe = imx596_probe,
++	.remove = imx596_remove,
++};
++
++module_i2c_driver(imx596_i2c_driver);
++
++MODULE_DESCRIPTION("Sony IMX596 image sensor driver");
++MODULE_LICENSE("GPL");
