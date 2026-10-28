@@ -1,4 +1,4 @@
-From 468ea1b599a2f55d7a36be6ae3e3316a9de06379 Mon Sep 17 00:00:00 2001
+From a2803a5fae50c60e52f3d507f028f4ca70ba5a9a Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 28 Oct 2026 14:59:56 +0300
 Subject: [PATCH 906/906] arm64: dts: qcom: sm8475-xiaomi-diting: Add the front
@@ -11,15 +11,15 @@ module data:
   AVDD1), CSIPHY 3 with four lanes;
 - macro GC02M1 on CCI1 master 0 at 0x37, MCLK0 19.2 MHz, reset TLMM 128,
   AVDD 2.8 V (TLMM 118) and I/O 1.8 V (TLMM 7), CSIPHY 0 with one lane.
-Rotations to be checked on the phone.
+Rotation 90 for both, checked on the phone (270 was upside down).
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- .../boot/dts/qcom/sm8475-xiaomi-diting.dts    | 201 ++++++++++++++++++
- 1 file changed, 201 insertions(+)
+ .../boot/dts/qcom/sm8475-xiaomi-diting.dts    | 203 ++++++++++++++++++
+ 1 file changed, 203 insertions(+)
 
 diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
-index 15d272144..8bfac7a2b 100644
+index 15d272144..c12abc1ae 100644
 --- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
 @@ -232,6 +232,51 @@ cam_ultra_avdd: regulator-cam-ultra-avdd {
@@ -108,7 +108,7 @@ index 15d272144..8bfac7a2b 100644
  	};
  };
  
-@@ -743,7 +808,94 @@ cam_ultra_ep: endpoint {
+@@ -743,7 +808,96 @@ cam_ultra_ep: endpoint {
  			};
  		};
  	};
@@ -140,8 +140,11 @@ index 15d272144..8bfac7a2b 100644
 +		firmware-name = "qcom/sm8475/xiaomi/diting/imx596-front.camregs";
 +
 +		orientation = <0>;
-+		/* vendor sensor-position roll; to check on the phone */
-+		rotation = <270>;
++		/*
++		 * Upright on the phone (plasma-camera, 2026-10-28); 270, the
++		 * vendor sensor-position roll, showed the image upside down.
++		 */
++		rotation = <90>;
 +
 +		port {
 +			cam_front_ep: endpoint {
@@ -151,7 +154,7 @@ index 15d272144..8bfac7a2b 100644
 +			};
 +		};
 +	};
- };
++};
 +&cci1 {
 +	status = "okay";
 +};
@@ -184,11 +187,10 @@ index 15d272144..8bfac7a2b 100644
 +
 +		orientation = <1>;
 +		/*
-+		 * Vendor sensor-position roll 90; the other rear modules needed
-+		 * 270 with the readout orientation of their module data. To
-+		 * check on the phone.
++		 * Vendor sensor-position roll 90: upright on the phone
++		 * (plasma-camera, 2026-10-28); 270 showed it upside down.
 +		 */
-+		rotation = <270>;
++		rotation = <90>;
 +
 +		port {
 +			cam_macro_ep: endpoint {
@@ -198,12 +200,12 @@ index 15d272144..8bfac7a2b 100644
 +			};
 +		};
 +	};
-+};
+ };
 +
  &cci0_i2c1 {
  	/*
  	 * Rear main: Semco module with a Samsung S5KHP1 (vendor
-@@ -1272,6 +1424,55 @@ cam_ultra_reset: cam-ultra-reset-state {
+@@ -1272,6 +1426,55 @@ cam_ultra_reset: cam-ultra-reset-state {
  		bias-disable;
  	};
  
