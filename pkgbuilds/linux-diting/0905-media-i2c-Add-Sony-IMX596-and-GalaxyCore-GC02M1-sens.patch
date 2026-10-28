@@ -1,4 +1,4 @@
-From c77b592c96bc90c55b9b22b8280fe58ac1ec8eb4 Mon Sep 17 00:00:00 2001
+From 2f764a5d294626060256d09acbbb95f9b51f4788 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 28 Oct 2026 14:59:55 +0300
 Subject: [PATCH 905/906] media: i2c: Add Sony IMX596 and GalaxyCore GC02M1
@@ -12,7 +12,8 @@ CAMREGS2 with bursts). The modes, link frequencies, pixel rates, chip
 IDs and power-up orders come from the module data.
 
 IMX596: CCS-style registers (0x0202 exposure, 0x0204 analogue gain,
-0x0340 frame length), modes 5184x3904, 2592x1952, 2592x1458, 1280x720.
+0x0340 frame length), binned modes 2592x1952, 2592x1458, 1280x720
+(the 20 MP mode is too large for the libcamera software ISP).
 GC02M1: 8-bit register addresses in pages (0xfe), exposure 0x03/0x04,
 frame length 0x41/0x42, global pre-gain 0xb1/0xb2, stream 0x3e.
 The Bayer order is selectable with the "bayer" module parameter for
@@ -23,8 +24,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  drivers/media/i2c/Kconfig  |   22 +
  drivers/media/i2c/Makefile |    2 +
  drivers/media/i2c/gc02m1.c |  974 ++++++++++++++++++++++++++++++++++
- drivers/media/i2c/imx596.c | 1014 ++++++++++++++++++++++++++++++++++++
- 4 files changed, 2012 insertions(+)
+ drivers/media/i2c/imx596.c | 1007 ++++++++++++++++++++++++++++++++++++
+ 4 files changed, 2005 insertions(+)
  create mode 100644 drivers/media/i2c/gc02m1.c
  create mode 100644 drivers/media/i2c/imx596.c
 
@@ -1056,10 +1057,10 @@ index 000000000..f00fd6496
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/media/i2c/imx596.c b/drivers/media/i2c/imx596.c
 new file mode 100644
-index 000000000..9322d1c15
+index 000000000..46b5460f9
 --- /dev/null
 +++ b/drivers/media/i2c/imx596.c
-@@ -0,0 +1,1014 @@
+@@ -0,0 +1,1007 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Sony IMX596 20 MP image sensor driver
@@ -1078,7 +1079,7 @@ index 000000000..9322d1c15
 + * "value" bytes to consecutive registers, the bytes follow the entry,
 + * padded to a multiple of 4.
 + *
-+ * Tables used: "init", then one of "mode0" ... "mode4" (module order).
++ * Tables used: "init", then "mode1", "mode3" or "mode4" (module order).
 + * The register map follows the MIPI CCS layout of Sony sensors.
 + */
 +
@@ -1147,11 +1148,12 @@ index 000000000..9322d1c15
 +};
 +
 +/*
-+ * CSI-2 link frequencies: output pixel clock of the module data
-+ * (10 bits per pixel, 4 lanes, DDR), 657.92 and 537.6 Mpixel/s.
++ * CSI-2 link frequency: output pixel clock of the module data for the
++ * binned modes, 537.6 Mpixel/s at 10 bits per pixel on 4 lanes, DDR.
++ * (The full resolution mode 0, 657.92 Mpixel/s or 822.4 MHz, is not
++ * used, see imx596_supported_modes.)
 + */
 +static const s64 imx596_link_freq_menu[] = {
-+	822400000,
 +	672000000,
 +};
 +
@@ -1173,6 +1175,12 @@ index 000000000..9322d1c15
 + * and frame length (lines) of the mode tables; the pixel rate is
 + * hts * vts * frame rate. The module's mode 2 (2592x1458 at 30 fps) is
 + * mode 3 with a longer frame, it is not listed.
++ *
++ * The full resolution mode 0 (5184x3904, remosaic) is not listed either:
++ * a 5184x3904 RGB frame of the libcamera software ISP (about 80 MB) is
++ * larger than what udmabuf allows (64 MB), so applications that pick the
++ * largest size could not start, and the software ISP could not process it
++ * at a usable frame rate anyway.
 + */
 +struct imx596_mode {
 +	u32 width;
@@ -1185,37 +1193,30 @@ index 000000000..9322d1c15
 +};
 +
 +static const struct imx596_mode imx596_supported_modes[] = {
-+	{	/* full resolution (remosaic), 30 fps */
-+		.width = 5184, .height = 3904,
-+		.hts = 7288, .vts = 3992,
-+		.pixel_rate = 872810880,
-+		.link_freq_index = 0,
-+		.table = "mode0",
-+	},
 +	{	/* 2x2 binning, 30 fps */
 +		.width = 2592, .height = 1952,
 +		.hts = 4644, .vts = 6302,
 +		.pixel_rate = 877994640,
-+		.link_freq_index = 1,
++		.link_freq_index = 0,
 +		.table = "mode1",
 +	},
 +	{	/* 2x2 binning, 16:9, 60 fps */
 +		.width = 2592, .height = 1458,
 +		.hts = 4644, .vts = 3151,
 +		.pixel_rate = 877994640,
-+		.link_freq_index = 1,
++		.link_freq_index = 0,
 +		.table = "mode3",
 +	},
 +	{	/* 4x4 binning, 16:9, 120 fps */
 +		.width = 1280, .height = 720,
 +		.hts = 2324, .vts = 2294,
 +		.pixel_rate = 640000000,
-+		.link_freq_index = 1,
++		.link_freq_index = 0,
 +		.table = "mode4",
 +	},
 +};
 +
-+#define IMX596_DEFAULT_MODE		1
++#define IMX596_DEFAULT_MODE		0
 +
 +static const char * const imx596_test_pattern_menu[] = {
 +	"Disabled",
@@ -1801,13 +1802,6 @@ index 000000000..9322d1c15
 +				       &freq_bitmap);
 +	if (ret)
 +		goto endpoint_free;
-+
-+	/* All modes are needed: both frequencies must be allowed */
-+	if (freq_bitmap != GENMASK(ARRAY_SIZE(imx596_link_freq_menu) - 1, 0)) {
-+		dev_err(imx596->dev, "link-frequencies must list %lld and %lld\n",
-+			imx596_link_freq_menu[0], imx596_link_freq_menu[1]);
-+		ret = -EINVAL;
-+	}
 +
 +endpoint_free:
 +	v4l2_fwnode_endpoint_free(&bus_cfg);

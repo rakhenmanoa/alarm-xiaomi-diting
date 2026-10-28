@@ -1,4 +1,4 @@
-From 302911a481594eb9e86298712e4b99b32615b691 Mon Sep 17 00:00:00 2001
+From 468ea1b599a2f55d7a36be6ae3e3316a9de06379 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 28 Oct 2026 14:59:56 +0300
 Subject: [PATCH 906/906] arm64: dts: qcom: sm8475-xiaomi-diting: Add the front
@@ -19,7 +19,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 201 insertions(+)
 
 diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
-index 15d272144..62d1191ea 100644
+index 15d272144..8bfac7a2b 100644
 --- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
 @@ -232,6 +232,51 @@ cam_ultra_avdd: regulator-cam-ultra-avdd {
@@ -146,7 +146,7 @@ index 15d272144..62d1191ea 100644
 +		port {
 +			cam_front_ep: endpoint {
 +				data-lanes = <1 2 3 4>;
-+				link-frequencies = /bits/ 64 <822400000 672000000>;
++				link-frequencies = /bits/ 64 <672000000>;
 +				remote-endpoint = <&csiphy3_ep>;
 +			};
 +		};
