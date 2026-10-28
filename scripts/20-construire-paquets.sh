@@ -2,7 +2,7 @@
 # Étape 3 — Construit les paquets pacman propres au diting dans work/repo :
 #   linux-diting (en croisé, rapide), puis sous émulation aarch64 :
 #   qrtr / rmtfs / tqftpserv / mkbootimg-aosp (seulement si ALARM ne les a pas),
-#   hexagonrpc-diting, fastrpc-diting, libssc, iio-sensor-proxy-diting,
+#   hexagonrpc-diting, fastrpc-diting, libssc, iio-sensor-proxy-diting, diting-lever-reveil,
 #   libva-v4l2-stateful-diting, libcamera-diting (option), diting-device.
 #
 # À lancer via : scripts/build-in-container.sh scripts/20-construire-paquets.sh
@@ -95,7 +95,7 @@ else
 fi
 
 # --- 4. Pilotes et services du diting --------------------------------------------
-for p in hexagonrpc-diting fastrpc-diting libssc iio-sensor-proxy-diting libva-v4l2-stateful-diting; do
+for p in hexagonrpc-diting fastrpc-diting libssc iio-sensor-proxy-diting diting-lever-reveil libva-v4l2-stateful-diting; do
 	chroot_build "$PB/$p"
 done
 

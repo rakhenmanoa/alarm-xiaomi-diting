@@ -1,0 +1,27 @@
+# Lever le téléphone pour rallumer l'écran : capteur gestuel tilt to wake
+# du SLPI (libssc, patch 0001), qui réveille aussi le téléphone du suspend.
+pkgname=diting-lever-reveil
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Xiaomi diting : lever le téléphone pour rallumer l'écran (tilt to wake du SLPI)"
+arch=(aarch64)
+url="https://github.com/rakhenmanoa/alarm-xiaomi-diting"
+license=(GPL-3.0-or-later)
+depends=(glib2 'libssc>=0.4.4.r54dd13e-2' libkscreen modemmanager)
+makedepends=(pkgconf)
+source=(diting-lever-reveil.c
+        diting-lever-reveil.service)
+sha256sums=('SKIP' 'SKIP')
+
+build() {
+  # shellcheck disable=SC2046
+  ${CC:-cc} $CFLAGS $LDFLAGS -o diting-lever-reveil "$srcdir/diting-lever-reveil.c" \
+    $(pkg-config --cflags --libs libssc glib-2.0 gio-2.0)
+}
+
+package() {
+  install -Dm755 diting-lever-reveil "$pkgdir/usr/bin/diting-lever-reveil"
+  install -Dm644 "$srcdir/diting-lever-reveil.service" "$pkgdir/usr/lib/systemd/user/diting-lever-reveil.service"
+  install -d "$pkgdir/usr/lib/systemd/user/graphical-session.target.wants"
+  ln -s ../diting-lever-reveil.service "$pkgdir/usr/lib/systemd/user/graphical-session.target.wants/diting-lever-reveil.service"
+}

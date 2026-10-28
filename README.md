@@ -61,7 +61,7 @@ compilé **sur le téléphone**, par SSH.
    et une image ext4 `diting-root` créée avec `mkfs.ext4 -d`.
 5. Flash de `boot_a`, `vendor_boot_a` et `userdata`, effacement de `dtbo_a`.
 6. Sur le téléphone, par SSH (USB : `172.16.42.1`) : `makepkg -si` de `tqftpserv`,
-   `hexagonrpc-diting`, `fastrpc-diting`, `libssc`, `iio-sensor-proxy-diting`,
+   `hexagonrpc-diting`, `fastrpc-diting`, `libssc`, `iio-sensor-proxy-diting`, `diting-lever-reveil`,
    `libva-v4l2-stateful-diting` et `libcamera-diting`. Ensuite, Plasma Mobile depuis ALARM,
    puis `plasma-dialer` et `mobile-config-firefox` depuis l'AUR (`yay-bin`).
 
@@ -186,7 +186,7 @@ scripts/restaurer-android.sh --donnees  # + userdata/metadata d'origine (si sauv
 | GPU | Mesa freedreno / Turnip |
 | Audio, appels | topologie AudioReach, UCM, protection des haut-parleurs, `diting-voice-call`, `diting-callaudio` (remplace le service de callaudiod pour plasma-dialer), `fastrpc-diting` |
 | Modem | rmtfs (lecture seule), tqftpserv, qrtr, `diting-modem-setup`, ModemManager |
-| Capteurs | `hexagonrpc-diting`, `libssc`, `iio-sensor-proxy-diting` (rotation, proximité, lumière, boussole) ; gyroscope lisible avec `ssccli --sensor gyroscope` ; `diting-proximite-appel` éteint l'écran contre l'oreille pendant un appel (Plasma Mobile ne le fait pas) |
+| Capteurs | `hexagonrpc-diting`, `libssc`, `iio-sensor-proxy-diting` (rotation, proximité, lumière, boussole) ; gyroscope lisible avec `ssccli --sensor gyroscope` ; `diting-proximite-appel` éteint l'écran contre l'oreille pendant un appel (Plasma Mobile ne le fait pas) ; `diting-lever-reveil` rallume l'écran quand on lève le téléphone (tilt to wake du SLPI, patch libssc 0001) |
 | Vidéo | `libva-v4l2-stateful-diting` (H.264/HEVC/VP9 matériels, VA-API) |
 | Caméra | `libcamera-diting` 0.7.0 + patches (si ALARM est en 0.7.x) |
 | Bureau | Plasma Mobile (SDDM Wayland, connexion automatique), plasma-dialer, Spacebar, Angelfish… |
