@@ -3,7 +3,7 @@
 # NE PAS REDISTRIBUER ce paquet ni l'image qui le contient.
 pkgname=firmware-xiaomi-diting
 pkgver=0.9.5
-pkgrel=1
+pkgrel=2
 pkgdesc="Firmware propre à l'appareil du Xiaomi 12T Pro (local, non redistribuable)"
 arch=(any)
 url="https://github.com/royka1/diting-ubuntu"
@@ -25,5 +25,32 @@ package() {
     install -d "usr/share/licenses/$pkgname"
     mv usr/share/doc/firmware-xiaomi-diting/* "usr/share/licenses/$pkgname/" 2>/dev/null || true
     rm -rf usr/share/doc
+  fi
+
+  # Lever pour réveiller (diting-lever-reveil) : algorithme tilt to wake du
+  # SLPI plus réactif que le réglage Xiaomi (fenêtre 1,1 s, écart 45°).
+  # Réglé à l'essai sur le téléphone le 2026-10-28 : fenêtre 0,2 s
+  # (moitiés de 0,1 s), écart d'inclinaison 10°, inclinaison finale 30°,
+  # accéléromètre à 50 Hz, filtre et contrôle de stabilité à 0,08 s.
+  # Seule la copie d'usine du registre est modifiée (semence de
+  # /var/lib/diting-sensors au premier démarrage), jamais sensors/config :
+  # le registre relit tout fichier de configuration dont la date change.
+  # La date du fichier est conservée.
+  local t2w=usr/share/qcom/sm8475/Xiaomi/diting/sensors/registry.factory/sns_tilt_to_wake
+  if [ -f "$t2w" ]; then
+    local ref; ref="$(mktemp)"
+    touch -r "$t2w" "$ref"
+    local k v
+    for kv in accel_sampling_rate=50 filter_window_seconds=0.08 accel_window_seconds=0.2 \
+              accel_sub_window_seconds=0.1 window_for_accel_stability_check_seconds=0.08 \
+              min_delta_pitch_threshold_deg=10 min_pitch_threshold_deg=30; do
+      k="${kv%%=*}"; v="${kv#*=}"
+      grep -q "\"$k\":{" "$t2w" || { echo "tilt to wake : $k absent du registre" >&2; return 1; }
+      sed -i -E "s/(\"$k\":\\{\"type\":\"flt\",\"ver\":\"0\",\"data\":\")[^\"]*\"/\\1$v\"/" "$t2w"
+      grep -q "\"$k\":{\"type\":\"flt\",\"ver\":\"0\",\"data\":\"$v\"}" "$t2w" ||
+        { echo "tilt to wake : $k non modifié" >&2; return 1; }
+    done
+    touch -r "$ref" "$t2w"
+    rm -f "$ref"
   fi
 }

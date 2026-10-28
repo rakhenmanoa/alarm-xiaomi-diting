@@ -5,9 +5,11 @@
  * Qualcomm sur l'accéléromètre) ; libssc (patch 0001 du paquet libssc)
  * l'expose comme SSCSensorTiltToWake. Les événements sont livrés avec
  * réveil : ils sortent aussi le téléphone du suspend. À chaque geste,
- * on rallume l'affichage avec KWin (kscreen-doctor), sauf pendant un appel
- * actif, où l'écran est géré par diting-proximite-appel (porter le
- * téléphone à l'oreille est aussi un geste « lever »).
+ * on rallume l'affichage avec KWin (kscreen-doctor), sauf :
+ *  - capteur de proximité couvert (poche, face contre la table) : l'état
+ *    est lu dans iio-sensor-proxy (propriété en cache, aucun délai) ;
+ *  - appel actif : l'écran est géré par diting-proximite-appel (porter le
+ *    téléphone à l'oreille est aussi un geste « lever »).
  *
  * Service utilisateur de la session Plasma (diting-lever-reveil.service).
  *
@@ -18,23 +20,77 @@
 #include <string.h>
 #include <glib.h>
 #include <glib-unix.h>
+#include <gio/gio.h>
 #include <libssc.h>
 
 static GMainLoop *loop;
+static GDBusProxy *capteurs;	/* net.hadess.SensorProxy, NULL si absent */
+
+/*****************************************************************************/
+/* Proximité (iio-sensor-proxy) */
+
+static void
+reserver_proximite (void)
+{
+	g_autofree gchar *proprio = g_dbus_proxy_get_name_owner (capteurs);
+
+	if (!proprio)
+		return;
+	/* La réservation suit l'iio-sensor-proxy en cours : à refaire s'il redémarre */
+	g_dbus_proxy_call (capteurs, "ClaimProximity", NULL, G_DBUS_CALL_FLAGS_NONE,
+			   -1, NULL, NULL, NULL);
+}
+
+static void
+proprio_change (GObject *obj, GParamSpec *pspec, gpointer user_data)
+{
+	reserver_proximite ();
+}
+
+static void
+init_proximite (void)
+{
+	g_autoptr (GError) err = NULL;
+
+	capteurs = g_dbus_proxy_new_for_bus_sync (G_BUS_TYPE_SYSTEM, G_DBUS_PROXY_FLAGS_NONE, NULL,
+						  "net.hadess.SensorProxy", "/net/hadess/SensorProxy",
+						  "net.hadess.SensorProxy", NULL, &err);
+	if (!capteurs) {
+		g_warning ("iio-sensor-proxy injoignable, pas de garde de proximité : %s", err->message);
+		return;
+	}
+	g_signal_connect (capteurs, "notify::g-name-owner", G_CALLBACK (proprio_change), NULL);
+	reserver_proximite ();
+}
+
+static gboolean
+proximite_couverte (void)
+{
+	g_autoptr (GVariant) a = NULL;
+	g_autoptr (GVariant) proche = NULL;
+
+	if (!capteurs)
+		return FALSE;
+	a = g_dbus_proxy_get_cached_property (capteurs, "HasProximity");
+	if (!a || !g_variant_get_boolean (a))
+		return FALSE;
+	proche = g_dbus_proxy_get_cached_property (capteurs, "ProximityNear");
+	return proche && g_variant_get_boolean (proche);
+}
+
+/*****************************************************************************/
 
 static gboolean
 appel_actif (void)
 {
 	gchar *argv[] = { "mmcli", "-m", "any", "--voice-list-calls", NULL };
 	g_autofree gchar *out = NULL;
-	gboolean actif;
 
 	if (!g_spawn_sync (NULL, argv, NULL,
 			   G_SPAWN_SEARCH_PATH | G_SPAWN_STDERR_TO_DEV_NULL,
 			   NULL, NULL, &out, NULL, NULL, NULL))
 		return FALSE;
-	actif = out && strstr (out, "(active)") != NULL;
-	return actif;
+	return out && strstr (out, "(active)") != NULL;
 }
 
 static void
@@ -43,6 +99,10 @@ geste_detecte (SSCSensorTiltToWake *capteur, gfloat valeur, guint msg_id, gpoint
 	gchar *argv[] = { "kscreen-doctor", "--dpms", "on", NULL };
 	g_autoptr (GError) err = NULL;
 
+	if (proximite_couverte ()) {
+		g_message ("geste avec le capteur de proximité couvert : ignoré");
+		return;
+	}
 	if (appel_actif ()) {
 		g_message ("geste pendant un appel : ignoré");
 		return;
@@ -70,6 +130,8 @@ main (void)
 
 	g_setenv ("QT_QPA_PLATFORM", "wayland", TRUE);
 
+	init_proximite ();
+
 	capteur = ssc_sensor_tilt_to_wake_new_sync (NULL, &err);
 	if (!capteur) {
 		g_printerr ("capteur tilt to wake indisponible : %s\n", err ? err->message : "?");
@@ -91,6 +153,11 @@ main (void)
 	g_clear_error (&err);
 	if (!ssc_sensor_tilt_to_wake_close_sync (capteur, NULL, &err))
 		g_warning ("fermeture du capteur : %s", err ? err->message : "?");
+	if (capteurs) {
+		g_dbus_proxy_call_sync (capteurs, "ReleaseProximity", NULL, G_DBUS_CALL_FLAGS_NONE,
+					1000, NULL, NULL);
+		g_object_unref (capteurs);
+	}
 	g_object_unref (capteur);
 	g_main_loop_unref (loop);
 	return EXIT_SUCCESS;
