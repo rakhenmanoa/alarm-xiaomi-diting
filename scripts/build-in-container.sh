@@ -38,5 +38,5 @@ fi
 exec $E run --rm -it --privileged --network host \
 	-v "$TOP:/src" -w /src \
 	-e ALARM_MIRROR -e BUILD_LIBCAMERA -e PASSWORD_DITING -e USERNAME_DITING \
-	-e TIMEZONE_DITING -e LOCALE_DITING -e SSH_PUBKEY_FILE -e MAKEFLAGS \
+	-e TIMEZONE_DITING -e LOCALE_DITING -e SSH_PUBKEY_FILE -e MAKEFLAGS -e ONLY -e FORCE \
 	"$IMG" "$@"
