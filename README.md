@@ -188,7 +188,7 @@ scripts/restaurer-android.sh --donnees  # + userdata/metadata d'origine (si sauv
 | Modem | rmtfs (lecture seule), tqftpserv, qrtr, `diting-modem-setup`, ModemManager |
 | Capteurs | `hexagonrpc-diting`, `libssc`, `iio-sensor-proxy-diting` (rotation, proximité, lumière, boussole) ; gyroscope lisible avec `ssccli --sensor gyroscope` ; `diting-proximite-appel` éteint l'écran contre l'oreille pendant un appel (Plasma Mobile ne le fait pas) ; `diting-lever-reveil` rallume l'écran quand on lève le téléphone (tilt to wake du SLPI, patch libssc 0001 ; réglé plus réactif dans `firmware-xiaomi-diting`, ignoré si la proximité est couverte ou pendant un appel) ; luminosité automatique de Plasma 6.6+ (KWin, via `qt6-sensors` et le capteur de lumière) à cocher dans les paramètres d'affichage (`kcmshell6 kcm_kscreen`) |
 | Vidéo | `libva-v4l2-stateful-diting` (H.264/HEVC/VP9 matériels, VA-API) |
-| Caméra | `libcamera-diting` 0.7.0 + patches (si ALARM est en 0.7.x) ; frontale IMX596 et macro GC02M1 : pilotes `imx596`/`gc02m1` (patches noyau 0905-0906), tables `imx596-front.camregs`/`gc02m1-macro.camregs` générées par `tools/camera/chromatix-to-camregs.py`, **pas encore testées sur le téléphone** |
+| Caméra | `libcamera-diting` 0.7.0 + patches (si ALARM est en 0.7.x) ; frontale IMX596 et macro GC02M1 : pilotes `imx596`/`gc02m1` (patches noyau 0905-0906), tables `imx596-front.camregs`/`gc02m1-macro.camregs` générées par `tools/camera/chromatix-to-camregs.py` ; testées dans plasma-camera (30 im/s, couleurs et orientation correctes, frontale jusqu'à 2592x1952) |
 | Bureau | Plasma Mobile (SDDM Wayland, connexion automatique), plasma-dialer, Spacebar, Angelfish… |
 
 ## Mises à jour
@@ -207,10 +207,17 @@ scripts/restaurer-android.sh --donnees  # + userdata/metadata d'origine (si sauv
 Les mêmes que diting-ubuntu :
 
 - pas de VoLTE (les appels passent en 3G) ;
-- ne fonctionnent pas : lecteur d'empreintes, NFC, IR, vibration, encodeur vidéo (caméras avant et macro : en cours, voir le tableau) ;
+- ne fonctionnent pas : lecteur d'empreintes, NFC, IR, vibration, encodeur vidéo ;
 - la caméra principale ne marche pas si votre unité a le capteur Samsung HM6 au lieu du HP1.
 
 Spécifique à cette version Arch :
+
+- si Mesa est forcé sur zink pour toute la session (`MESA_LOADER_DRIVER_OVERRIDE=zink`), le
+  traitement d'image de libcamera ne peut pas importer les images des caméras (« zink: couldn't
+  allocate memory ») et plasma-camera s'arrête : lancer plasma-camera sans cette variable
+  (lanceur copié dans `~/.local/share/applications/` avec `Exec=env -u MESA_LOADER_DRIVER_OVERRIDE …`) ;
+- ne pas lancer `kbuildsycoca6` depuis SSH : sans l'environnement de la session, il produit un cache
+  vide et toutes les icônes disparaissent (le reconstruire avec les variables de `plasmashell`) ;
 
 - le correctif ModemManager (crash après une sortie de veille) n'est pas inclus : systemd relance le
   service ;
