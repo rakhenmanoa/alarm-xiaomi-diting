@@ -1,0 +1,133 @@
+From 3375a29fed67866a40b8130bf1c3efd4b43594bf Mon Sep 17 00:00:00 2001
+From: alarm <alarm@localhost>
+Date: Wed, 28 Oct 2026 17:35:03 +0300
+Subject: [PATCH] libcamera: software_isp: Centre-weighted focus measure
+ ignoring saturated highlights
+
+---
+ .../internal/software_isp/swstats_cpu.h       |  4 +-
+ src/libcamera/software_isp/swstats_cpu.cpp    | 48 +++++++++++++------
+ 2 files changed, 36 insertions(+), 16 deletions(-)
+
+diff --git a/include/libcamera/internal/software_isp/swstats_cpu.h b/include/libcamera/internal/software_isp/swstats_cpu.h
+index a6cdf64..c3a47db 100644
+--- a/include/libcamera/internal/software_isp/swstats_cpu.h
++++ b/include/libcamera/internal/software_isp/swstats_cpu.h
+@@ -101,10 +101,10 @@ private:
+ 
+ 	void processBayerFrame2(MappedFrameBuffer &in);
+ 
+-	/* The focus measure covers the centre half of the window */
++	/* The focus measure covers the centre third of the window */
+ 	void setSharpnessLine(unsigned int y)
+ 	{
+-		sharpLine_ = y >= window_.height / 4 && y < window_.height * 3 / 4;
++		sharpLine_ = y >= window_.height / 3 && y < window_.height * 2 / 3;
+ 	}
+ 
+ 	processFrameFn processFrame_;
+diff --git a/src/libcamera/software_isp/swstats_cpu.cpp b/src/libcamera/software_isp/swstats_cpu.cpp
+index 21dde39..8475214 100644
+--- a/src/libcamera/software_isp/swstats_cpu.cpp
++++ b/src/libcamera/software_isp/swstats_cpu.cpp
+@@ -168,6 +168,10 @@ static constexpr unsigned int kRedYMul = 77; /* 0.299 * 256 */
+ static constexpr unsigned int kGreenYMul = 150; /* 0.587 * 256 */
+ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
+ 
++/* Focus measure: saturation limit and noise coring, in 8-bit units */
++static constexpr unsigned int kSharpSaturation = 235;
++static constexpr int kSharpNoise = 2;
++
+ #define SWSTATS_START_LINE_STATS(pixel_t) \
+ 	pixel_t r, g, g2, b;              \
+ 	uint64_t yVal;                    \
+@@ -191,16 +195,32 @@ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
+ 
+ /*
+  * Focus measure: absolute second derivative of green along the line, in the
+- * centre half of the window (xpix is the pixel position of the sample).
++ * centre third of the window (xpix is the pixel position of the sample), so
++ * that the subject in the middle of the frame wins over a detailed
++ * background.
++ *
++ * (div) is the scale of g relative to 8 bits (1, 4 or 16). Samples close to
++ * saturation break the chain: a clipped, blooming highlight (a screen, a
++ * lamp) makes strong edges whatever the focus and would steer the AF. Small
++ * differences are cored out as sensor noise, which otherwise adds a constant
++ * to every lens position and flattens the peak.
+  */
+-#define SWSTATS_ACCUMULATE_SHARPNESS(xpix)                                  \
+-	if (sharpLine_ && (xpix) >= window_.width / 4 &&                    \
+-	    (xpix) < window_.width * 3 / 4) {                               \
+-		if (sharpN >= 2)                                            \
+-			sharp += std::abs(static_cast<int>(g) - 2 * sharpG1 + sharpG0); \
+-		sharpN++;                                                   \
+-		sharpG0 = sharpG1;                                          \
+-		sharpG1 = g;                                                \
++#define SWSTATS_ACCUMULATE_SHARPNESS(xpix, div)                             \
++	if (sharpLine_ && (xpix) >= window_.width / 3 &&                    \
++	    (xpix) < window_.width * 2 / 3) {                               \
++		if (g >= kSharpSaturation * (div)) {                        \
++			sharpN = 0;                                         \
++		} else {                                                    \
++			if (sharpN >= 2) {                                  \
++				int d = std::abs(static_cast<int>(g) - 2 * sharpG1 + sharpG0); \
++				d -= kSharpNoise * (div);                   \
++				if (d > 0)                                  \
++					sharp += d;                         \
++			}                                                   \
++			sharpN++;                                           \
++			sharpG0 = sharpG1;                                  \
++			sharpG1 = g;                                        \
++		}                                                           \
+ 	}
+ 
+ #define SWSTATS_FINISH_LINE_STATS() \
+@@ -229,7 +249,7 @@ void SwStatsCpu::statsBGGR8Line0(const uint8_t *src[])
+ 		g = (g + g2) / 2;
+ 
+ 		SWSTATS_ACCUMULATE_LINE_STATS(1)
+-		SWSTATS_ACCUMULATE_SHARPNESS(x)
++		SWSTATS_ACCUMULATE_SHARPNESS(x, 1)
+ 	}
+ 
+ 	SWSTATS_FINISH_LINE_STATS()
+@@ -256,7 +276,7 @@ void SwStatsCpu::statsBGGR10Line0(const uint8_t *src[])
+ 
+ 		/* divide Y by 4 for 10 -> 8 bpp value */
+ 		SWSTATS_ACCUMULATE_LINE_STATS(4)
+-		SWSTATS_ACCUMULATE_SHARPNESS(x)
++		SWSTATS_ACCUMULATE_SHARPNESS(x, 4)
+ 	}
+ 
+ 	SWSTATS_FINISH_LINE_STATS()
+@@ -283,7 +303,7 @@ void SwStatsCpu::statsBGGR12Line0(const uint8_t *src[])
+ 
+ 		/* divide Y by 16 for 12 -> 8 bpp value */
+ 		SWSTATS_ACCUMULATE_LINE_STATS(16)
+-		SWSTATS_ACCUMULATE_SHARPNESS(x)
++		SWSTATS_ACCUMULATE_SHARPNESS(x, 16)
+ 	}
+ 
+ 	SWSTATS_FINISH_LINE_STATS()
+@@ -310,7 +330,7 @@ void SwStatsCpu::statsBGGR10PLine0(const uint8_t *src[])
+ 		g = (g + g2) / 2;
+ 		/* Data is already 8 bits, divide by 1 */
+ 		SWSTATS_ACCUMULATE_LINE_STATS(1)
+-		SWSTATS_ACCUMULATE_SHARPNESS(x * 4 / 5)
++		SWSTATS_ACCUMULATE_SHARPNESS(x * 4 / 5, 1)
+ 	}
+ 
+ 	SWSTATS_FINISH_LINE_STATS()
+@@ -337,7 +357,7 @@ void SwStatsCpu::statsGBRG10PLine0(const uint8_t *src[])
+ 		g = (g + g2) / 2;
+ 		/* Data is already 8 bits, divide by 1 */
+ 		SWSTATS_ACCUMULATE_LINE_STATS(1)
+-		SWSTATS_ACCUMULATE_SHARPNESS(x * 4 / 5)
++		SWSTATS_ACCUMULATE_SHARPNESS(x * 4 / 5, 1)
+ 	}
+ 
+ 	SWSTATS_FINISH_LINE_STATS()
+-- 
+2.43.0
+
