@@ -1,4 +1,4 @@
-From 7eb959fcc9299ffb6b32f8339e7c3cc634b0ebdb Mon Sep 17 00:00:00 2001
+From c77b592c96bc90c55b9b22b8280fe58ac1ec8eb4 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 28 Oct 2026 14:59:55 +0300
 Subject: [PATCH 905/906] media: i2c: Add Sony IMX596 and GalaxyCore GC02M1
@@ -1056,7 +1056,7 @@ index 000000000..f00fd6496
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/media/i2c/imx596.c b/drivers/media/i2c/imx596.c
 new file mode 100644
-index 000000000..51f0ba68f
+index 000000000..9322d1c15
 --- /dev/null
 +++ b/drivers/media/i2c/imx596.c
 @@ -0,0 +1,1014 @@
@@ -1110,7 +1110,7 @@ index 000000000..51f0ba68f
 +#define IMX596_REG_EXPOSURE		CCI_REG16(0x0202)
 +#define IMX596_EXPOSURE_MIN		16	/* module data: minLineCount */
 +#define IMX596_EXPOSURE_STEP		1
-+#define IMX596_EXPOSURE_MARGIN		48
++#define IMX596_EXPOSURE_MARGIN		24	/* mode tables: 0x0202 = 0x0340 - 24 */
 +
 +/* Analogue gain code: gain = 1024 / (1024 - code); 960 = 16x */
 +#define IMX596_REG_AGAIN		CCI_REG16(0x0204)
@@ -1169,10 +1169,10 @@ index 000000000..51f0ba68f
 +};
 +
 +/*
-+ * Modes of the module data. hts/vts are its line length (pixel clocks)
-+ * and frame length (lines); the pixel rate is hts * vts * frame rate.
-+ * The module's mode 3 (2592x1458 at 30 fps) is mode 2 with a longer
-+ * frame, it is not listed.
++ * Modes of the module data. hts/vts are the line length (pixel clocks)
++ * and frame length (lines) of the mode tables; the pixel rate is
++ * hts * vts * frame rate. The module's mode 2 (2592x1458 at 30 fps) is
++ * mode 3 with a longer frame, it is not listed.
 + */
 +struct imx596_mode {
 +	u32 width;
@@ -1201,10 +1201,10 @@ index 000000000..51f0ba68f
 +	},
 +	{	/* 2x2 binning, 16:9, 60 fps */
 +		.width = 2592, .height = 1458,
-+		.hts = 4644, .vts = 3152,
-+		.pixel_rate = 878273280,
++		.hts = 4644, .vts = 3151,
++		.pixel_rate = 877994640,
 +		.link_freq_index = 1,
-+		.table = "mode2",
++		.table = "mode3",
 +	},
 +	{	/* 4x4 binning, 16:9, 120 fps */
 +		.width = 1280, .height = 720,

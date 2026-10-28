@@ -1,4 +1,4 @@
-From bb5edbd32c33cccb5149fe7bffda487606df56ee Mon Sep 17 00:00:00 2001
+From 302911a481594eb9e86298712e4b99b32615b691 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 28 Oct 2026 14:59:56 +0300
 Subject: [PATCH 906/906] arm64: dts: qcom: sm8475-xiaomi-diting: Add the front
