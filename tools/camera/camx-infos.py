@@ -60,9 +60,23 @@ def apercu(d, data_off, off, size):
     return ' '.join(parts) if parts else raw.hex()
 
 
+def brut(d, data_off, off, size):
+    """Mots u32 d'un bloc, 8 par ligne, avec leur décalage."""
+    raw = d[data_off + off:data_off + off + size]
+    lignes = []
+    for i in range(0, size - size % 4, 32):
+        mots = struct.unpack_from(f'<{min(8, (size - i) // 4)}I', raw, i)
+        lignes.append(f'        +{i:04x} ' + ' '.join(f'{m:08x}' for m in mots))
+    return '\n'.join(lignes)
+
+
+# Blocs compactés (kind=1 ou gros tableaux) : affichés en entier
+BLOCS = {'sensorDriverData', 'cameraModuleData', 'resolutionData', 'moduleConfiguration',
+         'powerSetting', 'customInfo', 'delayInfo', 'initSettings', 'resolutionInfo'}
+
+
 def main():
     d, data_off, nodes = charger(sys.argv[1])
-    profondeur = []
     for nid, name, kind, off, size in nodes:
         if name == 'regSetting':
             print(f'  [regSetting : {size // 40} écritures]')
@@ -70,7 +84,9 @@ def main():
         if name in ('slaveAddr', 'registerData', 'delayUs'):
             continue
         valeur = apercu(d, data_off, off, size) if 0 < size <= 256 else (f'<{size} octets>' if size else '')
-        print(f'{nid:5d} {name:32s} kind={kind[0]},{kind[1]},{kind[2]} {valeur}')
+        print(f'{nid:5d} {name:32s} kind={kind[0]},{kind[1]},{kind[2]} off={off} {valeur}')
+        if name in BLOCS and size > 0:
+            print(brut(d, data_off, off, size))
 
 
 if __name__ == '__main__':
