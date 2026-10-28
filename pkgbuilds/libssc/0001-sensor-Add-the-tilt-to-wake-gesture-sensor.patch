@@ -1,0 +1,584 @@
+From 6bf6d9bc44cff364b039fcb3b1c4a3fa5a57bb15 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 28 Oct 2026 08:43:14 +0300
+Subject: [PATCH] sensor: Add the tilt to wake gesture sensor
+
+Qualcomm's sns_tilt_to_wake algorithm runs on the Sensor Core and reports
+one event each time the device is raised towards the user, with wake-up
+delivery. Expose it as SSCSensorTiltToWake with a "detected" signal and
+add it to ssccli. Gesture sensors report a single-output stream type:
+enable any non-continuous sensor like an on-change one instead of
+asserting.
+---
+ data/meson.build                 |   1 +
+ data/ssc-sensor-event.proto      |  29 +++
+ libssc.map                       |  10 +
+ src/libssc-cli-private.h         |   1 +
+ src/libssc-cli.c                 |  39 +++-
+ src/libssc-sensor-tilt-to-wake.c | 304 +++++++++++++++++++++++++++++++
+ src/libssc-sensor-tilt-to-wake.h |  44 +++++
+ src/libssc-sensor.c              |   8 +-
+ src/libssc.h                     |   1 +
+ src/meson.build                  |   2 +
+ 10 files changed, 434 insertions(+), 5 deletions(-)
+ create mode 100644 data/ssc-sensor-event.proto
+ create mode 100644 src/libssc-sensor-tilt-to-wake.c
+ create mode 100644 src/libssc-sensor-tilt-to-wake.h
+
+diff --git a/data/meson.build b/data/meson.build
+index 76dc22b..5366214 100644
+--- a/data/meson.build
++++ b/data/meson.build
+@@ -27,6 +27,7 @@ msgs = [
+   'sensor-magnetometer',
+   'sensor-rotationvector',
+   'sensor-gyroscope',
++  'sensor-event',
+ ]
+ sources_gen = []
+ headers_gen = []
+diff --git a/data/ssc-sensor-event.proto b/data/ssc-sensor-event.proto
+new file mode 100644
+index 0000000..0666a9b
+--- /dev/null
++++ b/data/ssc-sensor-event.proto
+@@ -0,0 +1,29 @@
++/*
++ * libssc: Library to expose Qualcomm Sensor Core sensors
++ * Copyright (C) 2026 libssc contributors
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published
++ * by the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++syntax = "proto2";
++
++/*
++ * Generic event of a gesture sensor (tilt to wake, pick up...), the
++ * standard sensor event of the Sensor Core.
++ * @data: event values, sensor-specific (usually one value).
++ * @status: sample status / accuracy [0, 3].
++ */
++message SscEventResponse {
++	repeated float data = 1;
++	optional int32 status = 2;
++}
+diff --git a/libssc.map b/libssc.map
+index d5a2ee2..dde32b0 100644
+--- a/libssc.map
++++ b/libssc.map
+@@ -71,6 +71,16 @@ LIBSSC_0.4.0 {
+ 		ssc_sensor_magnetometer_get_type;
+ 		ssc_sensor_proximity_get_type;
+ 		ssc_sensor_error_quark;
++		ssc_sensor_tilt_to_wake_new;
++		ssc_sensor_tilt_to_wake_new_finish;
++		ssc_sensor_tilt_to_wake_new_sync;
++		ssc_sensor_tilt_to_wake_open;
++		ssc_sensor_tilt_to_wake_open_finish;
++		ssc_sensor_tilt_to_wake_open_sync;
++		ssc_sensor_tilt_to_wake_close;
++		ssc_sensor_tilt_to_wake_close_finish;
++		ssc_sensor_tilt_to_wake_close_sync;
++		ssc_sensor_tilt_to_wake_get_type;
+ 	local:
+ 		*;
+ };
+diff --git a/src/libssc-cli-private.h b/src/libssc-cli-private.h
+index e210167..fc1e0f8 100644
+--- a/src/libssc-cli-private.h
++++ b/src/libssc-cli-private.h
+@@ -36,6 +36,7 @@
+ #include "libssc-sensor-magnetometer.h"
+ #include "libssc-sensor-compass.h"
+ #include "libssc-sensor-gyroscope.h"
++#include "libssc-sensor-tilt-to-wake.h"
+ 
+ typedef struct {
+ 	GMainLoop *loop;
+diff --git a/src/libssc-cli.c b/src/libssc-cli.c
+index 5560862..c93e5f6 100644
+--- a/src/libssc-cli.c
++++ b/src/libssc-cli.c
+@@ -154,6 +154,26 @@ static void gyroscope_measurement (SSCSensorGyroscope *sensor, gfloat velocity_x
+ 	fflush(stdout);
+ }
+ 
++static gboolean
++tilt_to_wake_close_cb (SSCSensorTiltToWake *self)
++{
++	g_autoptr (GError) err = NULL;
++
++	if (!ssc_sensor_tilt_to_wake_close_sync (self, NULL, &err))
++		g_printf ("Unable to close tilt to wake sensor: %s\n", err ? err->message : "UNKNOWN");
++
++	g_debug ("Tilt to wake sensor disabled");
++	exit(0);
++
++	return G_SOURCE_REMOVE;
++}
++
++static void tilt_to_wake_detected (SSCSensorTiltToWake *sensor, gfloat value, guint msg_id, gpointer user_data)
++{
++	g_printf ("Tilt to wake detected: value=%f (message %u)\n", value, msg_id);
++	fflush(stdout);
++}
++
+ /*****************************************************************************/
+ 
+ int main(int argc, char *argv[])
+@@ -168,7 +188,7 @@ int main(int argc, char *argv[])
+ 	const GOptionEntry options[] = {
+ 		{ "version", 0, 0, G_OPTION_ARG_NONE, &print_version, "Print version information and exit.", NULL },
+ 		{ "debug", 'v', 0, G_OPTION_ARG_NONE, &debug, "Enable debug logs.", NULL },
+-		{ "sensor", 0, 0, G_OPTION_ARG_STRING, &sensor_str, "Enable a sensor. Supported sensors: 'proximity', 'light', 'accelerometer', 'magnetometer', 'compass'", NULL },
++		{ "sensor", 0, 0, G_OPTION_ARG_STRING, &sensor_str, "Enable a sensor. Supported sensors: 'proximity', 'light', 'accelerometer', 'magnetometer', 'compass', 'gyroscope', 'tilt_to_wake'", NULL },
+ 		{ "timeout", 0, 0, G_OPTION_ARG_INT64, &timeout, "Number of seconds before this will timeout [default 10]", NULL },
+ 		{ NULL, 0, 0, G_OPTION_ARG_NONE, NULL, NULL, NULL }
+ 	};
+@@ -289,8 +309,23 @@ int main(int argc, char *argv[])
+ 			return OPEN_FAIL_EXIT_CODE;
+ 		}
+ 		g_timeout_add_seconds (timeout, (GSourceFunc)gyroscope_close_cb, gyroscope);
++	} else if (g_strcmp0 (sensor_str, "tilt_to_wake") == 0) {
++		SSCSensorTiltToWake *tilt_to_wake = ssc_sensor_tilt_to_wake_new_sync (NULL, &err);
++		if (!tilt_to_wake) {
++			g_printf ("Unable to initialize tilt to wake sensor: %s\n", err ? err->message : "UNKNOWN");
++			return INIT_FAIL_EXIT_CODE;
++		}
++		g_signal_connect (tilt_to_wake,
++			  	  "detected",
++			  	  G_CALLBACK (tilt_to_wake_detected),
++			  	  NULL);
++		if (!ssc_sensor_tilt_to_wake_open_sync (tilt_to_wake, NULL, &err)) {
++			g_printf ("Unable to open tilt to wake sensor: %s\n", err ? err->message : "UNKNOWN");
++			return OPEN_FAIL_EXIT_CODE;
++		}
++		g_timeout_add_seconds (timeout, (GSourceFunc)tilt_to_wake_close_cb, tilt_to_wake);
+ 	} else {
+-		g_printf ("Specify a supported sensor: 'proximity', 'light', 'accelerometer', 'magnetometer', 'compass', 'gyroscope'\n");
++		g_printf ("Specify a supported sensor: 'proximity', 'light', 'accelerometer', 'magnetometer', 'compass', 'gyroscope', 'tilt_to_wake'\n");
+ 		return GENERAL_FAIL_EXIT_CODE;
+ 	}
+ 
+diff --git a/src/libssc-sensor-tilt-to-wake.c b/src/libssc-sensor-tilt-to-wake.c
+new file mode 100644
+index 0000000..4d9ef6c
+--- /dev/null
++++ b/src/libssc-sensor-tilt-to-wake.c
+@@ -0,0 +1,304 @@
++/*
++ * libssc: Library to expose Qualcomm Sensor Core sensors
++ * Copyright (C) 2026 libssc contributors (based on the proximity sensor by Dylan Van Assche)
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published
++ * by the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program. If not, see <https://www.gnu.org/licenses/>.
++ */
++
++/*
++ * Tilt to wake: a gesture sensor of the Sensor Core (Qualcomm's
++ * sns_tilt_to_wake algorithm, fed by the accelerometer on the DSP).
++ * It reports one event each time the device is raised towards the user;
++ * the events are delivered with wake-up, so they also arrive while the
++ * application processor is suspended.
++ *
++ * The "detected" signal carries the first event value (0 if the event
++ * has no value) and the message id it came with, for debugging.
++ */
++
++#include "ssc-common.pb-c.h"
++#include "ssc-sensor-event.pb-c.h"
++#include "libssc-client-private.h"
++#include "libssc-common-private.h"
++#include "libssc-sensor-tilt-to-wake.h"
++
++enum {
++	SIGNAL_DETECTED,
++	N_SIGNALS
++};
++static guint signals[N_SIGNALS];
++
++typedef struct _SSCSensorTiltToWakePrivate {
++	guint report_id;
++} SSCSensorTiltToWakePrivate;
++
++G_DEFINE_TYPE_WITH_CODE (SSCSensorTiltToWake, ssc_sensor_tilt_to_wake, SSC_TYPE_SENSOR,
++			 G_ADD_PRIVATE (SSCSensorTiltToWake))
++
++typedef struct {
++	SSCSensorTiltToWake *sensor;
++	gfloat value;
++	guint msg_id;
++} SignalContext;
++
++static void
++signal_context_free (SignalContext *ctx)
++{
++	g_slice_free (SignalContext, ctx);
++}
++
++/*****************************************************************************/
++
++static gboolean
++emit_signal (gpointer user_data) {
++	SignalContext *ctx = user_data;
++
++	g_signal_emit (ctx->sensor, signals[SIGNAL_DETECTED], 0, ctx->value, ctx->msg_id);
++
++	return G_SOURCE_REMOVE;
++}
++
++static void
++report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_low, GArray *buf, gpointer user_data)
++{
++	SSCSensorTiltToWake *sensor = SSC_SENSOR_TILT_TO_WAKE (user_data);
++	SignalContext *ctx = NULL;
++	guint64 sensor_uid_low;
++	guint64 sensor_uid_high;
++	gfloat value = 0.0;
++
++	g_object_get (SSC_SENSOR (sensor),
++		      SSC_SENSOR_UID_HIGH, &sensor_uid_high,
++		      SSC_SENSOR_UID_LOW, &sensor_uid_low,
++		      NULL);
++
++	if (sensor_uid_high != uid_high || sensor_uid_low != uid_low)
++		return;
++
++	/* Configuration and attribute responses are not events */
++	if (msg_id == SSC_MSG_RESPONSE_ENABLE_REPORT || msg_id == SSC_MSG_RESPONSE_GET_ATTRIBUTES)
++		return;
++
++	if (msg_id == SSC_MSG_REPORT_MEASUREMENT) {
++		SscEventResponse *msg = ssc_event_response__unpack (NULL, buf->len, (const uint8_t *) buf->data);
++
++		if (msg) {
++			if (msg->n_data > 0)
++				value = msg->data[0];
++			g_debug ("Tilt to wake event: %zu value(s), first %f", msg->n_data, value);
++			ssc_event_response__free_unpacked (msg, NULL);
++		} else {
++			g_debug ("Tilt to wake event without the standard event payload");
++		}
++	} else if (msg_id < SSC_MSG_REPORT_MEASUREMENT_PROXIMITY) {
++		/* Requests and their responses, not events */
++		return;
++	} else {
++		g_debug ("Tilt to wake: message %u treated as an event", msg_id);
++	}
++
++	/* Emit signal in main context instead of thread's context */
++	ctx = g_slice_new0 (SignalContext);
++	ctx->sensor = sensor;
++	ctx->value = value;
++	ctx->msg_id = msg_id;
++	g_idle_add_full (G_PRIORITY_DEFAULT_IDLE, emit_signal, ctx, (GDestroyNotify)signal_context_free);
++}
++
++/*****************************************************************************/
++
++static void
++tilt_to_wake_close_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_data)
++{
++	g_autoptr (GTask) task = G_TASK (user_data);
++	g_autoptr (GError) error = NULL;
++
++	if (!SSC_SENSOR_CLASS (ssc_sensor_tilt_to_wake_parent_class)->close_finish (sensor, result, &error)) {
++		g_task_return_error (task, g_steal_pointer (&error));
++		return;
++	}
++
++	g_task_return_boolean (task, TRUE);
++}
++
++gboolean
++ssc_sensor_tilt_to_wake_close_finish (SSCSensorTiltToWake *self, GAsyncResult *result, GError **error)
++{
++	return g_task_propagate_boolean (G_TASK (result), error);
++}
++
++void
++ssc_sensor_tilt_to_wake_close (SSCSensorTiltToWake *self, GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data)
++{
++	GTask *task = NULL;
++	SSCClient *client = NULL;
++	SSCSensorTiltToWakePrivate *priv = NULL;
++
++	g_assert (SSC_SENSOR_CLASS (ssc_sensor_tilt_to_wake_parent_class)->close &&
++		  SSC_SENSOR_CLASS (ssc_sensor_tilt_to_wake_parent_class)->close_finish);
++
++	task = g_task_new (self, cancellable, callback, user_data);
++	priv = ssc_sensor_tilt_to_wake_get_instance_private (self);
++
++	/* Stop listening for reports */
++	g_object_get (SSC_SENSOR (self),
++		      SSC_SENSOR_CLIENT, &client,
++		      NULL);
++	if (priv->report_id)
++		g_signal_handler_disconnect (client, priv->report_id);
++	priv->report_id = 0;
++
++	/* Close sensor */
++	SSC_SENSOR_CLASS (ssc_sensor_tilt_to_wake_parent_class)->close (SSC_SENSOR (self), cancellable, (GAsyncReadyCallback)tilt_to_wake_close_ready, task);
++}
++
++gboolean
++ssc_sensor_tilt_to_wake_close_sync (SSCSensorTiltToWake *self, GCancellable *cancellable, GError **error)
++{
++	gboolean success = FALSE;
++	SyncContext ctx;
++
++	ssc_common_init_sync_context (&ctx);
++	ssc_sensor_tilt_to_wake_close (self, cancellable, ssc_common_callback_sync_context, &ctx);
++	ssc_common_wait_sync_context (&ctx);
++	success = ssc_sensor_tilt_to_wake_close_finish (self, ctx.result, error);
++	ssc_common_clear_sync_context (&ctx);
++
++	return success;
++}
++
++/*****************************************************************************/
++
++static void
++tilt_to_wake_open_ready (SSCSensor *sensor, GAsyncResult *result, gpointer user_data)
++{
++	g_autoptr (GTask) task = G_TASK (user_data);
++	g_autoptr (GError) error = NULL;
++
++	if (!SSC_SENSOR_CLASS (ssc_sensor_tilt_to_wake_parent_class)->open_finish (sensor, result, &error)) {
++		g_task_return_error (task, g_steal_pointer (&error));
++		return;
++	}
++
++	g_task_return_boolean (task, TRUE);
++}
++
++gboolean
++ssc_sensor_tilt_to_wake_open_finish (SSCSensorTiltToWake *self, GAsyncResult *result, GError **error)
++{
++	return g_task_propagate_boolean (G_TASK (result), error);
++}
++
++void
++ssc_sensor_tilt_to_wake_open (SSCSensorTiltToWake *self, GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data)
++{
++	SSCClient *client = NULL;
++	SSCSensorTiltToWakePrivate *priv = NULL;
++	GTask *task = NULL;
++
++	g_assert (SSC_SENSOR_CLASS (ssc_sensor_tilt_to_wake_parent_class)->open &&
++		  SSC_SENSOR_CLASS (ssc_sensor_tilt_to_wake_parent_class)->open_finish);
++
++	priv = ssc_sensor_tilt_to_wake_get_instance_private (self);
++	task = g_task_new (self, cancellable, callback, user_data);
++
++	/* Start listening for reports before opening the sensor */
++	g_object_get (SSC_SENSOR (self),
++		      SSC_SENSOR_CLIENT, &client,
++		      NULL);
++	priv->report_id = g_signal_connect (client,
++					    "report",
++					    G_CALLBACK (report_received),
++					    self);
++
++	/* Open sensor */
++	SSC_SENSOR_CLASS (ssc_sensor_tilt_to_wake_parent_class)->open (SSC_SENSOR (self), cancellable, (GAsyncReadyCallback)tilt_to_wake_open_ready, task);
++}
++
++gboolean
++ssc_sensor_tilt_to_wake_open_sync (SSCSensorTiltToWake *self, GCancellable *cancellable, GError **error)
++{
++	gboolean success = FALSE;
++	SyncContext ctx;
++
++	ssc_common_init_sync_context (&ctx);
++	ssc_sensor_tilt_to_wake_open (self, cancellable, ssc_common_callback_sync_context, &ctx);
++	ssc_common_wait_sync_context (&ctx);
++	success = ssc_sensor_tilt_to_wake_open_finish (self, ctx.result, error);
++	ssc_common_clear_sync_context (&ctx);
++
++	return success;
++}
++
++/*****************************************************************************/
++
++static void
++ssc_sensor_tilt_to_wake_class_init (SSCSensorTiltToWakeClass *klass)
++{
++	signals[SIGNAL_DETECTED] = g_signal_new ("detected",
++		G_TYPE_FROM_CLASS (klass),
++		G_SIGNAL_RUN_FIRST,
++		0, NULL, NULL, NULL,
++		G_TYPE_NONE,
++		2, G_TYPE_FLOAT, G_TYPE_UINT);
++}
++
++static void
++ssc_sensor_tilt_to_wake_init (SSCSensorTiltToWake *self)
++{
++}
++
++SSCSensorTiltToWake *
++ssc_sensor_tilt_to_wake_new_finish (GAsyncResult *result, GError **error)
++{
++	GObject *sensor;
++	GObject *source;
++
++	source = g_async_result_get_source_object (result);
++	sensor = g_async_initable_new_finish (G_ASYNC_INITABLE (source), result, error);
++	g_object_unref (source);
++
++	if (!sensor)
++		return NULL;
++
++	return SSC_SENSOR_TILT_TO_WAKE (sensor);
++}
++
++void
++ssc_sensor_tilt_to_wake_new (GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data)
++{
++	g_async_initable_new_async (
++			SSC_TYPE_SENSOR_TILT_TO_WAKE,
++			G_PRIORITY_DEFAULT,
++			cancellable,
++			callback,
++			user_data,
++			SSC_SENSOR_DATA_TYPE, "tilt_to_wake",
++			NULL);
++}
++
++SSCSensorTiltToWake *
++ssc_sensor_tilt_to_wake_new_sync (GCancellable *cancellable, GError **error)
++{
++	SSCSensorTiltToWake *self = NULL;
++	SyncContext ctx;
++
++	ssc_common_init_sync_context (&ctx);
++	ssc_sensor_tilt_to_wake_new (cancellable, ssc_common_callback_sync_context, &ctx);
++	ssc_common_wait_sync_context (&ctx);
++	self = ssc_sensor_tilt_to_wake_new_finish (ctx.result, error);
++	ssc_common_clear_sync_context (&ctx);
++
++	return self;
++}
+diff --git a/src/libssc-sensor-tilt-to-wake.h b/src/libssc-sensor-tilt-to-wake.h
+new file mode 100644
+index 0000000..66e92ed
+--- /dev/null
++++ b/src/libssc-sensor-tilt-to-wake.h
+@@ -0,0 +1,44 @@
++/*
++ * libssc: Library to expose Qualcomm Sensor Core sensors
++ * Copyright (C) 2026 libssc contributors (based on the proximity sensor by Dylan Van Assche)
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published
++ * by the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#ifndef _LIBSSC_SENSOR_TILT_TO_WAKE_H_
++#define _LIBSSC_SENSOR_TILT_TO_WAKE_H_
++
++#include <glib.h>
++#include <gio/gio.h>
++#include "libssc-sensor.h"
++
++#define SSC_TYPE_SENSOR_TILT_TO_WAKE (ssc_sensor_tilt_to_wake_get_type())
++
++typedef struct _SSCSensorTiltToWake {
++	SSCSensor parent;
++} SSCSensorTiltToWake;
++
++G_DECLARE_FINAL_TYPE (SSCSensorTiltToWake, ssc_sensor_tilt_to_wake, SSC, SENSOR_TILT_TO_WAKE, SSCSensor);
++
++void		 	 ssc_sensor_tilt_to_wake_new (GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data);
++SSCSensorTiltToWake 	*ssc_sensor_tilt_to_wake_new_finish (GAsyncResult *result, GError **error);
++SSCSensorTiltToWake 	*ssc_sensor_tilt_to_wake_new_sync (GCancellable *cancellable, GError **error);
++void			 ssc_sensor_tilt_to_wake_open (SSCSensorTiltToWake *self, GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data);
++gboolean		 ssc_sensor_tilt_to_wake_open_finish (SSCSensorTiltToWake *self, GAsyncResult *result, GError **error);
++gboolean		 ssc_sensor_tilt_to_wake_open_sync (SSCSensorTiltToWake *self, GCancellable *cancellable, GError **error);
++void			 ssc_sensor_tilt_to_wake_close (SSCSensorTiltToWake *self, GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data);
++gboolean		 ssc_sensor_tilt_to_wake_close_finish (SSCSensorTiltToWake *self, GAsyncResult *result, GError **error);
++gboolean		 ssc_sensor_tilt_to_wake_close_sync (SSCSensorTiltToWake *self, GCancellable *cancellable, GError **error);
++
++#endif /* _LIBSSC_SENSOR_TILT_TO_WAKE_H_ */
+diff --git a/src/libssc-sensor.c b/src/libssc-sensor.c
+index 5947dba..f01f44f 100644
+--- a/src/libssc-sensor.c
++++ b/src/libssc-sensor.c
+@@ -230,11 +230,13 @@ sensor_open (SSCSensor *self, GCancellable *cancellable, GAsyncReadyCallback cal
+ 	/*
+ 	 * Sensors which support on-change do not need any configuration,
+ 	 * only a different message ID to enable them.
++	 *
++	 * Gesture sensors (tilt to wake...) report a single-output or event
++	 * stream type; they are enabled like on-change sensors.
+ 	 */
+-	} else if (priv->stream_type == SSC_STREAM_TYPE_ON_CHANGE) {
++	} else {
+ 		msg_id = SSC_MSG_REQUEST_ENABLE_REPORT_ON_CHANGE;
+-	} else
+-		g_assert_not_reached ();
++	}
+ 
+ 	ctx = g_slice_new (ReportReceivedContext);
+ 	ctx->task = task;
+diff --git a/src/libssc.h b/src/libssc.h
+index 4b42241..814cb21 100644
+--- a/src/libssc.h
++++ b/src/libssc.h
+@@ -25,5 +25,6 @@
+ #include <libssc-sensor-light.h>
+ #include <libssc-sensor-proximity.h>
+ #include <libssc-sensor-gyroscope.h>
++#include <libssc-sensor-tilt-to-wake.h>
+ 
+ #endif /* _LIBSSC_H_ */
+diff --git a/src/meson.build b/src/meson.build
+index 5ea1dff..623709a 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -35,6 +35,7 @@ headers += files(
+   'libssc-sensor-magnetometer.h',
+   'libssc-sensor-compass.h',
+   'libssc-sensor-gyroscope.h',
++  'libssc-sensor-tilt-to-wake.h',
+ )
+ 
+ install_headers(
+@@ -52,6 +53,7 @@ sources += files(
+   'libssc-sensor-magnetometer.c',
+   'libssc-sensor-compass.c',
+   'libssc-sensor-gyroscope.c',
++  'libssc-sensor-tilt-to-wake.c',
+ )
+ 
+ cli_sources = files(
