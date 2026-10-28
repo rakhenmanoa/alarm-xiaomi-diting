@@ -1,0 +1,30 @@
+#!/bin/bash
+# Écran éteint pendant un appel quand le téléphone est contre l'oreille.
+# Plasma Mobile ne le fait pas lui-même : on écoute la proximité
+# d'iio-sensor-proxy (monitor-sensor garde la réservation du capteur) et,
+# si ModemManager a un appel actif, on coupe l'affichage avec KWin.
+# Un appel entrant qui sonne encore n'est pas « active » : l'écran reste
+# allumé tant qu'on n'a pas décroché. Testé sur le téléphone le 2026-10-28.
+export QT_QPA_PLATFORM=wayland
+eteint=0
+
+appel_actif() {
+    mmcli -m any --voice-list-calls 2>/dev/null | grep -q '(active)'
+}
+
+stdbuf -oL monitor-sensor --proximity | while read -r ligne; do
+    case "$ligne" in
+        *"value changed: 1"*)
+            if appel_actif; then
+                kscreen-doctor --dpms off
+                eteint=1
+            fi
+            ;;
+        *"value changed: 0"*)
+            if [ "$eteint" = 1 ]; then
+                kscreen-doctor --dpms on
+                eteint=0
+            fi
+            ;;
+    esac
+done

@@ -1,0 +1,10 @@
+// Capteurs depuis un service utilisateur ou SSH (diting-proximite-appel,
+// monitor-sensor) : par défaut iio-sensor-proxy ne laisse réserver un
+// capteur qu'à la session graphique active, et refuse les autres avec
+// « Sensor claim not allowed ».
+polkit.addRule(function(action, subject) {
+    if (action.id.indexOf("net.hadess.SensorProxy.") == 0 &&
+        subject.isInGroup("wheel")) {
+        return polkit.Result.YES;
+    }
+});

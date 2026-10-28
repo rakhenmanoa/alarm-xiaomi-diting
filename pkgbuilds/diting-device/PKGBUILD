@@ -5,7 +5,7 @@
 pkgname=diting-device
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 _artcommit=b4c1510fe6686ab8053715a02c34bec875ca5c6c
-pkgver=0.1.11
+pkgver=0.1.12
 pkgrel=1
 pkgdesc="Intégration du Xiaomi 12T Pro (diting) : images de démarrage, audio, appels, modem, capteurs, USB"
 arch=(any)
@@ -14,7 +14,8 @@ license=(GPL-2.0-or-later)
 # mkbootimg (AOSP) : fourni par android-tools ou, à défaut, par mkbootimg-aosp
 depends=(bash python python-gobject alsa-utils iproute2 dtc mkinitcpio
          libqmi qrtr rmtfs tqftpserv modemmanager networkmanager
-         hexagonrpc-diting fastrpc-diting feedbackd zram-generator)
+         hexagonrpc-diting fastrpc-diting feedbackd zram-generator
+         iio-sensor-proxy libkscreen)
 optdepends=('android-tools: mkbootimg (sinon mkbootimg-aosp)'
             'firmware-xiaomi-diting: firmware signé extrait de votre téléphone'
             'callaudiod: requis par plasma-dialer (le service D-Bus est remplacé)')
@@ -39,8 +40,12 @@ source=("diting-ubuntu::git+https://github.com/royka1/diting-ubuntu.git#commit=$
         diting-touch.sleep
         diting-vibrate
         90-diting-vibreur.rules
-        zram-generator.conf)
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+        zram-generator.conf
+        diting-proximite-appel
+        diting-proximite-appel.service
+        diting-capteurs.rules)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
+            'SKIP' 'SKIP' 'SKIP')
 
 _ud() { echo "$srcdir/diting-ubuntu/ubuntu-diting"; }
 
@@ -123,6 +128,14 @@ package() {
   install -Dm644 "$srcdir/diting-perf.service" "$pkgdir/usr/lib/systemd/system/diting-perf.service"
   install -Dm644 "$srcdir/diting-modemmanager.rules" "$pkgdir/usr/share/polkit-1/rules.d/50-diting-modemmanager.rules"
   install -Dm644 "$srcdir/diting-wifi-powersave.conf" "$pkgdir/usr/lib/NetworkManager/conf.d/60-diting-wifi-powersave.conf"
+
+  # écran éteint pendant les appels (proximité) : service utilisateur
+  # activé pour tous les comptes, et règle polkit pour réserver le capteur
+  install -Dm755 "$srcdir/diting-proximite-appel" "$pkgdir/usr/lib/diting/diting-proximite-appel"
+  install -Dm644 "$srcdir/diting-proximite-appel.service" "$pkgdir/usr/lib/systemd/user/diting-proximite-appel.service"
+  install -d "$pkgdir/usr/lib/systemd/user/graphical-session.target.wants"
+  ln -s ../diting-proximite-appel.service "$pkgdir/usr/lib/systemd/user/graphical-session.target.wants/diting-proximite-appel.service"
+  install -Dm644 "$srcdir/diting-capteurs.rules" "$pkgdir/usr/share/polkit-1/rules.d/50-diting-capteurs.rules"
 
   # le service D-Bus est géré par le hook (sinon conflit de fichier avec callaudiod)
   rm -f "$pkgdir/usr/share/dbus-1/services/org.mobian_project.CallAudio.service"

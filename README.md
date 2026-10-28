@@ -186,7 +186,7 @@ scripts/restaurer-android.sh --donnees  # + userdata/metadata d'origine (si sauv
 | GPU | Mesa freedreno / Turnip |
 | Audio, appels | topologie AudioReach, UCM, protection des haut-parleurs, `diting-voice-call`, `diting-callaudio` (remplace le service de callaudiod pour plasma-dialer), `fastrpc-diting` |
 | Modem | rmtfs (lecture seule), tqftpserv, qrtr, `diting-modem-setup`, ModemManager |
-| Capteurs | `hexagonrpc-diting`, `libssc`, `iio-sensor-proxy-diting` (rotation, proximité, lumière, boussole) |
+| Capteurs | `hexagonrpc-diting`, `libssc`, `iio-sensor-proxy-diting` (rotation, proximité, lumière, boussole) ; gyroscope lisible avec `ssccli --sensor gyroscope` ; `diting-proximite-appel` éteint l'écran contre l'oreille pendant un appel (Plasma Mobile ne le fait pas) |
 | Vidéo | `libva-v4l2-stateful-diting` (H.264/HEVC/VP9 matériels, VA-API) |
 | Caméra | `libcamera-diting` 0.7.0 + patches (si ALARM est en 0.7.x) |
 | Bureau | Plasma Mobile (SDDM Wayland, connexion automatique), plasma-dialer, Spacebar, Angelfish… |
