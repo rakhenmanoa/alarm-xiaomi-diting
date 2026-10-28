@@ -6,7 +6,7 @@ pkgname=libcamera-diting
 _tag=v0.7.0
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=0.7.0
-pkgrel=2
+pkgrel=3
 pkgdesc="libcamera avec la prise en charge des caméras du Xiaomi diting"
 arch=(aarch64)
 url="https://libcamera.org"
@@ -20,8 +20,9 @@ conflicts=(libcamera libcamera-ipa libcamera-tools gst-plugin-libcamera)
 options=(!strip !debug)
 source=("libcamera::git+https://github.com/libcamera-org/libcamera.git#tag=${_tag}"
         "diting-ubuntu::git+https://github.com/royka1/diting-ubuntu.git#commit=${_ditingcommit}"
-        0005-ipa-libipa-Add-Sony-IMX596-and-GalaxyCore-GC02M1-sen.patch)
-sha256sums=('SKIP' 'SKIP' 'SKIP')
+        0005-ipa-libipa-Add-Sony-IMX596-and-GalaxyCore-GC02M1-sen.patch
+        0006-ipa-simple-Longer-exposures-in-low-light-proportiona.patch)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 prepare() {
   cd libcamera
@@ -32,6 +33,8 @@ prepare() {
   done
   # frontale (IMX596) et macro (GC02M1)
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0005-ipa-libipa-Add-Sony-IMX596-and-GalaxyCore-GC02M1-sen.patch"
+  # exposition longue en basse lumière (VBLANK), AGC proportionnel, AF plus rapide
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0006-ipa-simple-Longer-exposures-in-low-light-proportiona.patch"
 }
 build() {
   arch-meson libcamera build \

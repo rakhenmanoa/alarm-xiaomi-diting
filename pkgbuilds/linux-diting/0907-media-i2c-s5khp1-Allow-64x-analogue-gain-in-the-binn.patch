@@ -1,0 +1,120 @@
+From 46f1c1424704c098134a7dbe4b4b96f18fbddde2 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 28 Oct 2026 17:04:53 +0300
+Subject: [PATCH] media: i2c: s5khp1: Allow 64x analogue gain in the binned
+ modes
+
+The module data (maxAnalogGain) allows 64x analogue gain (code 2048,
+32 = 1x) in the binned modes and 16x at full resolution; the driver
+limited every mode to 16x. Keep the limit per mode and update the gain
+control range with the mode, so that the AGC has two more stops of
+sensitivity in low light.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/media/i2c/s5khp1.c | 27 ++++++++++++++++++++++-----
+ 1 file changed, 22 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/media/i2c/s5khp1.c b/drivers/media/i2c/s5khp1.c
+index f11d6085e..d41b69a17 100644
+--- a/drivers/media/i2c/s5khp1.c
++++ b/drivers/media/i2c/s5khp1.c
+@@ -64,10 +64,14 @@
+ #define S5KHP1_EXPOSURE_STEP		1
+ #define S5KHP1_EXPOSURE_MARGIN		22
+ 
+-/* Analogue gain code: 32 = 1x ... 512 = 16x */
++/*
++ * Analogue gain code: 32 = 1x. The module data allows 64x (2048) in the
++ * binned modes and 16x (512) at full resolution (maxAnalogGain).
++ */
+ #define S5KHP1_REG_AGAIN		CCI_REG16(0x0204)
+ #define S5KHP1_AGAIN_MIN		32
+-#define S5KHP1_AGAIN_MAX		512
++#define S5KHP1_AGAIN_MAX		2048
++#define S5KHP1_AGAIN_MAX_FULL		512
+ #define S5KHP1_AGAIN_STEP		1
+ #define S5KHP1_AGAIN_DEFAULT		64
+ 
+@@ -117,6 +121,7 @@ struct s5khp1_mode {
+ 	u32 vts;			/* Default vertical timing size */
+ 	u32 exposure;			/* Default exposure value */
+ 	u32 pixel_rate;			/* Pixel array rate: hts * vts * fps */
++	u32 again_max;			/* Analogue gain limit of the mode */
+ 	unsigned int link_freq_index;
+ 	struct v4l2_rect crop;		/* Analogue crop in native pixels */
+ 	const char *table;		/* Register table in the firmware */
+@@ -153,6 +158,7 @@ struct s5khp1 {
+ 	struct v4l2_ctrl *hblank;
+ 	struct v4l2_ctrl *vblank;
+ 	struct v4l2_ctrl *exposure;
++	struct v4l2_ctrl *again;
+ 	struct v4l2_ctrl *vflip;
+ 	struct v4l2_ctrl *hflip;
+ 
+@@ -174,6 +180,7 @@ static const struct s5khp1_mode s5khp1_supported_modes[] = {
+ 		.vts = 4760,
+ 		.exposure = 4000,
+ 		.pixel_rate = 1359456000,
++		.again_max = S5KHP1_AGAIN_MAX,
+ 		.link_freq_index = 0,
+ 		.crop = { 0, 0, 16384, 12288 },
+ 		.table = "mode2",
+@@ -186,6 +193,7 @@ static const struct s5khp1_mode s5khp1_supported_modes[] = {
+ 		.vts = 6360,
+ 		.exposure = 6000,
+ 		.pixel_rate = 1361141760,
++		.again_max = S5KHP1_AGAIN_MAX,
+ 		.link_freq_index = 1,
+ 		.crop = { 0, 0, 16384, 12288 },
+ 		.table = "mode1",
+@@ -198,6 +206,7 @@ static const struct s5khp1_mode s5khp1_supported_modes[] = {
+ 		.vts = 12698,
+ 		.exposure = 12000,
+ 		.pixel_rate = 1584710400,
++		.again_max = S5KHP1_AGAIN_MAX_FULL,
+ 		.link_freq_index = 2,
+ 		.crop = { 0, 0, 16384, 12288 },
+ 		.table = "mode0",
+@@ -210,6 +219,7 @@ static const struct s5khp1_mode s5khp1_supported_modes[] = {
+ 		.vts = 2440,
+ 		.exposure = 2300,
+ 		.pixel_rate = 1358515200,
++		.again_max = S5KHP1_AGAIN_MAX,
+ 		.link_freq_index = 1,
+ 		.crop = { 0, 1536, 16384, 9216 },
+ 		.table = "mode5",
+@@ -222,6 +232,7 @@ static const struct s5khp1_mode s5khp1_supported_modes[] = {
+ 		.vts = 2606,
+ 		.exposure = 2500,
+ 		.pixel_rate = 1360957440,
++		.again_max = S5KHP1_AGAIN_MAX,
+ 		.link_freq_index = 0,
+ 		.crop = { 0, 1536, 16384, 9216 },
+ 		.table = "mode6",
+@@ -280,6 +291,10 @@ static void s5khp1_update_mode_ctrls(struct s5khp1 *s5khp1,
+ 				 exposure_max, S5KHP1_EXPOSURE_STEP,
+ 				 mode->exposure);
+ 	__v4l2_ctrl_s_ctrl(s5khp1->exposure, mode->exposure);
++
++	__v4l2_ctrl_modify_range(s5khp1->again, S5KHP1_AGAIN_MIN,
++				 mode->again_max, S5KHP1_AGAIN_STEP,
++				 S5KHP1_AGAIN_DEFAULT);
+ }
+ 
+ static int s5khp1_set_ctrl(struct v4l2_ctrl *ctrl)
+@@ -381,9 +396,11 @@ static int s5khp1_init_controls(struct s5khp1 *s5khp1)
+ 					   S5KHP1_VTS_MAX - mode->height, 1,
+ 					   vblank);
+ 
+-	v4l2_ctrl_new_std(ctrl_hdlr, &s5khp1_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,
+-			  S5KHP1_AGAIN_MIN, S5KHP1_AGAIN_MAX,
+-			  S5KHP1_AGAIN_STEP, S5KHP1_AGAIN_DEFAULT);
++	s5khp1->again = v4l2_ctrl_new_std(ctrl_hdlr, &s5khp1_ctrl_ops,
++					  V4L2_CID_ANALOGUE_GAIN,
++					  S5KHP1_AGAIN_MIN, mode->again_max,
++					  S5KHP1_AGAIN_STEP,
++					  S5KHP1_AGAIN_DEFAULT);
+ 
+ 	exposure_max = mode->vts - S5KHP1_EXPOSURE_MARGIN;
+ 	s5khp1->exposure = v4l2_ctrl_new_std(ctrl_hdlr, &s5khp1_ctrl_ops,

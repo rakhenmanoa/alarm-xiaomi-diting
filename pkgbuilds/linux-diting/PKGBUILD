@@ -7,7 +7,7 @@ pkgname=linux-diting
 _kver=7.2.10
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=${_kver}
-pkgrel=9
+pkgrel=10
 pkgdesc="Linux ${_kver} pour le Xiaomi 12T Pro / Redmi K50 Ultra (diting, SM8475)"
 arch=(aarch64)
 url="https://github.com/royka1/diting-ubuntu"
@@ -25,8 +25,10 @@ source=("https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${_kver}.tar.xz"
         0903-arm64-dts-diting-separate-TX-SoundWire-mic-ports.patch
         0904-Input-pm8350b-haptics-and-diting-vibrator.patch
         0905-media-i2c-Add-Sony-IMX596-and-GalaxyCore-GC02M1-sens.patch
-        0906-arm64-dts-qcom-sm8475-xiaomi-diting-Add-the-front-an.patch)
+        0906-arm64-dts-qcom-sm8475-xiaomi-diting-Add-the-front-an.patch
+        0907-media-i2c-s5khp1-Allow-64x-analogue-gain-in-the-binn.patch)
 sha256sums=('2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -66,6 +68,8 @@ prepare() {
   # caméras frontale (IMX596) et macro (GC02M1) : pilotes + device tree
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0905-media-i2c-Add-Sony-IMX596-and-GalaxyCore-GC02M1-sens.patch"
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0906-arm64-dts-qcom-sm8475-xiaomi-diting-Add-the-front-an.patch"
+  # caméra principale : gain analogique 64x dans les modes regroupés
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0907-media-i2c-s5khp1-Allow-64x-analogue-gain-in-the-binn.patch"
 
   _make defconfig
   scripts/kconfig/merge_config.sh -m .config "$srcdir/diting-ubuntu/kernel/config/diting.config"
