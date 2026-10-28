@@ -6,7 +6,7 @@ pkgname=libcamera-diting
 _tag=v0.7.0
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=0.7.0
-pkgrel=5
+pkgrel=6
 pkgdesc="libcamera avec la prise en charge des caméras du Xiaomi diting"
 arch=(aarch64)
 url="https://libcamera.org"
@@ -23,8 +23,9 @@ source=("libcamera::git+https://github.com/libcamera-org/libcamera.git#tag=${_ta
         0005-ipa-libipa-Add-Sony-IMX596-and-GalaxyCore-GC02M1-sen.patch
         0006-ipa-simple-Longer-exposures-in-low-light-proportiona.patch
         0007-libcamera-software_isp-Centre-weighted-focus-measure.patch
-        0008-ipa-simple-af-Parabolic-peak-fit-statistics-every-ot.patch)
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+        0008-ipa-simple-af-Parabolic-peak-fit-statistics-every-ot.patch
+        0009-software_isp-GPU-MHC-demosaic-and-sharpening-for-pac.patch)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 prepare() {
   cd libcamera
@@ -41,6 +42,8 @@ prepare() {
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0007-libcamera-software_isp-Centre-weighted-focus-measure.patch"
   # Autofocus plus rapide : sommet de parabole, statistiques une image sur deux
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0008-ipa-simple-af-Parabolic-peak-fit-statistics-every-ot.patch"
+  # Dématriçage Malvar-He-Cutler + netteté (GPU, Bayer compacté), AGC qui protège les hautes lumières
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0009-software_isp-GPU-MHC-demosaic-and-sharpening-for-pac.patch"
 }
 build() {
   arch-meson libcamera build \

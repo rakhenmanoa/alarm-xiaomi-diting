@@ -1,0 +1,375 @@
+From 1ba9242986579baf88063a7f68b19d227e630f97 Mon Sep 17 00:00:00 2001
+From: alarm <alarm@localhost>
+Date: Wed, 28 Oct 2026 17:56:45 +0300
+Subject: [PATCH] software_isp: GPU: MHC demosaic and sharpening for packed
+ Bayer, AGC highlight protection
+
+---
+ src/ipa/simple/algorithms/agc.cpp          |  56 +++++-
+ src/ipa/simple/algorithms/agc.h            |   3 +-
+ src/libcamera/shaders/bayer_1x_packed.frag | 216 +++++++++------------
+ 3 files changed, 137 insertions(+), 138 deletions(-)
+
+diff --git a/src/ipa/simple/algorithms/agc.cpp b/src/ipa/simple/algorithms/agc.cpp
+index f2b10c6..47b06dd 100644
+--- a/src/ipa/simple/algorithms/agc.cpp
++++ b/src/ipa/simple/algorithms/agc.cpp
+@@ -41,6 +41,19 @@ static constexpr float kExposureOptimal = kExposureBinsCount / 2.0;
+  */
+ static constexpr float kExposureSatisfactory = 0.2;
+ 
++/*
++ * Highlight protection (diting): when more than kHighlightMax of the
++ * samples are close to saturation (a screen, a window, a lamp), the
++ * exposure goes down even though the mean is on target, as long as the
++ * mean stays above kHighlightMinMsv; between kHighlightHoldMsv and
++ * kHighlightMinMsv it is only held, so that the two rules do not fight.
++ * Below kHighlightMax / 2, the mean alone decides again.
++ */
++static constexpr unsigned int kHighlightBin = 60;	/* of 64: 94% of the range */
++static constexpr float kHighlightMax = 0.02;
++static constexpr float kHighlightMinMsv = 1.6;
++static constexpr float kHighlightHoldMsv = 1.4;
++
+ Agc::Agc()
+ 	: maxFrameDuration_(100ms), gainThreshold_(4.0)
+ {
+@@ -124,25 +137,38 @@ void Agc::splitExposure(IPAContext &context, double total,
+ 		 std::max<int32_t>(0, exposure - agc.exposureMax);
+ }
+ 
+-void Agc::updateExposure(IPAContext &context, IPAFrameContext &frameContext, double exposureMSV)
++void Agc::updateExposure(IPAContext &context, IPAFrameContext &frameContext,
++			 double exposureMSV, double highlights)
+ {
+ 	int32_t &exposure = frameContext.sensor.exposure;
+ 	double &again = frameContext.sensor.gain;
+ 	int32_t &vblank = frameContext.sensor.vblank;
+ 
+-	if (std::abs(exposureMSV - kExposureOptimal) <= kExposureSatisfactory)
+-		return;
+-
+ 	/*
+ 	 * Proportional correction of the total exposure: the mean sample
+ 	 * value is roughly proportional to it when far from the target,
+ 	 * smaller steps close to it avoid oscillations. At most 2x per step
+ 	 * (the statistics are not linear when clipped).
+ 	 */
+-	double ratio = kExposureOptimal / std::max(exposureMSV, 0.1);
+-	if (std::abs(exposureMSV - kExposureOptimal) < 1.0)
+-		ratio = std::sqrt(ratio);
+-	ratio = std::clamp(ratio, 0.5, 2.0);
++	double ratio = 1.0;
++	if (std::abs(exposureMSV - kExposureOptimal) > kExposureSatisfactory) {
++		ratio = kExposureOptimal / std::max(exposureMSV, 0.1);
++		if (std::abs(exposureMSV - kExposureOptimal) < 1.0)
++			ratio = std::sqrt(ratio);
++		ratio = std::clamp(ratio, 0.5, 2.0);
++	}
++
++	if (highlights > kHighlightMax) {
++		if (exposureMSV > kHighlightMinMsv)
++			ratio = std::min(ratio, 0.85);
++		else if (exposureMSV > kHighlightHoldMsv)
++			ratio = std::min(ratio, 1.0);
++	} else if (highlights > kHighlightMax / 2 && exposureMSV > kHighlightHoldMsv) {
++		ratio = std::min(ratio, 1.0);
++	}
++
++	if (ratio == 1.0)
++		return;
+ 
+ 	double total = static_cast<double>(exposure) * again * ratio;
+ 	splitExposure(context, total, exposure, again, vblank);
+@@ -152,7 +178,8 @@ void Agc::updateExposure(IPAContext &context, IPAFrameContext &frameContext, dou
+ 	context.activeState.agc.vblank = vblank;
+ 
+ 	LOG(IPASoftExposure, Debug)
+-		<< "exposureMSV " << exposureMSV << " ratio " << ratio
++		<< "exposureMSV " << exposureMSV << " highlights " << highlights
++		<< " ratio " << ratio
+ 		<< " exp " << exposure << " again " << again
+ 		<< " vblank " << vblank;
+ }
+@@ -224,7 +251,16 @@ void Agc::process(IPAContext &context,
+ 	}
+ 
+ 	float exposureMSV = (denom == 0 ? 0 : static_cast<float>(num) / denom);
+-	updateExposure(context, frameContext, exposureMSV);
++
++	unsigned int total = 0, high = 0;
++	for (unsigned int i = 0; i < SwIspStats::kYHistogramSize; i++) {
++		total += histogram[i];
++		if (i >= kHighlightBin)
++			high += histogram[i];
++	}
++	double highlights = total ? static_cast<double>(high) / total : 0.0;
++
++	updateExposure(context, frameContext, exposureMSV, highlights);
+ }
+ 
+ REGISTER_IPA_ALGORITHM(Agc, "Agc")
+diff --git a/src/ipa/simple/algorithms/agc.h b/src/ipa/simple/algorithms/agc.h
+index 446b17c..f8d932d 100644
+--- a/src/ipa/simple/algorithms/agc.h
++++ b/src/ipa/simple/algorithms/agc.h
+@@ -27,7 +27,8 @@ public:
+ 		     ControlList &metadata) override;
+ 
+ private:
+-	void updateExposure(IPAContext &context, IPAFrameContext &frameContext, double exposureMSV);
++	void updateExposure(IPAContext &context, IPAFrameContext &frameContext,
++			    double exposureMSV, double highlights);
+ 	void splitExposure(IPAContext &context, double total,
+ 			   int32_t &exposure, double &gain, int32_t &vblank);
+ 
+diff --git a/src/libcamera/shaders/bayer_1x_packed.frag b/src/libcamera/shaders/bayer_1x_packed.frag
+index 23747f7..187af8a 100644
+--- a/src/libcamera/shaders/bayer_1x_packed.frag
++++ b/src/libcamera/shaders/bayer_1x_packed.frag
+@@ -79,153 +79,115 @@ float apply_contrast(float value)
+ 		return 1.0 - 0.5 * pow((1.0 - value) / 0.5, contrastExp);
+ }
+ 
++/*
++ * Value of the pixel at column x, row y (in pixels), clamped to the image.
++ * The MS byte of pixel x is at byte floor(x * BPP): x + x / 4 for RAW10P,
++ * x * 1.5 for RAW12P.
++ */
++float pixel_at(float x, float y)
++{
++	x = clamp(x, 0.0, tex_size.x - 1.0);
++	y = clamp(y, 0.0, tex_size.y - 1.0);
++	return texture2D(tex_y, vec2(floor(x * BPP + 0.02) * tex_step.x,
++				     y * tex_step.y)).r;
++}
++
++/*
++ * Sharpening (diting): local detail of the centre pixel against the four
++ * pixels of the same colour two pixels away, relative to its level so that
++ * all colour channels are scaled alike, with small differences cored out
++ * as noise.
++ */
++#define SHARPEN_STRENGTH	0.5
++#define SHARPEN_NOISE		0.006
++#define SHARPEN_NOISE_LEVEL	0.025
++
+ void main(void)
+ {
+ 	vec3 rgb;
+ 
+ 	/*
+-	 * center_bytes holds the coordinates of the MS byte of the pixel
+-	 * being sampled on the [0, stride-1/height-1] range.
+ 	 * center_pixel holds the coordinates of the pixel being sampled
+-	 * on the [0, width/height-1] range.
+-	 */
+-	vec2 center_bytes;
+-	vec2 center_pixel;
+-
+-	/*
+-	 * x- and y-positions of the adjacent pixels on the [0, 1] range.
+-	 */
+-	vec2 xcoords;
+-	vec2 ycoords;
+-
+-	/*
+-	 * The coordinates passed to the shader in textureOut may point
+-	 * to a place in between the pixels if the texture format doesn't
+-	 * match the image format. In particular, MIPI packed raw Bayer
+-	 * formats don't have a matching texture format.
+-	 * In this case align the coordinates to the left nearest pixel
+-	 * by hand.
+-	 */
+-	center_pixel = floor(textureOut * tex_size);
+-	center_bytes.y = center_pixel.y;
+-
+-	/*
+-	 * Add a small number (a few mantissa's LSBs) to avoid float
+-	 * representation issues. Maybe paranoic.
++	 * on the [0, width/height-1] range. The coordinates passed to the
++	 * shader in textureOut may point to a place in between the pixels:
++	 * align them on the nearest pixel to the left by hand.
+ 	 */
+-	center_bytes.x = BPP * center_pixel.x + 0.02;
++	vec2 center_pixel = floor(textureOut * tex_size);
+ 
+-	float fract_x = fract(center_bytes.x);
++	vec2 alternate = mod(center_pixel.xy + tex_bayer_first_red, 2.0);
+ 
+ 	/*
+-	 * The below floor() call ensures that center_bytes.x points
+-	 * at one of the bytes representing the 8 higher bits of
+-	 * the pixel value, not at the byte containing the LS bits
+-	 * of the group of the pixels.
++	 * Malvar-He-Cutler demosaic (5x5), as in bayer_unpacked.frag (Morgan
++	 * McGuire's formulation), instead of the bilinear 3x3 interpolation:
++	 * much less blur and fewer colour fringes on edges.
+ 	 */
+-	center_bytes.x = floor(center_bytes.x);
+-	center_bytes *= tex_step;
++	float px = center_pixel.x;
++	float py = center_pixel.y;
+ 
+-	xcoords = center_bytes.x + vec2(-tex_step.x, tex_step.x);
+-	ycoords = center_bytes.y + vec2(-tex_step.y, tex_step.y);
++	float C = pixel_at(px, py);
++	const vec4 kC = vec4( 4.0,  6.0,  5.0,  5.0) / 8.0;
+ 
+-	/*
+-	 * If xcoords[0] points at the byte containing the LS bits
+-	 * of the previous group of the pixels, move xcoords[0] one
+-	 * byte back.
+-	 */
+-	xcoords[0] += (fract_x < THRESHOLD_L) ? -tex_step.x : 0.0;
++	vec4 Dvec = vec4(
++		pixel_at(px - 1.0, py - 1.0),
++		pixel_at(px - 1.0, py + 1.0),
++		pixel_at(px + 1.0, py - 1.0),
++		pixel_at(px + 1.0, py + 1.0));
+ 
+-	/*
+-	 * If xcoords[1] points at the byte containing the LS bits
+-	 * of the current group of the pixels, move xcoords[1] one
+-	 * byte forward.
+-	 */
+-	xcoords[1] += (fract_x > THRESHOLD_H) ? tex_step.x : 0.0;
++	vec4 PATTERN = (kC.xyz * C).xyzz;
+ 
+-	vec2 alternate = mod(center_pixel.xy + tex_bayer_first_red, 2.0);
+-	bool even_col = alternate.x < 1.0;
+-	bool even_row = alternate.y < 1.0;
++	Dvec.xy += Dvec.zw;
++	Dvec.x  += Dvec.y;
+ 
+-	/*
+-	 * We need to sample the central pixel and the ones with offset
+-	 * of -1 to +1 pixel in both X and Y directions. Let's name these
+-	 * pixels as below, where C is the central pixel:
+-	 *
+-	 *   +----+----+----+----+
+-	 *   | \ x|    |    |    |
+-	 *   |y \ | -1 |  0 | +1 |
+-	 *   +----+----+----+----+
+-	 *   | +1 | D2 | A1 | D3 |
+-	 *   +----+----+----+----+
+-	 *   |  0 | B0 |  C | B1 |
+-	 *   +----+----+----+----+
+-	 *   | -1 | D0 | A0 | D1 |
+-	 *   +----+----+----+----+
+-	 *
+-	 * In the below equations (0,-1).r means "r component of the texel
+-	 * shifted by -tex_step.y from the center_bytes one" etc.
+-	 *
+-	 * In the even row / even column (EE) case the colour values are:
+-	 *   R = C = (0,0).r,
+-	 *   G = (A0 + A1 + B0 + B1) / 4.0 =
+-	 *       ( (0,-1).r + (0,1).r + (-1,0).r + (1,0).r ) / 4.0,
+-	 *   B = (D0 + D1 + D2 + D3) / 4.0 =
+-	 *       ( (-1,-1).r + (1,-1).r + (-1,1).r + (1,1).r ) / 4.0
+-	 *
+-	 * For even row / odd column (EO):
+-	 *   R = (B0 + B1) / 2.0 = ( (-1,0).r + (1,0).r ) / 2.0,
+-	 *   G = C = (0,0).r,
+-	 *   B = (A0 + A1) / 2.0 = ( (0,-1).r + (0,1).r ) / 2.0
+-	 *
+-	 * For odd row / even column (OE):
+-	 *   R = (A0 + A1) / 2.0 = ( (0,-1).r + (0,1).r ) / 2.0,
+-	 *   G = C = (0,0).r,
+-	 *   B = (B0 + B1) / 2.0 = ( (-1,0).r + (1,0).r ) / 2.0
+-	 *
+-	 * For odd row / odd column (OO):
+-	 *   R = (D0 + D1 + D2 + D3) / 4.0 =
+-	 *       ( (-1,-1).r + (1,-1).r + (-1,1).r + (1,1).r ) / 4.0,
+-	 *   G = (A0 + A1 + B0 + B1) / 4.0 =
+-	 *       ( (0,-1).r + (0,1).r + (-1,0).r + (1,0).r ) / 4.0,
+-	 *   B = C = (0,0).r
+-	 */
++	vec4 value = vec4(
++		pixel_at(px, py - 2.0),
++		pixel_at(px, py - 1.0),
++		pixel_at(px - 2.0, py),
++		pixel_at(px - 1.0, py));
+ 
+-	/*
+-	 * Fetch the values and precalculate the terms:
+-	 *   patterns.x = (A0 + A1) / 2.0
+-	 *   patterns.y = (B0 + B1) / 2.0
+-	 *   patterns.z = (A0 + A1 + B0 + B1) / 4.0
+-	 *   patterns.w = (D0 + D1 + D2 + D3) / 4.0
+-	 */
+-	#define fetch(x, y) texture2D(tex_y, vec2(x, y)).r
+-
+-	float C = texture2D(tex_y, center_bytes).r;
+-	vec4 patterns = vec4(
+-		fetch(center_bytes.x, ycoords[0]),	/* A0: (0,-1) */
+-		fetch(xcoords[0], center_bytes.y),	/* B0: (-1,0) */
+-		fetch(xcoords[0], ycoords[0]),		/* D0: (-1,-1) */
+-		fetch(xcoords[1], ycoords[0]));		/* D1: (1,-1) */
+ 	vec4 temp = vec4(
+-		fetch(center_bytes.x, ycoords[1]),	/* A1: (0,1) */
+-		fetch(xcoords[1], center_bytes.y),	/* B1: (1,0) */
+-		fetch(xcoords[1], ycoords[1]),		/* D3: (1,1) */
+-		fetch(xcoords[0], ycoords[1]));		/* D2: (-1,1) */
+-	patterns = (patterns + temp) * 0.5;
+-		/* .x = (A0 + A1) / 2.0, .y = (B0 + B1) / 2.0 */
+-		/* .z = (D0 + D3) / 2.0, .w = (D1 + D2) / 2.0 */
+-	patterns.w = (patterns.z + patterns.w) * 0.5;
+-	patterns.z = (patterns.x + patterns.y) * 0.5;
+-
+-	rgb = even_col ?
+-		(even_row ?
+-			vec3(C, patterns.zw) :
+-			vec3(patterns.x, C, patterns.y)) :
+-		(even_row ?
+-			vec3(patterns.y, C, patterns.x) :
+-			vec3(patterns.wz, C));
++		pixel_at(px, py + 2.0),
++		pixel_at(px, py + 1.0),
++		pixel_at(px + 2.0, py),
++		pixel_at(px + 1.0, py));
++
++	const vec4 kA = vec4(-1.0, -1.5,  0.5, -1.0) / 8.0;
++	const vec4 kB = vec4( 2.0,  0.0,  0.0,  4.0) / 8.0;
++	const vec4 kD = vec4( 0.0,  2.0, -1.0, -1.0) / 8.0;
++
++	#define kE (kA.xywz)
++	#define kF (kB.xywz)
++
++	value += temp;
++
++	#define A (value[0])
++	#define B (value[1])
++	#define D (Dvec.x)
++	#define E (value[2])
++	#define F (value[3])
++
++	PATTERN.yzw += (kD.yz * D).xyy;
++
++	PATTERN += (kA.xyz * A).xyzx + (kE.xyw * E).xyxz;
++	PATTERN.xw  += kB.xw * B;
++	PATTERN.xz  += kF.xz * F;
++
++	rgb = (alternate.y < 1.0) ?
++		((alternate.x < 1.0) ?
++			vec3(C, PATTERN.xy) :
++			vec3(PATTERN.z, C, PATTERN.w)) :
++		((alternate.x < 1.0) ?
++			vec3(PATTERN.w, C, PATTERN.z) :
++			vec3(PATTERN.yx, C));
++
++	/* Sharpening, see SHARPEN_STRENGTH */
++	float level = max(C - blacklevel.g, 0.0);
++	float detail = C - (A + E) * 0.25;
++	float noise = SHARPEN_NOISE + SHARPEN_NOISE_LEVEL * sqrt(level);
++	detail = sign(detail) * max(abs(detail) - noise, 0.0);
++	float boost = clamp(1.0 + SHARPEN_STRENGTH * detail / max(level, 0.02), 0.5, 2.0);
+ 
+ 	rgb = rgb - blacklevel;
++	rgb *= boost;
+ 
+ 	/*
+ 	 *   CCM is a 3x3 in the format
+-- 
+2.43.0
+
