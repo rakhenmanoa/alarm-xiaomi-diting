@@ -1,7 +1,7 @@
 # Lever le téléphone pour rallumer l'écran : capteur gestuel tilt to wake
 # du SLPI (libssc, patch 0001), qui réveille aussi le téléphone du suspend.
 pkgname=diting-lever-reveil
-pkgver=0.2.0
+pkgver=0.2.1
 pkgrel=1
 pkgdesc="Xiaomi diting : lever le téléphone pour rallumer l'écran (tilt to wake du SLPI)"
 arch=(aarch64)

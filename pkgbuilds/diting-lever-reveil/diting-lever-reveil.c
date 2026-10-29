@@ -13,6 +13,13 @@
  *
  * Service utilisateur de la session Plasma (diting-lever-reveil.service).
  *
+ * Le capteur est ouvert en asynchrone : l'ouverture ne se termine jamais
+ * (le SLPI ne répond pas par une mise à jour de configuration pour ce
+ * capteur, et son premier événement n'arrive qu'au premier geste), et les
+ * fonctions *_sync de libssc attendent en faisant tourner la boucle GLib
+ * sans bloquer, à 100 % d'un cœur. Pour la même raison, pas de fermeture
+ * explicite : le SLPI libère le client quand la socket QRTR se ferme.
+ *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
@@ -115,6 +122,15 @@ geste_detecte (SSCSensorTiltToWake *capteur, gfloat valeur, guint msg_id, gpoint
 		g_warning ("kscreen-doctor : %s", err->message);
 }
 
+static void
+ouverture_terminee (GObject *source, GAsyncResult *res, gpointer user_data)
+{
+	g_autoptr (GError) err = NULL;
+
+	if (!ssc_sensor_tilt_to_wake_open_finish (SSC_SENSOR_TILT_TO_WAKE (source), res, &err))
+		g_warning ("ouverture du capteur : %s", err ? err->message : "?");
+}
+
 static gboolean
 arreter (gpointer user_data)
 {
@@ -139,10 +155,7 @@ main (void)
 	}
 	g_signal_connect (capteur, "detected", G_CALLBACK (geste_detecte), NULL);
 
-	if (!ssc_sensor_tilt_to_wake_open_sync (capteur, NULL, &err)) {
-		g_printerr ("ouverture du capteur impossible : %s\n", err ? err->message : "?");
-		return EXIT_FAILURE;
-	}
+	ssc_sensor_tilt_to_wake_open (capteur, NULL, ouverture_terminee, NULL);
 	g_message ("en attente du geste « lever pour réveiller »");
 
 	loop = g_main_loop_new (NULL, FALSE);
@@ -150,9 +163,6 @@ main (void)
 	g_unix_signal_add (SIGINT, arreter, NULL);
 	g_main_loop_run (loop);
 
-	g_clear_error (&err);
-	if (!ssc_sensor_tilt_to_wake_close_sync (capteur, NULL, &err))
-		g_warning ("fermeture du capteur : %s", err ? err->message : "?");
 	if (capteurs) {
 		g_dbus_proxy_call_sync (capteurs, "ReleaseProximity", NULL, G_DBUS_CALL_FLAGS_NONE,
 					1000, NULL, NULL);
