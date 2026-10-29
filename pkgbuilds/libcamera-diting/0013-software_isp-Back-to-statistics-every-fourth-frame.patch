@@ -1,0 +1,41 @@
+From 5accf577786d83c887645e7417aa0c2e4f353ab9 Mon Sep 17 00:00:00 2001
+From: alarm <alarm@localhost>
+Date: Thu, 29 Oct 2026 12:56:38 +0300
+Subject: [PATCH] software_isp: Back to statistics every fourth frame
+
+Every other frame, the exposure and gain read back for a frame no longer
+matched the frame (gain alternating between 4x and 64x in the AGC log).
+---
+ include/libcamera/internal/software_isp/swstats_cpu.h | 2 +-
+ src/ipa/simple/algorithms/af.cpp                      | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/include/libcamera/internal/software_isp/swstats_cpu.h b/include/libcamera/internal/software_isp/swstats_cpu.h
+index 9769e6e..c3a47db 100644
+--- a/include/libcamera/internal/software_isp/swstats_cpu.h
++++ b/include/libcamera/internal/software_isp/swstats_cpu.h
+@@ -43,7 +43,7 @@ public:
+ 	 * Run stats once every 4 frames to ensure any previous
+ 	 * exposure changes have been applied.
+ 	 */
+-	static constexpr uint32_t kStatPerNumFrames = 2;
++	static constexpr uint32_t kStatPerNumFrames = 4;
+ 
+ 	bool isValid() const { return sharedStats_.fd().isValid(); }
+ 
+diff --git a/src/ipa/simple/algorithms/af.cpp b/src/ipa/simple/algorithms/af.cpp
+index f0fc835..d7e3a8c 100644
+--- a/src/ipa/simple/algorithms/af.cpp
++++ b/src/ipa/simple/algorithms/af.cpp
+@@ -10,7 +10,7 @@
+  * changes). A scan visits the lens range in coarse steps, then the
+  * neighbourhood of the best coarse position (see below), waiting a few
+  * statistics periods after every lens move (the statistics are gathered on
+- * every other frame, which is enough for a voice coil lens to settle). In continuous mode a scan is started at
++ * every fourth frame, which is enough for a voice coil lens to settle). In continuous mode a scan is started at
+  * the beginning and again when the measure at the chosen position changes
+  * for several frames (scene change). Lens positions are on a 0..100 scale
+  * mapped linearly onto the lens driver's focus range.
+-- 
+2.43.0
+

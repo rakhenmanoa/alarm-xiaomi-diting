@@ -23,9 +23,7 @@ algorithms:
   - Agc:
       exposureTarget: 2.0
   - Af:
-      # le moteur bouge dès les statistiques reçues : une période de plus
-      # (4 images) pour que la mesure suive vraiment la nouvelle position
-      settleFrames: 1
+      settleFrames: 0
       coarseStep: 10
       fineRange: 4
 ...
