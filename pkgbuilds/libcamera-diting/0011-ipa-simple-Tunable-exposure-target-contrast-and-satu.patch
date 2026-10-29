@@ -1,0 +1,162 @@
+From a8815b8c9ba66aa63153832b240140d453369113 Mon Sep 17 00:00:00 2001
+From: alarm <alarm@localhost>
+Date: Thu, 29 Oct 2026 08:10:05 +0300
+Subject: [PATCH] ipa: simple: Tunable exposure target, contrast and
+ saturation; white balance aware highlight protection
+
+---
+ src/ipa/simple/algorithms/adjust.cpp | 17 +++++++++++----
+ src/ipa/simple/algorithms/adjust.h   |  3 +++
+ src/ipa/simple/algorithms/agc.cpp    | 31 ++++++++++++++++++++++------
+ src/ipa/simple/algorithms/agc.h      |  2 ++
+ 4 files changed, 43 insertions(+), 10 deletions(-)
+
+diff --git a/src/ipa/simple/algorithms/adjust.cpp b/src/ipa/simple/algorithms/adjust.cpp
+index 068e984..fcc733a 100644
+--- a/src/ipa/simple/algorithms/adjust.cpp
++++ b/src/ipa/simple/algorithms/adjust.cpp
+@@ -24,15 +24,22 @@ constexpr float kDefaultSaturation = 1.0f;
+ 
+ LOG_DEFINE_CATEGORY(IPASoftAdjust)
+ 
+-int Adjust::init(IPAContext &context, [[maybe_unused]] const YamlObject &tuningData)
++/*
++ * Tuning (diting): contrast and saturation used while the application does
++ * not set them (defaults 1.0; saturation needs the Ccm algorithm).
++ */
++int Adjust::init(IPAContext &context, const YamlObject &tuningData)
+ {
++	contrast_ = std::clamp(tuningData["contrast"].get<float>(kDefaultContrast), 0.0f, 2.0f);
++	saturation_ = std::clamp(tuningData["saturation"].get<float>(kDefaultSaturation), 0.0f, 2.0f);
++
+ 	context.ctrlMap[&controls::Gamma] =
+ 		ControlInfo(0.1f, 10.0f, kDefaultGamma);
+ 	context.ctrlMap[&controls::Contrast] =
+-		ControlInfo(0.0f, 2.0f, kDefaultContrast);
++		ControlInfo(0.0f, 2.0f, contrast_);
+ 	if (context.ccmEnabled)
+ 		context.ctrlMap[&controls::Saturation] =
+-			ControlInfo(0.0f, 2.0f, kDefaultSaturation);
++			ControlInfo(0.0f, 2.0f, saturation_);
+ 	return 0;
+ }
+ 
+@@ -40,8 +47,10 @@ int Adjust::configure(IPAContext &context,
+ 		      [[maybe_unused]] const IPAConfigInfo &configInfo)
+ {
+ 	context.activeState.knobs.gamma = kDefaultGamma;
+-	context.activeState.knobs.contrast = std::optional<float>();
++	context.activeState.knobs.contrast = contrast_;
+ 	context.activeState.knobs.saturation = std::optional<float>();
++	if (context.ccmEnabled && saturation_ != kDefaultSaturation)
++		context.activeState.knobs.saturation = saturation_;
+ 
+ 	return 0;
+ }
+diff --git a/src/ipa/simple/algorithms/adjust.h b/src/ipa/simple/algorithms/adjust.h
+index fb133b1..411496b 100644
+--- a/src/ipa/simple/algorithms/adjust.h
++++ b/src/ipa/simple/algorithms/adjust.h
+@@ -43,6 +43,9 @@ public:
+ 
+ private:
+ 	void applySaturation(Matrix<float, 3, 3> &ccm, float saturation);
++
++	float contrast_ = 1.0f;
++	float saturation_ = 1.0f;
+ };
+ 
+ } /* namespace ipa::soft::algorithms */
+diff --git a/src/ipa/simple/algorithms/agc.cpp b/src/ipa/simple/algorithms/agc.cpp
+index 47b06dd..ba7f243 100644
+--- a/src/ipa/simple/algorithms/agc.cpp
++++ b/src/ipa/simple/algorithms/agc.cpp
+@@ -48,14 +48,19 @@ static constexpr float kExposureSatisfactory = 0.2;
+  * mean stays above kHighlightMinMsv; between kHighlightHoldMsv and
+  * kHighlightMinMsv it is only held, so that the two rules do not fight.
+  * Below kHighlightMax / 2, the mean alone decides again.
++ *
++ * The histogram is taken before white balance: a white surface clips on
++ * the screen when its raw luminance reaches the white balanced level, so
++ * the threshold is lowered by the white balance gains.
+  */
+-static constexpr unsigned int kHighlightBin = 60;	/* of 64: 94% of the range */
++static constexpr float kHighlightLevel = 0.94;	/* of the output range */
+ static constexpr float kHighlightMax = 0.02;
+ static constexpr float kHighlightMinMsv = 1.6;
+ static constexpr float kHighlightHoldMsv = 1.4;
+ 
+ Agc::Agc()
+-	: maxFrameDuration_(100ms), gainThreshold_(4.0)
++	: maxFrameDuration_(100ms), gainThreshold_(4.0),
++	  exposureTarget_(kExposureOptimal)
+ {
+ }
+ 
+@@ -65,11 +70,15 @@ Agc::Agc()
+  *     lengthened in low light (default 100000, 10 frames per second).
+  *   gainThreshold: analogue gain reached before the frame is lengthened
+  *     (default 4.0); above it, the exposure time grows first.
++ *   exposureTarget: mean sample value aimed at, on the 1..5 scale of the
++ *     histogram in five bins (default 2.5).
+  */
+ int Agc::init([[maybe_unused]] IPAContext &context, const YamlObject &tuningData)
+ {
+ 	maxFrameDuration_ = tuningData["maxFrameDuration"].get<double>(100000.0) * 1us;
+ 	gainThreshold_ = tuningData["gainThreshold"].get<double>(4.0);
++	exposureTarget_ = std::clamp(tuningData["exposureTarget"].get<double>(kExposureOptimal),
++				     1.5, 4.0);
+ 
+ 	return 0;
+ }
+@@ -151,9 +160,9 @@ void Agc::updateExposure(IPAContext &context, IPAFrameContext &frameContext,
+ 	 * (the statistics are not linear when clipped).
+ 	 */
+ 	double ratio = 1.0;
+-	if (std::abs(exposureMSV - kExposureOptimal) > kExposureSatisfactory) {
+-		ratio = kExposureOptimal / std::max(exposureMSV, 0.1);
+-		if (std::abs(exposureMSV - kExposureOptimal) < 1.0)
++	if (std::abs(exposureMSV - exposureTarget_) > kExposureSatisfactory) {
++		ratio = exposureTarget_ / std::max(exposureMSV, 0.1);
++		if (std::abs(exposureMSV - exposureTarget_) < 1.0)
+ 			ratio = std::sqrt(ratio);
+ 		ratio = std::clamp(ratio, 0.5, 2.0);
+ 	}
+@@ -252,10 +261,20 @@ void Agc::process(IPAContext &context,
+ 
+ 	float exposureMSV = (denom == 0 ? 0 : static_cast<float>(num) / denom);
+ 
++	const auto &gains = context.activeState.awb.gains;
++	double white = 0.299 / std::max(gains.r(), 0.1f) +
++		       0.587 / std::max(gains.g(), 0.1f) +
++		       0.114 / std::max(gains.b(), 0.1f);
++	double black = context.activeState.blc.level;
++	double clipLevel = black + kHighlightLevel * (256.0 - black) * std::min(white, 1.0);
++	unsigned int highlightBin = std::clamp<unsigned int>(
++		static_cast<unsigned int>(clipLevel * SwIspStats::kYHistogramSize / 256.0),
++		SwIspStats::kYHistogramSize / 2, SwIspStats::kYHistogramSize - 1);
++
+ 	unsigned int total = 0, high = 0;
+ 	for (unsigned int i = 0; i < SwIspStats::kYHistogramSize; i++) {
+ 		total += histogram[i];
+-		if (i >= kHighlightBin)
++		if (i >= highlightBin)
+ 			high += histogram[i];
+ 	}
+ 	double highlights = total ? static_cast<double>(high) / total : 0.0;
+diff --git a/src/ipa/simple/algorithms/agc.h b/src/ipa/simple/algorithms/agc.h
+index f8d932d..7a6d46b 100644
+--- a/src/ipa/simple/algorithms/agc.h
++++ b/src/ipa/simple/algorithms/agc.h
+@@ -36,6 +36,8 @@ private:
+ 	utils::Duration maxFrameDuration_;
+ 	/* Gain used before the frame is lengthened */
+ 	double gainThreshold_;
++	/* Mean sample value aimed at */
++	double exposureTarget_;
+ };
+ 
+ } /* namespace ipa::soft::algorithms */
+-- 
+2.43.0
+

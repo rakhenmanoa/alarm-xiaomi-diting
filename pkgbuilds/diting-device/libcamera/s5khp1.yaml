@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: CC0-1.0
+# Xiaomi diting, caméra principale S5KHP1 (actionneur AK7314) : réglages du
+# software ISP de libcamera. Autofocus par contraste : statistiques une
+# image sur deux, passe grossière par pas de 10 (sur 0..100), puis deux
+# mesures à +-4 et sommet de parabole.
+%YAML 1.1
+---
+version: 1
+algorithms:
+  - BlackLevel:
+  - Awb:
+  # Pas de calibration couleur : matrice identité, qui active la saturation
+  # d'Adjust (le traitement GPU l'applique sans coût).
+  - Ccm:
+      ccms:
+        - ct: 6500
+          ccm: [ 1, 0, 0,
+                 0, 1, 0,
+                 0, 0, 1 ]
+  - Adjust:
+      contrast: 1.15
+      saturation: 1.35
+  - Agc:
+      exposureTarget: 2.2
+  - Af:
+      settleFrames: 0
+      coarseStep: 10
+      fineRange: 4
+...
