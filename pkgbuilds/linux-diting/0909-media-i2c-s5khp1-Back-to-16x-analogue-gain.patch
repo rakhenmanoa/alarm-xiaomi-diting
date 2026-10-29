@@ -1,0 +1,35 @@
+From 8ae2c5c4c0f34a9437b0cdaef83471b84871752b Mon Sep 17 00:00:00 2001
+From: alarm <alarm@localhost>
+Date: Thu, 29 Oct 2026 14:12:45 +0300
+Subject: [PATCH] media: i2c: s5khp1: Back to 16x analogue gain
+
+Above 16x the image got darker, not brighter.
+---
+ drivers/media/i2c/s5khp1.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/media/i2c/s5khp1.c b/drivers/media/i2c/s5khp1.c
+index 91e8cbfd7..cdc173ba5 100644
+--- a/drivers/media/i2c/s5khp1.c
++++ b/drivers/media/i2c/s5khp1.c
+@@ -66,11 +66,15 @@
+ 
+ /*
+  * Analogue gain code: 32 = 1x. The module data allows 64x (2048) in the
+- * binned modes and 16x (512) at full resolution (maxAnalogGain).
++ * binned modes and 16x (512) at full resolution (maxAnalogGain), but above
++ * 16x the binned image gets darker instead of brighter (the AGC swung
++ * between 4x and 64x and settled in the dark): the sensor's own analogue
++ * range ends at 16x, the rest of the module data's figure is presumably
++ * digital gain applied elsewhere. 16x in every mode.
+  */
+ #define S5KHP1_REG_AGAIN		CCI_REG16(0x0204)
+ #define S5KHP1_AGAIN_MIN		32
+-#define S5KHP1_AGAIN_MAX		2048
++#define S5KHP1_AGAIN_MAX		512
+ #define S5KHP1_AGAIN_MAX_FULL		512
+ #define S5KHP1_AGAIN_STEP		1
+ #define S5KHP1_AGAIN_DEFAULT		64
+-- 
+2.43.0
+
