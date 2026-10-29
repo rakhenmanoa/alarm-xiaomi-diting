@@ -16,7 +16,7 @@ algorithms:
                  0, 0, 1 ]
   - Adjust:
       contrast: 1.15
-      saturation: 1.35
+      saturation: 1.25
   - Agc:
-      exposureTarget: 2.2
+      exposureTarget: 2.0
 ...

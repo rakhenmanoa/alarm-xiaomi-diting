@@ -6,7 +6,7 @@ pkgname=libcamera-diting
 _tag=v0.7.0
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=0.7.0
-pkgrel=8
+pkgrel=9
 pkgdesc="libcamera avec la prise en charge des caméras du Xiaomi diting"
 arch=(aarch64)
 url="https://libcamera.org"
@@ -26,8 +26,9 @@ source=("libcamera::git+https://github.com/libcamera-org/libcamera.git#tag=${_ta
         0008-ipa-simple-af-Parabolic-peak-fit-statistics-every-ot.patch
         0009-software_isp-GPU-MHC-demosaic-and-sharpening-for-pac.patch
         0010-pipeline-simple-Default-streaming-roles-to-a-sensor-.patch
-        0011-ipa-simple-Tunable-exposure-target-contrast-and-satu.patch)
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+        0011-ipa-simple-Tunable-exposure-target-contrast-and-satu.patch
+        0012-software_isp-Leave-saturated-samples-out-of-the-whit.patch)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 prepare() {
   cd libcamera
@@ -50,6 +51,8 @@ prepare() {
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0010-pipeline-simple-Default-streaming-roles-to-a-sensor-.patch"
   # cible d'exposition, contraste et saturation réglables ; hautes lumières selon la balance des blancs
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0011-ipa-simple-Tunable-exposure-target-contrast-and-satu.patch"
+  # balance des blancs sans les zones brûlées (dominante verte avec une fenêtre dans l'image)
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0012-software_isp-Leave-saturated-samples-out-of-the-whit.patch"
 }
 build() {
   arch-meson libcamera build \

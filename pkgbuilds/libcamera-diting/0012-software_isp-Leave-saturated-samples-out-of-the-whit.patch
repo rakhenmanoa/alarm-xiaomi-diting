@@ -1,0 +1,113 @@
+From 8928641558244825c2abf768ddf5bb35215745cc Mon Sep 17 00:00:00 2001
+From: alarm <alarm@localhost>
+Date: Thu, 29 Oct 2026 09:21:54 +0300
+Subject: [PATCH] software_isp: Leave saturated samples out of the white
+ balance sums
+
+---
+ .../internal/software_isp/swisp_stats.h       |  5 ++++
+ src/ipa/simple/algorithms/awb.cpp             |  4 +---
+ src/libcamera/software_isp/swstats_cpu.cpp    | 24 +++++++++++++++----
+ 3 files changed, 26 insertions(+), 7 deletions(-)
+
+diff --git a/include/libcamera/internal/software_isp/swisp_stats.h b/include/libcamera/internal/software_isp/swisp_stats.h
+index b75ef77..d587494 100644
+--- a/include/libcamera/internal/software_isp/swisp_stats.h
++++ b/include/libcamera/internal/software_isp/swisp_stats.h
+@@ -31,6 +31,11 @@ struct SwIspStats {
+ 	 * \brief Sums of colour channels of all the sampled pixels
+ 	 */
+ 	RGB<uint64_t> sum_;
++	/**
++	 * \brief Number of samples in sum_ (samples close to saturation are
++	 * left out)
++	 */
++	uint32_t sumCount;
+ 	/**
+ 	 * \brief Number of bins in the yHistogram
+ 	 */
+diff --git a/src/ipa/simple/algorithms/awb.cpp b/src/ipa/simple/algorithms/awb.cpp
+index 6fdaaca..e66f229 100644
+--- a/src/ipa/simple/algorithms/awb.cpp
++++ b/src/ipa/simple/algorithms/awb.cpp
+@@ -58,7 +58,6 @@ void Awb::process(IPAContext &context,
+ 		  const SwIspStats *stats,
+ 		  ControlList &metadata)
+ {
+-	const SwIspStats::Histogram &histogram = stats->yHistogram;
+ 	const uint8_t blackLevel = context.activeState.blc.level;
+ 
+ 	const float mdGains[] = {
+@@ -75,8 +74,7 @@ void Awb::process(IPAContext &context,
+ 	 * would be off if they were computed from the whole brightness range
+ 	 * rather than from the sensor range.
+ 	 */
+-	const uint64_t nPixels = std::accumulate(
+-		histogram.begin(), histogram.end(), uint64_t(0));
++	const uint64_t nPixels = stats->sumCount;
+ 	const uint64_t offset = blackLevel * nPixels;
+ 	const uint64_t minValid = 1;
+ 	/*
+diff --git a/src/libcamera/software_isp/swstats_cpu.cpp b/src/libcamera/software_isp/swstats_cpu.cpp
+index 8475214..e7e62da 100644
+--- a/src/libcamera/software_isp/swstats_cpu.cpp
++++ b/src/libcamera/software_isp/swstats_cpu.cpp
+@@ -172,6 +172,9 @@ static constexpr unsigned int kBlueYMul = 29; /* 0.114 * 256 */
+ static constexpr unsigned int kSharpSaturation = 235;
+ static constexpr int kSharpNoise = 2;
+ 
++/* Colour sums: saturation limit, in 8-bit units */
++static constexpr unsigned int kSumSaturation = 240;
++
+ #define SWSTATS_START_LINE_STATS(pixel_t) \
+ 	pixel_t r, g, g2, b;              \
+ 	uint64_t yVal;                    \
+@@ -179,14 +182,25 @@ static constexpr int kSharpNoise = 2;
+ 	uint64_t sumR = 0;                \
+ 	uint64_t sumG = 0;                \
+ 	uint64_t sumB = 0;                \
++	uint32_t sumN = 0;                \
+ 	int sharpG0 = 0, sharpG1 = 0;     \
+ 	unsigned int sharpN = 0;          \
+ 	uint64_t sharp = 0;
+ 
+-#define SWSTATS_ACCUMULATE_LINE_STATS(div) \
+-	sumR += r;                         \
+-	sumG += g;                         \
+-	sumB += b;                         \
++/*
++ * The colour sums leave out samples with a channel close to saturation
++ * (diting): clipped highlights are white whatever the light, and a large
++ * clipped window or lamp pulled the grey world white balance towards no
++ * correction at all (a green image, green being the most sensitive channel).
++ */
++#define SWSTATS_ACCUMULATE_LINE_STATS(div)                         \
++	if (r < kSumSaturation * (div) && g < kSumSaturation * (div) && \
++	    b < kSumSaturation * (div)) {                          \
++		sumR += r;                                         \
++		sumG += g;                                         \
++		sumB += b;                                         \
++		sumN++;                                            \
++	}                                                          \
+                                            \
+ 	yVal = r * kRedYMul;               \
+ 	yVal += g * kGreenYMul;            \
+@@ -227,6 +241,7 @@ static constexpr int kSharpNoise = 2;
+ 	stats_.sum_.r() += sumR;    \
+ 	stats_.sum_.g() += sumG;    \
+ 	stats_.sum_.b() += sumB;    \
++	stats_.sumCount += sumN;    \
+ 	stats_.sharpness += sharp;
+ 
+ void SwStatsCpu::statsBGGR8Line0(const uint8_t *src[])
+@@ -378,6 +393,7 @@ void SwStatsCpu::startFrame(uint32_t frame)
+ 		LOG(SwStatsCpu, Error) << "Calling startFrame() without setWindow()";
+ 
+ 	stats_.sum_ = RGB<uint64_t>({ 0, 0, 0 });
++	stats_.sumCount = 0;
+ 	stats_.sharpness = 0;
+ 	stats_.yHistogram.fill(0);
+ }
+-- 
+2.43.0
+
