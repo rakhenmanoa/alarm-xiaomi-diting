@@ -1,6 +1,6 @@
-From cd4399db438b0451b587592838f1bc6d3059281e Mon Sep 17 00:00:00 2001
-From: Fanasina RANDRIATSARAFARA <m.randriatsarafara.f@gmail.com>
-Date: Fri, 30 Oct 2026 15:22:21 +0300
+From 419f6d47959836d89c2f991869139d03a7585a83 Mon Sep 17 00:00:00 2001
+From: RAKOTOARIMANANA Hendriniaina Manoa <rakhenmanoa@gmail.com>
+Date: Fri, 30 Oct 2026 15:59:08 +0300
 Subject: [PATCH] quicksettings: Never use a negative page size
 
 While the action drawer is being laid out, the width of QuickSettings
