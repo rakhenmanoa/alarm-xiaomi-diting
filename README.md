@@ -17,7 +17,7 @@ Il n'y a donc pas d'extraction au premier démarrage.
 
 > Port expérimental. **Testé le 2026-10-26 sur un 12T Pro avec dalle « 42 02 0a » et tactile
 > Goodix** (variante absente de diting-ubuntu) : démarrage, écran 60 Hz, tactile, GPU, Wi-Fi,
-> modem 4G (Airtel), DSP (audio, capteurs, calcul), SSH par USB et Wi-Fi, Plasma Mobile.
+> modem 4G (Airtel : appels, SMS, USSD et données mobiles avec les correctifs ModemManager), DSP (audio, capteurs, calcul), SSH par USB et Wi-Fi, Plasma Mobile.
 > Les scripts tout-en-un (étapes 2 à 4 du conteneur) n'ont pas été exécutés de bout en bout :
 > la méthode réellement suivie est décrite dans « Méthode testée » ci-dessous.
 
@@ -78,6 +78,7 @@ compilé **sur le téléphone**, par SSH.
 - **Audio** : le profil UCM d'origine ne passe pas avec PipeWire 1.6 (capture non routée → profil HiFi rejeté) et mélange gauche/droite sur les deux amplis ; corrigé par `pkgbuilds/diting-device/ucm-diting.py`.
 - **Micros** : bruit blanc même ADC coupés, car les ports 1 et 2 du codec WCD938x (ADC1 et ADC4) partageaient le port maître SoundWire 1 et émettaient dans la même case. Le patch noyau `0903` envoie le port 2 du codec sur le port maître 2, sur la lane 1 au décalage 1 (la lane 2 ne donne rien sur cette carte). L'ADC4 arrive alors sur `SWR_MIC5`, qu'utilise l'UCM, et la route DAPM suit (`TX SWR_INPUT5`), sinon l'ADC4 et MIC BIAS4 restent éteints. Test sans recompiler, sur `/boot/dtbs/qcom/sm8475-xiaomi-diting.dtb` : `fdtput -t u <dtb> /soc@0/soundwire@33b0000/codec@0,3 qcom,tx-port-mapping 1 2 3 4`, `fdtput -t bu <dtb> /soc@0/soundwire@33b0000 qcom,ports-lane-control 1 1 0 0`, `fdtput -t bu <dtb> /soc@0/soundwire@33b0000 qcom,ports-offset1 0 1 1 1`, `fdtput -t s <dtb> /sound audio-routing "AMIC1" "MIC BIAS1" "AMIC5" "MIC BIAS4" "TX SWR_INPUT0" "ADC1_OUTPUT" "TX SWR_INPUT5" "ADC4_OUTPUT"`, puis `mkinitcpio -P` et `diting-install-bootimg`.
 - **Modem** : ModemManager 1.24.2 plante toutes les 20 à 30 s (SIGSEGV dans `mm-netlink.c`), la 4G coupe ; recompiler avec le correctif officiel, voir `pkgbuilds/modemmanager-fix/`.
+- **Données mobiles** : enregistré en 4G mais `cm error: no-service` à chaque connexion ; ModemManager laisse le client data sur l'abonnement `any` et le modem multi-SIM vise le mauvais. Le patch `0002` de `pkgbuilds/modemmanager-fix/` le lie à l'abonnement primaire. Ajouter `IgnorePkg = modemmanager libmm-glib` dans `/etc/pacman.conf`.
 - **Wi-Fi** : l'économie d'énergie fait couper le Wi-Fi ; diting-device la désactive (`60-diting-wifi-powersave.conf` pour NetworkManager).
 - **Fluidité** : le GPU et les petits cœurs montaient trop tard en fréquence (interface saccadée) ; `diting-perf.service` relève les minima (GPU 439 MHz, cœurs 1056 et 1113,6 MHz). À désactiver si la batterie compte plus que la fluidité.
 - **Tactile, coins du bas** : le firmware Goodix retient les touchers des coins du bas (environ 10 % de large, 10 % de haut) jusqu'au relâchement ; `&123` et Entrée du clavier répondaient en retard. Le premier octet du module 0x64 de la configuration commande cette retenue (trouvé par essais avec `libinput debug-events`) : `diting-touch-cmd grip off` le coupe. Il n'est pas conservé à la mise sous tension du contrôleur : `diting-touch.service` et le hook de veille le réappliquent, puis envoient le réglage d'Android (`mode 2`, commande 0x18, trame du pilote Xiaomi `goodix_9916`). Sauvegarder d'abord la configuration avec `diting-touch-cmd config-read`. Bus SPI du tactile à 12 MHz comme sous Android.
@@ -219,8 +220,9 @@ Spécifique à cette version Arch :
 - ne pas lancer `kbuildsycoca6` depuis SSH : sans l'environnement de la session, il produit un cache
   vide et toutes les icônes disparaissent (le reconstruire avec les variables de `plasmashell`) ;
 
-- le correctif ModemManager (crash après une sortie de veille) n'est pas inclus : systemd relance le
-  service ;
+- les correctifs ModemManager (plantage netlink, abonnement des données mobiles) ne sont pas
+  empaquetés : on recompile le paquet d'Arch avec les patches `0001` et `0002`, voir
+  `pkgbuilds/modemmanager-fix/`, puis `IgnorePkg = modemmanager libmm-glib` ;
 - le patch phoc (choix de fréquence d'affichage) est inutile, KWin gère les modes lui-même ;
 - dalle 42 02 0a : seul le 60 Hz a été vérifié ; les commandes 90 et 120 Hz viennent du DT
   vendeur mais n'ont pas été testées.

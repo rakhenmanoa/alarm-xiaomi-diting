@@ -1,0 +1,74 @@
+From 988c0b00b92978ff4a78d3898ac7004af4695b28 Mon Sep 17 00:00:00 2001
+From: diting <diting@localhost>
+Date: Fri, 30 Oct 2026 04:28:00 +0000
+Subject: [PATCH] bearer-qmi: bind WDS client to the primary subscription
+ (diting)
+
+---
+ src/mm-bearer-qmi.c | 43 ++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 40 insertions(+), 3 deletions(-)
+
+diff --git a/src/mm-bearer-qmi.c b/src/mm-bearer-qmi.c
+index cf6c1fc..a14c004 100644
+--- a/src/mm-bearer-qmi.c
++++ b/src/mm-bearer-qmi.c
+@@ -1631,6 +1631,30 @@ bind_data_port_ready (QmiClientWds *client,
+     connect_context_step (task);
+ }
+ 
++static void
++bind_subscription_ready (QmiClientWds *client,
++                         GAsyncResult *res,
++                         GTask        *task)
++{
++    MMBearerQmi                                   *self;
++    ConnectContext                                *ctx;
++    g_autoptr(GError)                              error = NULL;
++    g_autoptr(QmiMessageWdsBindSubscriptionOutput) output = NULL;
++
++    self = g_task_get_source_object (task);
++    ctx  = g_task_get_task_data (task);
++
++    output = qmi_client_wds_bind_subscription_finish (client, res, &error);
++    if (!output || !qmi_message_wds_bind_subscription_output_get_result (output, &error))
++        mm_obj_warn (self, "couldn't bind WDS client to primary subscription: %s", error->message);
++    else
++        mm_obj_dbg (self, "WDS client bound to primary subscription");
++
++    /* Not fatal: keep on */
++    ctx->step++;
++    connect_context_step (task);
++}
++
+ static void
+ bind_mux_data_port_ready (QmiClientWds *client,
+                           GAsyncResult *res,
+@@ -1652,9 +1676,22 @@ bind_mux_data_port_ready (QmiClientWds *client,
+         return;
+     }
+ 
+-    /* Keep on */
+-    ctx->step++;
+-    connect_context_step (task);
++    /* diting: on this multi-SIM modem the data subscription left by Android
++     * may not be the one the SIM is provisioned on, and Start Network then
++     * fails with "cm error: no-service". Bind the client to the primary
++     * subscription explicitly before going on. */
++    {
++        g_autoptr(QmiMessageWdsBindSubscriptionInput) input = NULL;
++
++        input = qmi_message_wds_bind_subscription_input_new ();
++        qmi_message_wds_bind_subscription_input_set_subscription_id (input, QMI_SUBSCRIPTION_TYPE_PRIMARY, NULL);
++        qmi_client_wds_bind_subscription (client,
++                                          input,
++                                          10,
++                                          g_task_get_cancellable (task),
++                                          (GAsyncReadyCallback)bind_subscription_ready,
++                                          task);
++    }
+ }
+ 
+ static void
+-- 
+2.43.0
+
