@@ -1,0 +1,91 @@
+#!/usr/bin/python3 -I
+"""Hold the AudioReach voice front end open for the length of a call.
+
+Call audio runs entirely inside the ADSP (modem <-> VCPM <-> codecs); the
+voice PCMs carry no data. As Android's PAL, the call uses two hostless
+sessions: "MultiMedia3 Voice" playback (RX graph, loudspeaker/earpiece back
+end) and "MultiMedia4 Voice" capture (TX graph, microphone back end).
+Opening, preparing and starting them starts the graphs through DPCM.
+
+  diting-voice-pcm [--card N]    (runs until SIGTERM/SIGINT)
+"""
+import ctypes
+import signal
+import sys
+
+asound = ctypes.CDLL("libasound.so.2")
+SND_PCM_STREAM_PLAYBACK, SND_PCM_STREAM_CAPTURE = 0, 1
+SND_PCM_FORMAT_S16_LE = 2
+SND_PCM_ACCESS_RW_INTERLEAVED = 3
+
+
+def find_device(fe):
+    """card,device of the PCM named "<fe> Voice ..." """
+    for line in open("/proc/asound/pcm"):
+        ids, _, rest = line.partition(":")
+        if f"{fe} Voice" in rest:
+            card, dev = ids.split("-")
+            return int(card), int(dev)
+    sys.exit(f"diting-voice-pcm: no {fe} voice PCM (topology without the voice graphs?)")
+
+
+asound.snd_strerror.restype = ctypes.c_char_p
+
+
+def check(ret, what):
+    if ret < 0:
+        sys.exit(f"diting-voice-pcm: {what}: {asound.snd_strerror(ret).decode()}")
+
+
+def open_stream(name, stream):
+    """open only: the front end opens its graph"""
+    pcm = ctypes.c_void_p()
+    check(asound.snd_pcm_open(ctypes.byref(pcm), name.encode(), stream, 0), f"open {name}")
+    return pcm
+
+
+def start_stream(pcm, stream):
+    """configure, prepare (hostless: configure and start the graph), start"""
+    # 48 kHz stereo like the device side; the voice graph converts itself
+    check(asound.snd_pcm_set_params(pcm, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED,
+                                    2, 48000, 0, 500000), "set_params")
+    if stream == SND_PCM_STREAM_PLAYBACK:
+        # no data will ever be written: never stop on underrun
+        sw = ctypes.c_void_p()
+        asound.snd_pcm_sw_params_malloc(ctypes.byref(sw))
+        asound.snd_pcm_sw_params_current(pcm, sw)
+        boundary = ctypes.c_ulong()
+        asound.snd_pcm_sw_params_get_boundary(sw, ctypes.byref(boundary))
+        asound.snd_pcm_sw_params_set_stop_threshold(pcm, sw, boundary)
+        asound.snd_pcm_sw_params_set_silence_size(pcm, sw, ctypes.c_ulong(0))
+        check(asound.snd_pcm_sw_params(pcm, sw), "sw_params")
+    check(asound.snd_pcm_prepare(pcm), "prepare")
+    check(asound.snd_pcm_start(pcm), "start")
+
+
+def main():
+    args = sys.argv[1:]
+    card, rx_dev = find_device("MultiMedia3")
+    _, tx_dev = find_device("MultiMedia4")
+    if "--card" in args:
+        card = int(args[args.index("--card") + 1])
+    rx_name, tx_name = f"hw:{card},{rx_dev}", f"hw:{card},{tx_dev}"
+    # open the uplink first: its graph holds the connection from the
+    # microphone device graph, which the capture back end opens
+    tx = open_stream(tx_name, SND_PCM_STREAM_CAPTURE)
+    rx = open_stream(rx_name, SND_PCM_STREAM_PLAYBACK)
+    # start the downlink first: it carries the VSID that the VCPM proxy
+    # needs before it manages the TX sub-graphs
+    start_stream(rx, SND_PCM_STREAM_PLAYBACK)
+    start_stream(tx, SND_PCM_STREAM_CAPTURE)
+    print(f"diting-voice-pcm: rx {rx_name} tx {tx_name} running", flush=True)
+    signal.signal(signal.SIGTERM, lambda *_: None)
+    signal.signal(signal.SIGINT, lambda *_: None)
+    signal.pause()
+    asound.snd_pcm_close(tx)
+    asound.snd_pcm_close(rx)
+    print("diting-voice-pcm: closed", flush=True)
+
+
+if __name__ == "__main__":
+    main()

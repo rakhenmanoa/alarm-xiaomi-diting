@@ -1,0 +1,79 @@
+SectionVerb {
+	EnableSequence [
+		cset "name='TERTIARY_TDM_RX_0 Audio Mixer MultiMedia1' 1"
+	]
+
+	DisableSequence [
+		cset "name='TERTIARY_TDM_RX_0 Audio Mixer MultiMedia1' 0"
+	]
+
+	Value {
+		TQ "HiFi"
+	}
+}
+
+# Both CS35L41: bottom loudspeaker, and the top amplifier switched by the
+# "Top MUX" (TLMM 52) to the top loudspeaker or the earpiece. The earpiece is
+# used for calls only and switched by diting-callaudio (PipeWire would make a
+# second device on this PCM an exclusive profile). Levels: diting-speaker-
+# protection (Android's with the protection firmware running).
+SectionDevice."Speaker" {
+	Comment "Speakers"
+
+	EnableSequence [
+		cset "name='Top MUX' Speaker"
+	]
+
+	Value {
+		PlaybackChannels 2
+		PlaybackPriority 100
+		PlaybackPCM "hw:${CardId},0"
+	}
+}
+
+# Two analog microphones on the WCD938x, captured through the LPASS TX macro:
+# channel 0 = AMIC1 (ADC1, SoundWire input 0), channel 1 = AMIC5 (ADC4,
+# SoundWire input 1); gains as in the vendor mixer paths.
+SectionDevice."Mic" {
+	Comment "Internal Microphones"
+
+	EnableSequence [
+		cset "name='MultiMedia2 Mixer TX_CODEC_DMA_TX_3' 1"
+		cset "name='ADC1_MIXER Switch' 1"
+		cset "name='ADC1 Switch' 1"
+		cset "name='TX0 MODE' ADC_NORMAL"
+		cset "name='ADC1 Volume' 8"
+		cset "name='ADC4_MIXER Switch' 1"
+		cset "name='HDR34 MUX' NO_HDR34"
+		cset "name='ADC4 MUX' INP5"
+		cset "name='ADC4 Switch' 1"
+		cset "name='TX3 MODE' ADC_NORMAL"
+		cset "name='ADC4 Volume' 8"
+		cset "name='TX DEC0 MUX' SWR_MIC"
+		cset "name='TX SMIC MUX0' SWR_MIC0"
+		cset "name='TX_AIF1_CAP Mixer DEC0' 1"
+		cset "name='TX_DEC0 Volume' 84"
+		cset "name='TX DEC1 MUX' SWR_MIC"
+		cset "name='TX SMIC MUX1' SWR_MIC1"
+		cset "name='TX_AIF1_CAP Mixer DEC1' 1"
+		cset "name='TX_DEC1 Volume' 84"
+	]
+
+	DisableSequence [
+		cset "name='TX_AIF1_CAP Mixer DEC0' 0"
+		cset "name='TX_AIF1_CAP Mixer DEC1' 0"
+		cset "name='TX SMIC MUX0' ZERO"
+		cset "name='TX SMIC MUX1' ZERO"
+		cset "name='ADC1 Switch' 0"
+		cset "name='ADC1_MIXER Switch' 0"
+		cset "name='ADC4 Switch' 0"
+		cset "name='ADC4_MIXER Switch' 0"
+		cset "name='MultiMedia2 Mixer TX_CODEC_DMA_TX_3' 0"
+	]
+
+	Value {
+		CapturePriority 100
+		CapturePCM "hw:${CardId},1"
+		CaptureChannels 2
+	}
+}

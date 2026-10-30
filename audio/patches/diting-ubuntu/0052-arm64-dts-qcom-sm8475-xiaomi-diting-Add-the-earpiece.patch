@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: royka1 <397414+royka1@users.noreply.github.com>
+Date: Tue, 13 Oct 2026 09:35:34 +0200
+Subject: [PATCH] arm64: dts: qcom: sm8475-xiaomi-diting: Add the earpiece
+ switch
+
+The top CS35L41 drives either the top loudspeaker or the earpiece,
+selected by TLMM 52 (vendor spk-sw-gpios, rcv_gpio_high/low). Describe
+it as a simple-audio-mux ("Top MUX": Speaker/Earpiece) and add it to
+the sound card as an auxiliary device, so UCM can switch it. Measured:
+with the line high the same tone reaches the microphones 10 dB quieter
+(earpiece), and the owner hears it quieter.
+
+Local bring-up patch, not for upstream submission.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../boot/dts/qcom/sm8475-xiaomi-diting.dts    | 22 +++++++++++++++++--
+ 1 file changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+index 2b97e58ab..276fdf1d2 100644
+--- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
++++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+@@ -172,6 +172,21 @@ splash_mem: memory@b8000000 {
+ 		};
+ 	};
+ 
++	/*
++	 * Output switch behind the top CS35L41 (vendor spk-sw-gpios on
++	 * cs35l41@42, rcv_gpio_high/low states): TLMM 52 low drives the top
++	 * loudspeaker, high the earpiece (receiver). Measured on the device:
++	 * the same tone reaches the microphones 10 dB quieter when high.
++	 */
++	top_out_mux: audio-mux-top {
++		compatible = "simple-audio-mux";
++		mux-gpios = <&tlmm 52 GPIO_ACTIVE_HIGH>;
++		state-labels = "Speaker", "Earpiece";
++		sound-name-prefix = "Top";
++		pinctrl-0 = <&top_out_sel>;
++		pinctrl-names = "default";
++	};
++
+ 	/* Panel 1.2 V core supply, switched by TLMM 66 (vendor display_panel_vddd) */
+ 	panel_vddd: regulator-panel-vddd {
+ 		compatible = "regulator-fixed";
+@@ -718,7 +733,7 @@ spk_amp_t: speaker-amp@42 {
+ 		reg = <0x42>;
+ 		interrupts-extended = <&tlmm 88 IRQ_TYPE_LEVEL_LOW>;
+ 		reset-gpios = <&tlmm 1 GPIO_ACTIVE_HIGH>;
+-		pinctrl-0 = <&spk_amp_t_reset>, <&spk_amp_t_irq>, <&spk_amp_t_rcv_off>;
++		pinctrl-0 = <&spk_amp_t_reset>, <&spk_amp_t_irq>;
+ 		pinctrl-names = "default";
+ 		cirrus,boost-type = <0>;
+ 		cirrus,boost-peak-milliamp = <4000>;
+@@ -741,6 +756,9 @@ &sound {
+ 	compatible = "qcom,sm8450-sndcard";
+ 	model = "XIAOMI-DITING";
+ 
++	/* "Top MUX": top amplifier to the loudspeaker or the earpiece */
++	aux-devs = <&top_out_mux>;
++
+ 	pinctrl-0 = <&tert_mi2s_active>;
+ 	pinctrl-names = "default";
+ 
+@@ -911,7 +929,7 @@ wcd_default: wcd-reset-n-active-state {
+ 		output-low;
+ 	};
+ 
+-	spk_amp_t_rcv_off: spk-amp-t-rcv-off-state {
++	top_out_sel: top-out-sel-state {
+ 		pins = "gpio52";
+ 		function = "gpio";
+ 		drive-strength = <2>;

@@ -1,0 +1,3 @@
+# Xiaomi Diting: (re)apply the speaker protection firmware and calibration
+# whenever the sound card appears (it depends on the ADSP's audio services).
+SUBSYSTEM=="sound", KERNEL=="controlC*", ATTR{id}=="XIAOMIDITING", TAG+="systemd", ENV{SYSTEMD_WANTS}+="diting-speaker-protection.service"

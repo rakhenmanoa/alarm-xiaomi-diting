@@ -1,0 +1,257 @@
+#!/usr/bin/python3 -I
+"""Call audio routing for the Xiaomi Diting: the org.mobian_project.CallAudio
+D-Bus interface of callaudiod (used by GNOME Calls through libcallaudio).
+
+callaudiod switches the earpiece and the loudspeaker as ports of one sink.
+On Diting both are outputs of the same PCM (the top amplifier's output is
+switched by the "Top MUX"), which PipeWire turns into separate, exclusive
+profiles, so callaudiod finds nothing to switch. This service implements
+the same interface on the mixer controls directly, in the order of the UCM
+Earpiece/Speaker devices (lower the level before switching to the
+earpiece, switch back before raising it). The call audio path itself is
+started by diting-voice-call.service.
+
+Call volume: the volume keys change the PipeWire output volume, which the
+call path (inside the ADSP) does not use. During a call this service
+follows that volume and applies it to the amplifiers' digital level
+(PipeWire's cubic volume: 60 * log10(v) dB below the maximum). A call
+starts at the last call volume (initially 100 %); the media volume is
+saved at the start of the call and restored at its end.
+
+Started by D-Bus activation in the user session (it replaces callaudiod's
+activation file through a dpkg diversion of device-xiaomi-diting).
+"""
+import math
+import subprocess
+import sys
+
+from gi.repository import Gio, GLib
+
+NAME = "org.mobian_project.CallAudio"
+PATH = "/org/mobian_project/CallAudio"
+CARD = "XIAOMIDITING"
+XML = """
+<node>
+  <interface name="org.mobian_project.CallAudio">
+    <method name="SelectMode">
+      <arg direction="in" name="mode" type="u"/>
+      <arg direction="out" name="success" type="b"/>
+    </method>
+    <property name="AudioMode" type="u" access="read"/>
+    <method name="EnableSpeaker">
+      <arg direction="in" name="enable" type="b"/>
+      <arg direction="out" name="success" type="b"/>
+    </method>
+    <property name="SpeakerState" type="u" access="read"/>
+    <method name="MuteMic">
+      <arg direction="in" name="mute" type="b"/>
+      <arg direction="out" name="success" type="b"/>
+    </method>
+    <property name="MicState" type="u" access="read"/>
+  </interface>
+</node>
+"""
+# mixer settings, as the UCM devices in HiFi.conf; the analog amplifier
+# gain is at its minimum (0 = +0.5 dB) for the earpiece
+EARPIECE = [("B Digital PCM Volume", "0"), ("T Analog PCM Volume", "0"),
+            ("B Analog PCM Volume", "0"), ("T Digital PCM Volume", "657"),
+            ("Top MUX", "Earpiece")]
+# media: the levels set up by diting-speaker-protection (see speaker())
+# Speakerphone calls: analog gain 17 (+17.5 dB, Xiaomi's "AMP PCM Gain"),
+# the digital level follows the call volume up to SPEAKER_MAX. Voice peaks
+# are well below full scale (about -12 dBFS before the amplifiers).
+SPEAKER_CALL = [("Top MUX", "Speaker"), ("T Digital PCM Volume", "769"),
+                ("B Digital PCM Volume", "769"), ("T Analog PCM Volume", "17"),
+                ("B Analog PCM Volume", "17")]
+# maximum digital levels for the call volume (volume keys at 100 %)
+EARPIECE_MAX = 865      # +6 dB, analog gain at minimum (owner: -20 ... 0 dB too quiet;
+                        # measured: the earpiece output follows the level linearly)
+SPEAKER_MAX = 865       # +6 dB with analog gain 17: Android's level was too quiet for calls;
+                        # only with the speaker protection firmware running (it limits the
+                        # speakers), else Android's level (817)
+MIC_MUTE = [("TX_DEC0 Volume", "0"), ("TX_DEC1 Volume", "0")]
+MIC_ON = [("TX_DEC0 Volume", "108"), ("TX_DEC1 Volume", "108")]
+
+
+def media_levels():
+    """media amplifier levels (digital, analog) from diting-speaker-protection"""
+    try:
+        d, a = open("/run/diting/amp-media").read().split()[:2]
+        return d, a
+    except (OSError, ValueError):
+        return "769", "0"
+
+
+def speaker():
+    d, a = media_levels()
+    return [("Top MUX", "Speaker"), ("T Analog PCM Volume", a), ("B Analog PCM Volume", a),
+            ("T Digital PCM Volume", d), ("B Digital PCM Volume", d)]
+
+
+def sink_volume():
+    """(volume, muted) of the default PipeWire sink, or None"""
+    r = subprocess.run(["wpctl", "get-volume", "@DEFAULT_AUDIO_SINK@"],
+                       capture_output=True, text=True)
+    f = r.stdout.split()
+    if r.returncode or len(f) < 2:
+        return None
+    try:
+        return float(f[1]), "[MUTED]" in r.stdout
+    except ValueError:
+        return None
+
+
+def set_sink_volume(v):
+    subprocess.run(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", f"{v:.2f}"],
+                   capture_output=True)
+
+
+def apply(settings):
+    ok = True
+    for name, value in settings:
+        r = subprocess.run(["amixer", "-q", "-c", CARD, "cset", f"name={name}", value],
+                           capture_output=True, text=True)
+        if r.returncode:
+            print(f"amixer {name} = {value}: {r.stderr.strip()}", flush=True)
+            ok = False
+    return ok
+
+
+class CallAudio:
+    def __init__(self):
+        self.mode = 0           # 0 default, 1 voice call
+        self.speaker = 1        # outside calls the loudspeakers play
+        self.mic = 1
+        self.conn = None
+        self.call_volume = 1.0
+        self.media_volume = None
+        self.volume = None      # (volume, muted) applied during the call
+        self.poll = 0
+
+    # --- call volume -------------------------------------------------------
+    def apply_volume(self, vol):
+        v, muted = vol
+        protected = media_levels()[1] != "0"   # see diting-speaker-protection
+        top = (SPEAKER_MAX if protected else 817) if self.speaker else EARPIECE_MAX
+        if muted or v <= 0.01:
+            level = 0
+        else:
+            level = max(1, top + round(8 * max(-45.0, 60 * math.log10(min(v, 1.0)))))
+        apply([("T Digital PCM Volume", str(level))] +
+              ([("B Digital PCM Volume", str(level))] if self.speaker else []))
+        self.volume = vol
+
+    def follow_volume(self):
+        if self.mode != 1:
+            self.poll = 0
+            return GLib.SOURCE_REMOVE
+        vol = sink_volume()
+        if vol and vol != self.volume:
+            print(f"call volume {vol[0]:.2f}{' muted' if vol[1] else ''}", flush=True)
+            self.apply_volume(vol)
+        return GLib.SOURCE_CONTINUE
+
+    def start_volume(self):
+        vol = sink_volume()
+        self.media_volume = vol[0] if vol else None
+        set_sink_volume(self.call_volume)
+        self.apply_volume((self.call_volume, False))
+        if not self.poll:
+            self.poll = GLib.timeout_add(250, self.follow_volume)
+
+    def end_volume(self):
+        vol = sink_volume()
+        if vol and vol[0] > 0.01:
+            self.call_volume = vol[0]
+        if self.media_volume is not None:
+            set_sink_volume(self.media_volume)
+        self.media_volume = self.volume = None
+
+    def changed(self, **props):
+        if self.conn:
+            self.conn.emit_signal(None, PATH, "org.freedesktop.DBus.Properties",
+                                  "PropertiesChanged",
+                                  GLib.Variant("(sa{sv}as)", (
+                                      NAME, {k: GLib.Variant("u", v) for k, v in props.items()},
+                                      [])))
+
+    def select_mode(self, mode):
+        if mode not in (0, 1):
+            return None
+        if mode == 1:
+            ok = apply(EARPIECE)            # calls start on the earpiece
+            if self.mode != 1:
+                self.mode, self.speaker = 1, 0
+                self.start_volume()
+            else:
+                self.speaker = 0
+                self.apply_volume(self.volume or (self.call_volume, False))
+        else:
+            if self.mode == 1:
+                self.end_volume()
+            ok = apply(speaker()) and apply(MIC_ON)
+            self.mode, self.speaker, self.mic = 0, 1, 1
+        self.changed(AudioMode=self.mode, SpeakerState=self.speaker, MicState=self.mic)
+        return ok
+
+    def enable_speaker(self, enable):
+        if enable:
+            ok = apply(SPEAKER_CALL if self.mode == 1 else speaker())
+        else:
+            ok = apply(EARPIECE)
+        self.speaker = 1 if enable else 0
+        if self.mode == 1:
+            self.apply_volume(self.volume or (self.call_volume, False))
+        self.changed(SpeakerState=self.speaker)
+        return ok
+
+    def mute_mic(self, mute):
+        ok = apply(MIC_MUTE if mute else MIC_ON)
+        self.mic = 0 if mute else 1
+        self.changed(MicState=self.mic)
+        return ok
+
+    def method_call(self, conn, sender, path, iface, method, params, invocation):
+        arg = params.unpack()[0]
+        if method == "SelectMode":
+            ok = self.select_mode(arg)
+            if ok is None:
+                invocation.return_dbus_error("org.freedesktop.DBus.Error.InvalidArgs",
+                                             f"invalid mode {arg}")
+                return
+        elif method == "EnableSpeaker":
+            ok = self.enable_speaker(arg)
+        elif method == "MuteMic":
+            ok = self.mute_mic(arg)
+        else:
+            invocation.return_dbus_error("org.freedesktop.DBus.Error.UnknownMethod", method)
+            return
+        print(f"{method}({arg}) -> {ok}", flush=True)
+        invocation.return_value(GLib.Variant("(b)", (ok,)))
+
+    def get_property(self, conn, sender, path, iface, prop):
+        return GLib.Variant("u", {"AudioMode": self.mode, "SpeakerState": self.speaker,
+                                  "MicState": self.mic}[prop])
+
+
+def main():
+    ca = CallAudio()
+    info = Gio.DBusNodeInfo.new_for_xml(XML).interfaces[0]
+    loop = GLib.MainLoop()
+
+    def bus_acquired(conn, name):
+        ca.conn = conn
+        conn.register_object(PATH, info, ca.method_call, ca.get_property, None)
+
+    def lost(conn, name):
+        print(f"could not own {NAME}", flush=True)
+        loop.quit()
+
+    Gio.bus_own_name(Gio.BusType.SESSION, NAME, Gio.BusNameOwnerFlags.NONE,
+                     bus_acquired, None, lost)
+    loop.run()
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,241 @@
+#!/usr/bin/python3 -I
+"""Start the Xiaomi Diting voice call audio path while ModemManager has a call.
+
+Call audio runs inside the ADSP (modem <-> VCPM <-> codecs). This daemon
+follows the ModemManager call states over D-Bus and, while a call is being
+dialled or is active/held:
+  - routes the voice front ends: RX (MultiMedia3) into the loudspeaker
+    back end, the microphones (TX codec DMA 3) into TX (MultiMedia4); the
+    media front end (MultiMedia1) is taken off the loudspeaker meanwhile,
+    a back end follows one front end
+  - runs diting-voice-pcm, which opens and starts both hostless graphs
+and undoes this when the last call ends. An incoming call only rings
+(ringtone through the media path) until it is answered.
+
+Needs the voice topology (firmware-xiaomi-diting) and the ADSP audio PD
+(diting-audiopd.service).
+"""
+import os
+import signal
+import subprocess
+import sys
+
+from gi.repository import Gio, GLib
+try:
+    from gi.repository import GLibUnix
+    signal_add = GLibUnix.signal_add
+except ImportError:
+    signal_add = GLib.unix_signal_add
+
+MM = "org.freedesktop.ModemManager1"
+MM_PATH = "/org/freedesktop/ModemManager1"
+CALL_IFACE = "org.freedesktop.ModemManager1.Call"
+VOICE_IFACE = "org.freedesktop.ModemManager1.Modem.Voice"
+# MMCallState: DIALING 1, RINGING_OUT 2, ACTIVE 4, HELD 5
+AUDIO_STATES = {1, 2, 4, 5}
+
+CARD = "XIAOMIDITING"
+VOICE_PCM = "/usr/libexec/diting/diting-voice-pcm"
+MEDIA_ROUTE = "TERTIARY_TDM_RX_0 Audio Mixer MultiMedia1"
+VOICE_ROUTES = [
+    ("TERTIARY_TDM_RX_0 Audio Mixer MultiMedia3", "1"),
+    ("MultiMedia4 Mixer TX_CODEC_DMA_TX_3", "1"),
+]
+# media amplifier setup: loudspeakers at the levels set up by
+# diting-speaker-protection (see media_levels())
+# both analog microphones into TX decimators 0/1 (as the UCM "Mic" device)
+MIC_SETUP = [
+    ("ADC1_MIXER Switch", "1"), ("ADC1 Switch", "1"), ("TX0 MODE", "ADC_NORMAL"),
+    ("ADC1 Volume", "8"),
+    ("ADC4_MIXER Switch", "1"), ("HDR34 MUX", "NO_HDR34"), ("ADC4 MUX", "INP5"),
+    ("ADC4 Switch", "1"), ("TX3 MODE", "ADC_NORMAL"), ("ADC4 Volume", "8"),
+    ("TX DEC0 MUX", "SWR_MIC"), ("TX SMIC MUX0", "SWR_MIC0"),
+    ("TX_AIF1_CAP Mixer DEC0", "1"), ("TX_DEC0 Volume", "108"),
+    ("TX DEC1 MUX", "SWR_MIC"), ("TX SMIC MUX1", "SWR_MIC5"),
+    ("TX_AIF1_CAP Mixer DEC1", "1"), ("TX_DEC1 Volume", "108"),
+]
+
+
+def media_levels():
+    """media amplifier levels (digital, analog) from diting-speaker-protection"""
+    try:
+        d, a = open("/run/diting/amp-media").read().split()[:2]
+        return d, a
+    except (OSError, ValueError):
+        return "769", "0"
+
+
+def amp_media():
+    d, a = media_levels()
+    return [("Top MUX", "Speaker"), ("T Analog PCM Volume", a), ("B Analog PCM Volume", a),
+            ("T Digital PCM Volume", d), ("B Digital PCM Volume", d)]
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def amixer_set(name, value):
+    r = subprocess.run(["amixer", "-q", "-c", CARD, "cset", f"name={name}", value],
+                       capture_output=True, text=True)
+    if r.returncode:
+        log(f"amixer {name} = {value}: {r.stderr.strip()}")
+
+
+def amixer_get(name):
+    r = subprocess.run(["amixer", "-c", CARD, "cget", f"name={name}"],
+                       capture_output=True, text=True)
+    for line in r.stdout.splitlines():
+        line = line.strip()
+        if line.startswith(": values="):
+            return line.split("=", 1)[1].split(",")[0]
+    return None
+
+
+class VoiceCall:
+    def __init__(self, bus):
+        self.bus = bus
+        self.calls = {}         # object path -> MMCallState
+        self.pcm = None         # diting-voice-pcm pid
+        self.stopping = None    # pid being stopped
+        self.media_route = None
+        self.failures = 0       # diting-voice-pcm exits during the current call
+        self.retry = None       # pending restart (GLib source id)
+
+    # --- audio path ------------------------------------------------------
+    def start(self):
+        if self.pcm or self.retry:
+            return              # running, stopping or waiting to retry
+        log("call audio: start")
+        self.media_route = amixer_get(MEDIA_ROUTE)
+        amixer_set(MEDIA_ROUTE, "0")
+        for name, value in MIC_SETUP + VOICE_ROUTES:
+            amixer_set(name, value)
+        self.pcm, _, _, _ = GLib.spawn_async([VOICE_PCM], flags=GLib.SpawnFlags.DO_NOT_REAP_CHILD)
+        GLib.child_watch_add(GLib.PRIORITY_DEFAULT, self.pcm, self.pcm_exited)
+
+    def stop(self):
+        if not self.pcm or self.stopping:
+            return
+        log("call audio: stop")
+        self.stopping = self.pcm
+        os.kill(self.pcm, signal.SIGTERM)
+        GLib.timeout_add_seconds(5, self.kill_pcm, self.pcm)
+
+    def kill_pcm(self, pid):
+        if self.stopping == pid:
+            log("diting-voice-pcm does not stop, killing it")
+            os.kill(pid, signal.SIGKILL)
+        return GLib.SOURCE_REMOVE
+
+    def restore_routes(self):
+        for name, _ in VOICE_ROUTES:
+            amixer_set(name, "0")
+        # back to the media setup even if the call audio routing (diting-
+        # callaudio) missed the end of the call: loudspeakers, analog gain at
+        # its minimum (speakerphone calls raise it to Android's level)
+        for name, value in amp_media():
+            amixer_set(name, value)
+        amixer_set(MEDIA_ROUTE, self.media_route or "1")
+
+    def pcm_exited(self, pid, status):
+        """the only place that reaps diting-voice-pcm (GLib child watch)"""
+        GLib.spawn_close_pid(pid)
+        if self.pcm != pid:
+            return
+        failed = self.stopping != pid
+        self.pcm = self.stopping = None
+        self.restore_routes()
+        if failed:
+            # do not hammer the DSP with graph opens: back off 1, 2, 4, 8 s
+            delay = min(1 << self.failures, 8)
+            self.failures += 1
+            log(f"diting-voice-pcm exited ({status}) during the call, retry in {delay} s")
+            self.retry = GLib.timeout_add_seconds(delay, self.retry_start)
+            return
+        self.update()       # e.g. a new call came while this one stopped
+
+    def retry_start(self):
+        self.retry = None
+        self.update()
+        return GLib.SOURCE_REMOVE
+
+    def update(self):
+        if any(s in AUDIO_STATES for s in self.calls.values()):
+            self.start()
+        else:
+            self.failures = 0
+            if self.retry:
+                GLib.source_remove(self.retry)
+                self.retry = None
+            self.stop()
+
+    # --- ModemManager ----------------------------------------------------
+    def call_state(self, path):
+        try:
+            v = self.bus.call_sync(MM, path, "org.freedesktop.DBus.Properties", "Get",
+                                   GLib.Variant("(ss)", (CALL_IFACE, "State")),
+                                   GLib.VariantType("(v)"), Gio.DBusCallFlags.NONE, 2000, None)
+            return v.unpack()[0]
+        except GLib.Error:
+            return None
+
+    def scan(self):
+        """calls that exist already (daemon or ModemManager restart)"""
+        self.calls.clear()
+        try:
+            objs = self.bus.call_sync(MM, MM_PATH, "org.freedesktop.DBus.ObjectManager",
+                                      "GetManagedObjects", None, None,
+                                      Gio.DBusCallFlags.NONE, 5000, None).unpack()[0]
+        except GLib.Error:
+            objs = {}
+        for modem, ifaces in objs.items():
+            for path in ifaces.get(VOICE_IFACE, {}).get("Calls", []):
+                state = self.call_state(path)
+                if state is not None:
+                    self.calls[path] = state
+        self.update()
+
+    def on_state_changed(self, conn, sender, path, iface, signal_name, params):
+        old, new, reason = params.unpack()
+        log(f"{path}: state {old} -> {new}")
+        if new == 7:            # TERMINATED
+            self.calls.pop(path, None)
+        else:
+            self.calls[path] = new
+        self.update()
+
+    def on_call_deleted(self, conn, sender, path, iface, signal_name, params):
+        self.calls.pop(params.unpack()[0], None)
+        self.update()
+
+    def on_mm_owner(self, conn, sender, path, iface, signal_name, params):
+        name, old, new = params.unpack()
+        if name == MM:
+            self.scan()
+
+
+def main():
+    bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+    vc = VoiceCall(bus)
+    bus.signal_subscribe(MM, CALL_IFACE, "StateChanged", None, None,
+                         Gio.DBusSignalFlags.NONE, vc.on_state_changed)
+    bus.signal_subscribe(MM, VOICE_IFACE, "CallDeleted", None, None,
+                         Gio.DBusSignalFlags.NONE, vc.on_call_deleted)
+    bus.signal_subscribe("org.freedesktop.DBus", "org.freedesktop.DBus", "NameOwnerChanged",
+                         "/org/freedesktop/DBus", MM, Gio.DBusSignalFlags.NONE, vc.on_mm_owner)
+    vc.scan()
+    loop = GLib.MainLoop()
+
+    def quit(*_):
+        vc.stop()
+        loop.quit()
+        return GLib.SOURCE_REMOVE
+    signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, quit)
+    signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, quit)
+    log("diting-voice-call: waiting for calls")
+    loop.run()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

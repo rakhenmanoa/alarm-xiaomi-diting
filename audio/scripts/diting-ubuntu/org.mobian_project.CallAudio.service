@@ -1,0 +1,6 @@
+# device-xiaomi-diting: call audio routing for the Diting (earpiece and
+# loudspeaker share a PCM); callaudiod's file is diverted to
+# org.mobian_project.CallAudio.service.callaudiod
+[D-BUS Service]
+Name=org.mobian_project.CallAudio
+Exec=/usr/libexec/diting/diting-callaudio

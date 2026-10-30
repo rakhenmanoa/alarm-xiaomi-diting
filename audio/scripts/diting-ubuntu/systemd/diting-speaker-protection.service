@@ -1,0 +1,12 @@
+[Unit]
+Description=Xiaomi Diting speaker protection firmware (CS35L41)
+After=sound.target alsa-restore.service
+Before=diting-voice-call.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/diting/diting-speaker-protection
+
+[Install]
+WantedBy=multi-user.target

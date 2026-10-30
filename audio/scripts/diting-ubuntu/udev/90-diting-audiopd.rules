@@ -1,0 +1,3 @@
+# Xiaomi Diting: start the ADSP audio PD (adsprpcd) once the ADSP's FastRPC
+# channel is up; it loads the voice call's dynamic modules (Fluence ECNS).
+KERNEL=="fastrpc-adsp", TAG+="systemd", ENV{SYSTEMD_WANTS}+="diting-audiopd.service"

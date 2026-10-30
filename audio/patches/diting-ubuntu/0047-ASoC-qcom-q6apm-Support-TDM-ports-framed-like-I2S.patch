@@ -1,0 +1,117 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: royka1 <397414+royka1@users.noreply.github.com>
+Date: Mon, 12 Oct 2026 22:01:07 +0200
+Subject: [PATCH 47/48] ASoC: qcom: q6apm: Support TDM ports framed like I2S
+
+Allow the AudioReach TDM back ends to be used for I2S codecs that the
+vendor wired as TDM (Xiaomi Diting's CS35L41 speaker amplifiers):
+
+- q6apm-lpass-dais: use the I2S DAI ops for TDM ports; the TDM framing
+  comes with the endpoint module configuration of the topology.
+- q6prm: add the TDM bit clock IDs (LPASS_CLK_ID_*_TDM_IBIT/EBIT,
+  0x200 + 2n as in the vendor PRM API) for the tertiary interface.
+- q6dsp-lpass-clocks: accept LPASS_CLK_ATTRIBUTE_INVERT_COUPLE_NO, which
+  q6afe and the downstream kernel use for TDM bit clocks.
+- sc8280xp: treat TDM ports like MI2S for codec format, slot map and the
+  early bit clock vote.
+
+Local bring-up patch, not for upstream submission.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ include/dt-bindings/sound/qcom,q6dsp-lpass-ports.h | 1 +
+ sound/soc/qcom/qdsp6/q6apm-lpass-dais.c            | 2 ++
+ sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c          | 2 +-
+ sound/soc/qcom/qdsp6/q6prm-clocks.c                | 2 ++
+ sound/soc/qcom/qdsp6/q6prm.h                       | 4 ++++
+ sound/soc/qcom/sc8280xp.c                          | 5 +++++
+ 6 files changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/include/dt-bindings/sound/qcom,q6dsp-lpass-ports.h b/include/dt-bindings/sound/qcom,q6dsp-lpass-ports.h
+index 45850f2d4..ba96de31f 100644
+--- a/include/dt-bindings/sound/qcom,q6dsp-lpass-ports.h
++++ b/include/dt-bindings/sound/qcom,q6dsp-lpass-ports.h
+@@ -243,5 +243,6 @@
+ #define LPASS_CLK_ATTRIBUTE_COUPLE_NO		0x1
+ #define LPASS_CLK_ATTRIBUTE_COUPLE_DIVIDEND	0x2
+ #define LPASS_CLK_ATTRIBUTE_COUPLE_DIVISOR	0x3
++#define LPASS_CLK_ATTRIBUTE_INVERT_COUPLE_NO	0x4
+ 
+ #endif /* __DT_BINDINGS_Q6_AUDIO_PORTS_H__ */
+diff --git a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c b/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c
+index 006b28348..bb8cc289b 100644
+--- a/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c
++++ b/sound/soc/qcom/qdsp6/q6apm-lpass-dais.c
+@@ -313,6 +313,8 @@ static int q6apm_lpass_dai_dev_probe(struct platform_device *pdev)
+ 
+ 	memset(&cfg, 0, sizeof(cfg));
+ 	cfg.q6i2s_ops = &q6i2s_ops;
++	/* the TDM framing comes with the endpoint module's topology config */
++	cfg.q6tdm_ops = &q6i2s_ops;
+ 	cfg.q6dma_ops = &q6dma_ops;
+ 	cfg.q6hdmi_ops = &q6hdmi_ops;
+ 	dais = q6dsp_audio_ports_set_config(dev, &cfg, &num_dais);
+diff --git a/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c b/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c
+index 03838582a..d79aef55b 100644
+--- a/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c
++++ b/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c
+@@ -113,7 +113,7 @@ static struct clk_hw *q6dsp_of_clk_hw_get(struct of_phandle_args *clkspec,
+ 	unsigned int idx = clkspec->args[0];
+ 	unsigned int attr = clkspec->args[1];
+ 
+-	if (idx >= Q6DSP_MAX_CLK_ID || attr > LPASS_CLK_ATTRIBUTE_COUPLE_DIVISOR) {
++	if (idx >= Q6DSP_MAX_CLK_ID || attr > LPASS_CLK_ATTRIBUTE_INVERT_COUPLE_NO) {
+ 		dev_err(cc->dev, "Invalid clk specifier (%d, %d)\n", idx, attr);
+ 		return ERR_PTR(-EINVAL);
+ 	}
+diff --git a/sound/soc/qcom/qdsp6/q6prm-clocks.c b/sound/soc/qcom/qdsp6/q6prm-clocks.c
+index 4c574b48a..694c99115 100644
+--- a/sound/soc/qcom/qdsp6/q6prm-clocks.c
++++ b/sound/soc/qcom/qdsp6/q6prm-clocks.c
+@@ -25,6 +25,8 @@ static const struct q6dsp_clk_init q6prm_clks[] = {
+ 	Q6PRM_CLK(LPASS_CLK_ID_SEC_MI2S_EBIT),
+ 	Q6PRM_CLK(LPASS_CLK_ID_TER_MI2S_IBIT),
+ 	Q6PRM_CLK(LPASS_CLK_ID_TER_MI2S_EBIT),
++	Q6PRM_CLK(LPASS_CLK_ID_TER_TDM_IBIT),
++	Q6PRM_CLK(LPASS_CLK_ID_TER_TDM_EBIT),
+ 	Q6PRM_CLK(LPASS_CLK_ID_QUAD_MI2S_IBIT),
+ 	Q6PRM_CLK(LPASS_CLK_ID_QUAD_MI2S_EBIT),
+ 	Q6PRM_CLK(LPASS_CLK_ID_SPEAKER_I2S_IBIT),
+diff --git a/sound/soc/qcom/qdsp6/q6prm.h b/sound/soc/qcom/qdsp6/q6prm.h
+index a988a3208..5615a0168 100644
+--- a/sound/soc/qcom/qdsp6/q6prm.h
++++ b/sound/soc/qcom/qdsp6/q6prm.h
+@@ -16,6 +16,10 @@
+ /* Clock ID for Tertiary I2S EBIT */
+ #define Q6PRM_LPASS_CLK_ID_TER_MI2S_EBIT                          0x105
+ /* Clock ID for Quartnery I2S IBIT */
++/* Clock ID for tertiary TDM bit clock (internal), 516 in the vendor log */
++#define Q6PRM_LPASS_CLK_ID_TER_TDM_IBIT                           0x204
++/* Clock ID for tertiary TDM bit clock (external) */
++#define Q6PRM_LPASS_CLK_ID_TER_TDM_EBIT                           0x205
+ #define Q6PRM_LPASS_CLK_ID_QUAD_MI2S_IBIT                         0x106
+ /* Clock ID for Quartnery I2S EBIT */
+ #define Q6PRM_LPASS_CLK_ID_QUAD_MI2S_EBIT                         0x107
+diff --git a/sound/soc/qcom/sc8280xp.c b/sound/soc/qcom/sc8280xp.c
+index ede8ee669..d8ac47422 100644
+--- a/sound/soc/qcom/sc8280xp.c
++++ b/sound/soc/qcom/sc8280xp.c
+@@ -40,6 +40,9 @@ static int sc8280xp_mi2s_index(unsigned int dai_id)
+ 		return (dai_id - PRIMARY_MI2S_RX) / 2;
+ 	case QUINARY_MI2S_RX...QUINARY_MI2S_TX:
+ 		return 4;
++	/* TDM on the same serial interface uses the same bit clock and codecs */
++	case PRIMARY_TDM_RX_0...QUINARY_TDM_TX_7:
++		return (dai_id - PRIMARY_TDM_RX_0) / 16;
+ 	default:
+ 		return -1;
+ 	}
+@@ -58,6 +61,8 @@ static int sc8280xp_snd_init(struct snd_soc_pcm_runtime *rtd)
+ 	switch (cpu_dai->id) {
+ 	case PRIMARY_MI2S_RX...QUATERNARY_MI2S_TX:
+ 	case QUINARY_MI2S_RX...QUINARY_MI2S_TX:
++	/* TDM framed like I2S (from the topology) for the same codecs */
++	case PRIMARY_TDM_RX_0...QUINARY_TDM_TX_7:
+ 		snd_soc_dai_set_fmt(cpu_dai, SND_SOC_DAIFMT_BP_FP);
+ 		/*
+ 		 * The DSP provides bit clock and frame sync; codecs follow.

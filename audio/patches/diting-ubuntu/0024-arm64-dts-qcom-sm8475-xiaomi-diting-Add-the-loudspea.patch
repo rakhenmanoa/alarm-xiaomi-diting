@@ -1,0 +1,94 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: royka1 <397414+royka1@users.noreply.github.com>
+Date: Mon, 12 Oct 2026 14:08:52 +0200
+Subject: [PATCH 24/46] arm64: dts: qcom: sm8475-xiaomi-diting: Add the
+ loudspeaker sound card
+
+Tertiary LPAIF I2S from the DSP to both CS35L41 amplifiers, with an
+AudioReach topology named after the model (XIAOMI-DITING). Android drives
+this port as TDM; mainline AudioReach has no TDM sink, so it runs as I2S.
+---
+ .../boot/dts/qcom/sm8475-xiaomi-diting.dts    | 63 +++++++++++++++++++
+ 1 file changed, 63 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+index 0606388ca..af69f7806 100644
+--- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
++++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+@@ -654,6 +654,38 @@ spk_amp_t: speaker-amp@42 {
+ 	};
+ };
+ 
++/*
++ * Loudspeakers: tertiary LPAIF I2S (Android runs it as TDM) to both CS35L41.
++ * Topology: qcom/sm8450/XIAOMI-DITING-tplg.bin.
++ */
++&sound {
++	compatible = "qcom,sm8450-sndcard";
++	model = "XIAOMI-DITING";
++
++	pinctrl-0 = <&tert_mi2s_active>;
++	pinctrl-names = "default";
++
++	/* bit clock, enabled before the amplifiers lock their PLL to it */
++	clocks = <&q6prmcc LPASS_CLK_ID_TER_MI2S_IBIT LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
++	clock-names = "tertiary-mi2s";
++
++	speaker-playback-dai-link {
++		link-name = "Speaker Playback";
++
++		cpu {
++			sound-dai = <&q6apmbedai TERTIARY_MI2S_RX>;
++		};
++
++		codec {
++			sound-dai = <&spk_amp_t 0>, <&spk_amp_b 0>;
++		};
++
++		platform {
++			sound-dai = <&q6apm>;
++		};
++	};
++};
++
+ &pcie0 {
+ 	max-link-speed = <2>;
+ 	status = "okay";
+@@ -752,6 +784,37 @@ spk_amp_t_irq: spk-amp-t-irq-state {
+ 		bias-pull-up;
+ 	};
+ 
++	/* vendor tert_tdm pins (lpaif tertiary = mi2s2) */
++	tert_mi2s_active: tert-mi2s-active-state {
++		sck-pins {
++			pins = "gpio121";
++			function = "mi2s2_sck";
++			drive-strength = <8>;
++			bias-disable;
++		};
++
++		data0-pins {
++			pins = "gpio122";
++			function = "mi2s2_data0";
++			drive-strength = <8>;
++			bias-disable;
++		};
++
++		ws-pins {
++			pins = "gpio123";
++			function = "mi2s2_ws";
++			drive-strength = <8>;
++			bias-disable;
++		};
++
++		data1-pins {
++			pins = "gpio124";
++			function = "mi2s2_data1";
++			drive-strength = <8>;
++			bias-disable;
++		};
++	};
++
+ 	bt_en: bt-en-state {
+ 		pins = "gpio81";
+ 		function = "gpio";

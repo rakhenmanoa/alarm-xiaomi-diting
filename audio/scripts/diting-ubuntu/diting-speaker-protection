@@ -1,0 +1,74 @@
+#!/bin/sh
+# Xiaomi Diting: run the CS35L41 speaker protection firmware (Cirrus CSPL)
+# on both amplifiers with this unit's factory calibration.
+#
+# The calibrated speaker resistance comes from the phone's persist partition
+# (persist/audio/crus_calr.bin: two little-endian u32, top then bottom
+# amplifier), packaged locally by firmware-xiaomi-diting. Without it the
+# amplifiers stay on the plain ASP path (protection firmware not used).
+# Calibration controls as written by mainline cs-amp-lib: CAL_R, CAL_STATUS 1,
+# CAL_CHECKSUM CAL_R + 1; wm_adsp keeps them and restores them on reload.
+set -eu
+CAL=/usr/share/qcom/sm8475/Xiaomi/diting/audio/crus_calr.bin
+CARD=XIAOMIDITING
+# Media amplifier levels for the other services (digital, analog gain):
+# Android's with protection running, 6 dB lower and minimum gain without.
+LEVELS=/run/diting/amp-media
+
+be32() {	# value -> "b0,b1,b2,b3" (big-endian, as the firmware controls)
+	printf '%d,%d,%d,%d' $(( ($1 >> 24) & 255 )) $(( ($1 >> 16) & 255 )) \
+		$(( ($1 >> 8) & 255 )) $(( $1 & 255 ))
+}
+set_ctl() { amixer -q -c "$CARD" cset "name=$1" "$2"; }
+
+media_levels() {	# digital analog
+	mkdir -p "${LEVELS%/*}"
+	echo "$1 $2" > "$LEVELS"
+	if [ "$(amixer -c "$CARD" cget "name=Top MUX" | sed -n 's/  : values=//p')" = 0 ]; then
+		for amp in T B; do
+			set_ctl "$amp Digital PCM Volume" "$1"
+			set_ctl "$amp Analog PCM Volume" "$2"
+		done
+	fi
+}
+no_protection() {	# plain ASP path (a saved "DSP" state would be silent)
+	media_levels 769 0
+	set_ctl "T PCM Source" ASP
+	set_ctl "B PCM Source" ASP
+	echo "$1: protection firmware not used"
+	exit 0
+}
+# The sound card appears with the ADSP; wait for its controls, then for
+# alsa-restore (started by udev for the card), which would otherwise put back
+# the saved PCM source over ours.
+i=0
+until amixer -c "$CARD" cget "name=T PCM Source" >/dev/null 2>&1; do
+	i=$((i + 1)); [ $i -lt 60 ] || { echo "no sound card"; exit 1; }; sleep 1
+done
+i=0
+while :; do
+	s=$(systemctl show -P ActiveState alsa-restore.service 2>/dev/null || echo none)
+	case "$s" in
+	activating) ;;
+	inactive) [ $i -lt 5 ] || break ;;	# not (yet) started by udev
+	*) break ;;
+	esac
+	i=$((i + 1)); [ $i -lt 30 ] || break; sleep 1
+done
+
+[ -r "$CAL" ] || no_protection "no speaker calibration ($CAL)"
+set -- $(od -An -tu4 -v "$CAL")
+[ $# -ge 2 ] && [ "$1" -gt 0 ] && [ "$2" -gt 0 ] || no_protection "invalid calibration $CAL"
+for amp in "T $1" "B $2"; do
+	set -- $amp
+	set_ctl "$1 DSP1 Firmware" Protection
+	set_ctl "$1 DSP1 Preload Switch" 1
+	set_ctl "$1 DSP1 Protection cd CAL_R" "$(be32 "$2")"
+	set_ctl "$1 DSP1 Protection cd CAL_STATUS" "$(be32 1)"
+	set_ctl "$1 DSP1 Protection cd CAL_CHECKSUM" "$(be32 $(($2 + 1)))"
+	set_ctl "$1 PCM Source" DSP
+	echo "$1: protection firmware with calibrated R $2 ($(awk "BEGIN{printf \"%.2f\", $2 * 5.857 / 8192}") ohm)"
+done
+# protected: media at Android's level (digital 0 dB, "AMP PCM Gain" 17)
+media_levels 817 17
+echo "media level: digital 817 (0 dB), analog gain 17"

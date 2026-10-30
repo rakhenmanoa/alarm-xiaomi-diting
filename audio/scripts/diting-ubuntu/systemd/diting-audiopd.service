@@ -1,0 +1,21 @@
+[Unit]
+Description=ADSP audio PD for the Xiaomi Diting voice call modules
+Documentation=https://github.com/qualcomm/fastrpc
+# Started by udev when the ADSP's FastRPC device appears (once per ADSP
+# boot: the audio PD can be created only once, so no automatic restart).
+ConditionPathExists=/dev/fastrpc-adsp
+ConditionPathExists=/usr/sbin/adsprpcd
+ConditionPathIsDirectory=/usr/share/qcom/sm8475/Xiaomi/diting/dsp/adsp
+
+[Service]
+Type=simple
+Environment=ADSP_LIBRARY_PATH=/usr/share/qcom/sm8475/Xiaomi/diting/dsp/adsp
+# libadsprpc allocates its shared buffers from /dev/dma_heap/system when it
+# can open it (the kernel has the heap since r30, for the camera ISP). Those
+# buffers are CPU-cached and the fastrpc driver does no per-call cache
+# maintenance on them, so the DSP's requests to this daemon arrive corrupted
+# (EBADPARM in the apps_std skeleton) and the voice graph fails to open.
+# Without the heap it falls back to the fastrpc driver's own allocator.
+InaccessiblePaths=-/dev/dma_heap
+ExecStart=/usr/sbin/adsprpcd audiopd
+Restart=no

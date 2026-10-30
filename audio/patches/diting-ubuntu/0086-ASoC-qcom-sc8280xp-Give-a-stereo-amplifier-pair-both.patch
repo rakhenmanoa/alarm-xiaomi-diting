@@ -1,0 +1,63 @@
+From 826263a3614132b945ff238b632ad6ea456ea5a9 Mon Sep 17 00:00:00 2001
+From: royka1 <397414+royka1@users.noreply.github.com>
+Date: Wed, 14 Oct 2026 19:33:15 +0200
+Subject: [PATCH] ASoC: qcom: sc8280xp: Give a stereo amplifier pair both
+ receive slots
+
+The machine driver gave each codec on a multi-codec link only its first
+receive slot (codec N: RX1 = slot N), leaving RX2 at the CS35L41 reset
+default, slot 1. For the Xiaomi 12T Pro's speaker pair that makes the
+right (bottom) amplifier receive its own channel on both inputs.
+
+Its speaker protection firmware (Cirrus CSPL, the vendor tuning) takes
+RX2 as the opposite channel, as the vendor driver programs it
+(cirrus,right-channel-amp: RX1 = 1, RX2 = 0; left: RX1 = 0, RX2 = 1).
+With both inputs on the same channel it keeps the output silent: the
+bottom speaker played nothing while the left one was unaffected, and
+without the firmware (plain ASP path) both played.
+
+For a pair, program RX1 = own slot and RX2 = the other one.
+
+Device-tested on the Xiaomi 12T Pro (register write first, then this
+patch).
+
+Signed-off-by: royka1 <397414+royka1@users.noreply.github.com>
+---
+ sound/soc/qcom/sc8280xp.c | 15 ++++++++++++---
+ 1 file changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/sound/soc/qcom/sc8280xp.c b/sound/soc/qcom/sc8280xp.c
+index 4c25af22f..8cb49a05d 100644
+--- a/sound/soc/qcom/sc8280xp.c
++++ b/sound/soc/qcom/sc8280xp.c
+@@ -69,15 +69,24 @@ static int sc8280xp_snd_init(struct snd_soc_pcm_runtime *rtd)
+ 		 * The DSP provides bit clock and frame sync; codecs follow.
+ 		 * With several codecs on one link (e.g. a pair of speaker
+ 		 * amplifiers), codec N takes slot N: left, right, ...
++		 *
++		 * A stereo pair also gets the other channel as its second
++		 * receive slot, as the vendor CS35L41 driver programs it
++		 * (cirrus,right-channel-amp: RX1 = 1, RX2 = 0). The speaker
++		 * protection firmware takes RX2 as the opposite channel; left
++		 * at its reset default (slot 1) the right amplifier receives
++		 * its own channel twice and the firmware keeps it silent.
+ 		 */
+ 		for_each_rtd_codec_dais(rtd, i, codec_dai) {
+-			unsigned int slot = i;
++			unsigned int slots[2] = { i, !i };
+ 
+ 			snd_soc_dai_set_fmt(codec_dai, SND_SOC_DAIFMT_CBC_CFC |
+ 					    SND_SOC_DAIFMT_I2S |
+ 					    SND_SOC_DAIFMT_NB_NF);
+-			if (rtd->dai_link->num_codecs > 1)
+-				snd_soc_dai_set_channel_map(codec_dai, 0, NULL, 1, &slot);
++			if (rtd->dai_link->num_codecs == 2)
++				snd_soc_dai_set_channel_map(codec_dai, 0, NULL, 2, slots);
++			else if (rtd->dai_link->num_codecs > 2)
++				snd_soc_dai_set_channel_map(codec_dai, 0, NULL, 1, slots);
+ 		}
+ 		break;
+ 	case WSA_CODEC_DMA_RX_0:
+-- 
+2.55.0
+

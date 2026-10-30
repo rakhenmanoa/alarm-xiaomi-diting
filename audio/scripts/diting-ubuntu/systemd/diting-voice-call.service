@@ -1,0 +1,13 @@
+[Unit]
+Description=Xiaomi Diting voice call audio path
+After=ModemManager.service sound.target diting-audiopd.service
+ConditionPathExists=/usr/libexec/diting/diting-voice-pcm
+
+[Service]
+Type=simple
+ExecStart=/usr/libexec/diting/diting-voice-call
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

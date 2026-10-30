@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: royka1 <397414+royka1@users.noreply.github.com>
+Date: Mon, 12 Oct 2026 22:01:07 +0200
+Subject: [PATCH 48/48] arm64: dts: qcom: sm8475-xiaomi-diting: Drive the
+ speakers over TDM
+
+The CS35L41 pair is on the tertiary TDM interface on stock Android
+(TDM-LPAIF-RX-TERTIARY, data delay 1, inverted long sync). Use the
+TERTIARY_TDM_RX_0 back end and vote the TDM bit clock inverted, as the
+TDM endpoint configures it; a non-inverted bit clock made the amplifiers
+sample on the data transition (loud hiss, weak signal).
+
+Local bring-up patch, not for upstream submission.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+index 57362771b..2b97e58ab 100644
+--- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
++++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+@@ -745,7 +745,7 @@ &sound {
+ 	pinctrl-names = "default";
+ 
+ 	/* bit clock, enabled before the amplifiers lock their PLL to it */
+-	clocks = <&q6prmcc LPASS_CLK_ID_TER_MI2S_IBIT LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
++	clocks = <&q6prmcc LPASS_CLK_ID_TER_TDM_IBIT LPASS_CLK_ATTRIBUTE_INVERT_COUPLE_NO>;
+ 	clock-names = "tertiary-mi2s";
+ 
+ 	audio-routing = "AMIC1", "MIC BIAS1",
+@@ -757,7 +757,7 @@ speaker-playback-dai-link {
+ 		link-name = "Speaker Playback";
+ 
+ 		cpu {
+-			sound-dai = <&q6apmbedai TERTIARY_MI2S_RX>;
++			sound-dai = <&q6apmbedai TERTIARY_TDM_RX_0>;
+ 		};
+ 
+ 		codec {

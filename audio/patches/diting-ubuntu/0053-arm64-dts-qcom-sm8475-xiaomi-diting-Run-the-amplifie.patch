@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: royka1 <397414+royka1@users.noreply.github.com>
+Date: Tue, 13 Oct 2026 13:11:50 +0200
+Subject: [PATCH] arm64: dts: qcom: sm8475-xiaomi-diting: Run the amplifier I2C
+ bus at 400 kHz
+
+Loading the CS35L41 speaker protection firmware writes 20 KB blocks; at
+100 kHz they take about two seconds and the GENI I2C transfer times out
+(1 s). 400 kHz is the vendor driver's default for this bus.
+
+Local bring-up patch, not for upstream submission.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+index 276fdf1d2..850f9addd 100644
+--- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
++++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+@@ -702,9 +702,13 @@ touchscreen@0 {
+ 	};
+ };
+ 
+-/* Loudspeaker amplifiers: Android I2C bus 2 = QUP SE15 */
++/*
++ * Loudspeaker amplifiers: Android I2C bus 2 = QUP SE15, at 400 kHz as the
++ * vendor driver's default: loading the protection firmware writes 20 KB
++ * blocks, which at 100 kHz exceed the GENI I2C 1 s transfer timeout.
++ */
+ &i2c15 {
+-	clock-frequency = <100000>;
++	clock-frequency = <400000>;
+ 	status = "okay";
+ 
+ 	/* vendor cs35l41@40 */
