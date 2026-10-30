@@ -1,12 +1,14 @@
-# Plasma Mobile 6.8.1 + diagnostic du tiroir des réglages rapides vide
-# (Qt 6.12.0 : chaque tuile reçoit modelData = undefined, erreurs
-# QuickSettings.qml:102-107). Le patch 0001 n'ajoute que des lignes de
-# journal préfixées « diting-qs » ; aucun changement de comportement.
-# À retirer une fois la cause trouvée : sudo pacman -S plasma-mobile
+# Plasma Mobile 6.8.1 + correction du tiroir des réglages rapides vide.
+# Au démarrage, la largeur du panneau est brièvement négative : rowCount
+# devient négatif (-280), pageSize aussi (-840), et PaginateModel annonce
+# des lignes d'indices négatifs. La vue crée alors 840 tuiles sans réglage
+# (5040 erreurs QuickSettings.qml:102-107) qui repoussent les vraies tuiles.
+# Patch 0001 : taille de page bornée à 0 (QML et PaginateModel).
+# Retour au paquet d'Arch : sudo pacman -S plasma-mobile
 pkgname=plasma-mobile-diting
 pkgver=6.8.1
-pkgrel=1
-pkgdesc="Plasma Mobile ${pkgver} avec journal de diagnostic des réglages rapides (diting)"
+pkgrel=2
+pkgdesc="Plasma Mobile ${pkgver} avec correction du tiroir des réglages rapides vide (diting)"
 arch=(aarch64)
 url="https://invent.kde.org/plasma/plasma-mobile"
 license=(GPL-2.0-or-later LGPL-2.0-or-later)
@@ -26,7 +28,7 @@ _deps_installees() {
 depends=($(_deps_installees))
 makedepends=(git extra-cmake-modules plasma-wayland-protocols wayland-protocols vulkan-headers)
 source=("plasma-mobile::git+https://github.com/KDE/plasma-mobile.git#tag=v${pkgver}"
-        0001-diting-qs-diagnostic.patch)
+        0001-quicksettings-negative-page-size.patch)
 sha256sums=('SKIP' 'SKIP')
 
 prepare() {
@@ -35,7 +37,7 @@ prepare() {
     return 1
   fi
   cd plasma-mobile
-  patch -Np1 --no-backup-if-mismatch < "$srcdir/0001-diting-qs-diagnostic.patch"
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0001-quicksettings-negative-page-size.patch"
 }
 
 build() {
