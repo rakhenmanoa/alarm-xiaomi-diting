@@ -24,7 +24,7 @@ _deps_installees() {
   done
 }
 depends=($(_deps_installees))
-makedepends=(git extra-cmake-modules plasma-wayland-protocols wayland-protocols)
+makedepends=(git extra-cmake-modules plasma-wayland-protocols wayland-protocols vulkan-headers)
 source=("plasma-mobile::git+https://github.com/KDE/plasma-mobile.git#tag=v${pkgver}"
         0001-diting-qs-diagnostic.patch)
 sha256sums=('SKIP' 'SKIP')
