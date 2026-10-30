@@ -9,7 +9,10 @@
  *  - capteur de proximité couvert (poche, face contre la table) : l'état
  *    est lu dans iio-sensor-proxy (propriété en cache, aucun délai) ;
  *  - appel actif : l'écran est géré par diting-proximite-appel (porter le
- *    téléphone à l'oreille est aussi un geste « lever »).
+ *    téléphone à l'oreille est aussi un geste « lever ») ;
+ *  - moins de DELAI_GESTE après le dernier rallumage : en main, le SLPI
+ *    renvoie le geste plusieurs fois par seconde, et ces rafales de
+ *    « dpms on » se chevauchaient dans KWin (Atomic commit failed: EBUSY).
  *
  * Service utilisateur de la session Plasma (diting-lever-reveil.service).
  *
@@ -30,7 +33,11 @@
 #include <gio/gio.h>
 #include <libssc.h>
 
+/* Délai minimal entre deux rallumages de l'écran */
+#define DELAI_GESTE (3 * G_USEC_PER_SEC)
+
 static GMainLoop *loop;
+static gint64 dernier_rallumage;	/* g_get_monotonic_time(), 0 = jamais */
 static GDBusProxy *capteurs;	/* net.hadess.SensorProxy, NULL si absent */
 
 /*****************************************************************************/
@@ -105,7 +112,13 @@ geste_detecte (SSCSensorTiltToWake *capteur, gfloat valeur, guint msg_id, gpoint
 {
 	gchar *argv[] = { "kscreen-doctor", "--dpms", "on", NULL };
 	g_autoptr (GError) err = NULL;
+	gint64 maintenant = g_get_monotonic_time ();
 
+	if (dernier_rallumage && maintenant - dernier_rallumage < DELAI_GESTE) {
+		g_debug ("geste %u moins de %d s après le dernier rallumage : ignoré",
+			 msg_id, (int) (DELAI_GESTE / G_USEC_PER_SEC));
+		return;
+	}
 	if (proximite_couverte ()) {
 		g_message ("geste avec le capteur de proximité couvert : ignoré");
 		return;
@@ -116,6 +129,7 @@ geste_detecte (SSCSensorTiltToWake *capteur, gfloat valeur, guint msg_id, gpoint
 	}
 
 	g_message ("geste détecté (message %u) : écran rallumé", msg_id);
+	dernier_rallumage = maintenant;
 	if (!g_spawn_async (NULL, argv, NULL,
 			    G_SPAWN_SEARCH_PATH | G_SPAWN_STDOUT_TO_DEV_NULL | G_SPAWN_STDERR_TO_DEV_NULL,
 			    NULL, NULL, NULL, &err))
