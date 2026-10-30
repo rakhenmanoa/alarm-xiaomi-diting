@@ -1,0 +1,75 @@
+From cd4399db438b0451b587592838f1bc6d3059281e Mon Sep 17 00:00:00 2001
+From: Fanasina RANDRIATSARAFARA <m.randriatsarafara.f@gmail.com>
+Date: Fri, 30 Oct 2026 15:22:21 +0300
+Subject: [PATCH] quicksettings: Never use a negative page size
+
+While the action drawer is being laid out, the width of QuickSettings
+can briefly be negative (seen with Qt 6.12.0). columnWidth and
+rowHeight then become negative, targetRows is a large negative number
+and rowCount/pageSize follow it (e.g. rowCount -280, pageSize -840).
+
+The minimized view passes that page size to PaginateModel, which does
+not validate it: setPageSize(-840) announces the removal of rows
+-840..-1, and the next change (-840 -> 5) the insertion of rows
+-840..4. The Repeater ends up with 845 delegates, 840 of them with an
+undefined modelData ("QuickSettings.qml:102: TypeError: Cannot read
+property 'text' of undefined", six lines per delegate), which push the
+real quick settings out of view: the quick settings panel stays empty.
+
+Clamp rowCount at 0 in QML, don't compute a page count while the page
+size is 0, and make PaginateModel ignore negative page sizes and never
+report a negative row count.
+---
+ .../mobileshell/qml/actiondrawer/private/QuickSettings.qml   | 5 +++--
+ components/quicksettingsplugin/paginatemodel.cpp             | 5 ++++-
+ 2 files changed, 7 insertions(+), 3 deletions(-)
+
+diff --git a/components/mobileshell/qml/actiondrawer/private/QuickSettings.qml b/components/mobileshell/qml/actiondrawer/private/QuickSettings.qml
+index f9b5536ee..3f9a982b8 100644
+--- a/components/mobileshell/qml/actiondrawer/private/QuickSettings.qml
++++ b/components/mobileshell/qml/actiondrawer/private/QuickSettings.qml
+@@ -48,7 +48,8 @@ Item {
+         let totalRows = Math.ceil(quickSettingsCount / columnCount);
+         let maxRows = 5; // more than 5 is just disorienting
+         let targetRows = Math.floor(Window.height * 0.65 / rowHeight);
+-        return Math.min(maxRows, Math.min(totalRows, targetRows));
++        // width (hence rowHeight) can briefly be <= 0 while the drawer is laid out
++        return Math.max(0, Math.min(maxRows, Math.min(totalRows, targetRows)));
+     }
+ 
+     readonly property int pageSize: rowCount * columnCount
+@@ -140,7 +141,7 @@ Item {
+                 Layout.preferredHeight: rowCount * rowHeight
+ 
+                 Repeater {
+-                    model: Math.ceil(quickSettingsCount / pageSize)
++                    model: pageSize > 0 ? Math.ceil(quickSettingsCount / pageSize) : 0
+                     delegate: Flow {
+                         id: flow
+                         spacing: 0
+diff --git a/components/quicksettingsplugin/paginatemodel.cpp b/components/quicksettingsplugin/paginatemodel.cpp
+index 9e442e4d6..00eb70389 100644
+--- a/components/quicksettingsplugin/paginatemodel.cpp
++++ b/components/quicksettingsplugin/paginatemodel.cpp
+@@ -47,6 +47,9 @@ int PaginateModel::pageSize() const
+ 
+ void PaginateModel::setPageSize(int count)
+ {
++    // A negative page size makes rowsByPageSize() negative and the row
++    // insertions/removals below invalid (e.g. removing rows -840..-1).
++    count = qMax(0, count);
+     if (count != d->m_pageSize) {
+         const int oldSize = rowsByPageSize(d->m_pageSize);
+         const int newSize = rowsByPageSize(count);
+@@ -119,7 +122,7 @@ QHash<int, QByteArray> PaginateModel::roleNames() const
+ 
+ int PaginateModel::rowsByPageSize(int size) const
+ {
+-    return d->m_hasStaticRowCount ? size : !d->m_sourceModel ? 0 : qMin(d->m_sourceModel->rowCount() - d->m_firstItem, size);
++    return qMax(0, d->m_hasStaticRowCount ? size : !d->m_sourceModel ? 0 : qMin(d->m_sourceModel->rowCount() - d->m_firstItem, size));
+ }
+ 
+ int PaginateModel::rowCount(const QModelIndex &parent) const
+-- 
+2.43.0
+
