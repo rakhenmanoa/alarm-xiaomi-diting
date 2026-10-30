@@ -225,8 +225,7 @@ Spécifique à cette version Arch :
   empaquetés : on recompile le paquet d'Arch avec les patches `0001` et `0002`, voir
   `pkgbuilds/modemmanager-fix/`, puis `IgnorePkg = modemmanager libmm-glib` ;
 - le patch phoc (choix de fréquence d'affichage) est inutile, KWin gère les modes lui-même ;
-- dalle 42 02 0a : seul le 60 Hz a été vérifié ; les commandes 90 et 120 Hz viennent du DT
-  vendeur mais n'ont pas été testées.
+- dalle 42 02 0a : 60, 90 et 120 Hz vérifiés sur le téléphone.
 
 ## Licences
 

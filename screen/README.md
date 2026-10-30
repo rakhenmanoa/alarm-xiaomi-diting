@@ -57,7 +57,7 @@ Les deux dalles sont des AMOLED 1220×2712 avec un DDIC Novatek, en DSI **mode c
   (`dsc_rc` : -1 auto, 0 DSC 1.1, 1 Novatek, 2 DSC 1.1 SCR ; `dsc_fl` : 0 = valeur de la dalle).
 
 ### État
-- 42 02 0a : **60 Hz vérifié**. Les commandes 90 et 120 Hz viennent du DT vendeur et n'ont pas été testées.
+- 42 02 0a : **60, 90 et 120 Hz vérifiés** sur le téléphone (commandes de fréquence du DT vendeur).
 - Bureau : KWin Wayland, lancé par SDDM (`scripts/30-construire-rootfs.sh`, fichier `/etc/sddm.conf.d/10-diting.conf`).
 - Mesa forcé sur zink pour toute la session Plasma (`MESA_LOADER_DRIVER_OVERRIDE=zink`), sauf
   plasma-camera : libcamera ne peut pas importer les images des caméras avec zink (voir le README principal).
@@ -82,10 +82,11 @@ Les deux dalles sont des AMOLED 1220×2712 avec un DDIC Novatek, en DSI **mode c
   de bord 2). `mode 2` le fait. Le mode jeu (`0x17`) envoie les coins plus tôt, mais le mode normal a
   été préféré (2026-10-26).
 - Avant toute écriture : `diting-touch-cmd config-read sauvegarde.bin`.
-- **À vérifier** : le README principal indique un bus SPI à 12 MHz comme sous Android, mais le patch
-  `0900` règle `spi-max-frequency = <1000000>` (1 MHz). Pour connaître la valeur réelle :
+- **Bus SPI à 12 MHz**, comme sous Android : testé et fonctionnel sur le téléphone. Attention, le
+  patch `0900` écrit encore `spi-max-frequency = <1000000>` (1 MHz) dans le DTB du paquet. Pour
+  vérifier la valeur du DTB en service :
   `find /sys/firmware/devicetree -path '*touchscreen*' -name spi-max-frequency -exec xxd {} \;`
-  (`000f4240` = 1 MHz, `00b71b00` = 12 MHz).
+  (`00b71b00` = 12 MHz, `000f4240` = 1 MHz).
 
 ## 4. Extinction et rallumage de l'écran
 
@@ -120,7 +121,131 @@ saccadait. Minima testés le 2026-10-26 : GPU 439 MHz, policy0 1056 MHz, policy4
 `rate_limit_us` 500 de schedutil. À désactiver si la batterie compte plus :
 `systemctl disable diting-perf`.
 
-## 6. Journal du 29 oct. 2026 : ce qui a été analysé
+## 6. Compiler et installer le pilote de la dalle sans recompiler le noyau
+
+Le pilote de la dalle est un module (`CONFIG_DRM_PANEL_XIAOMI_L12_36_02_0B=m`, fichier
+`panel-xiaomi-l12-36-02-0b.ko`). Le noyau du diting n'impose ni signature des modules ni
+`MODVERSIONS` : un module compilé à part se charge dès que sa version (`vermagic`) est exactement
+celle du noyau en service. La méthode générale est décrite dans
+[docs/modules-sur-le-telephone.md](../docs/modules-sur-le-telephone.md) ; voici son application à la
+dalle. Tout se fait **sur le téléphone**, une commande à la fois.
+
+### a. Préparer l'arbre noyau (une seule fois)
+
+Outils :
+```sh
+sudo pacman -S --needed base-devel bc git
+```
+
+Sources à la version du paquet (`_kver` du PKGBUILD de `linux-diting`) et patches de diting-ubuntu
+au commit du paquet (`_ditingcommit`) :
+```sh
+git clone --depth 1 --branch v7.2.10 https://github.com/gregkh/linux ~/linux-7.2.10
+```
+```sh
+git clone https://github.com/royka1/diting-ubuntu ~/diting-ubuntu
+```
+```sh
+git -C ~/diting-ubuntu checkout c68ff47db94792fb5fd608e98d1ae489c2e592b1
+```
+
+Tous les patches, dans l'ordre du `prepare()` du PKGBUILD (aucune ligne `ÉCHEC` ne doit s'afficher) :
+```sh
+cd ~/linux-7.2.10
+```
+```sh
+for p in ~/diting-ubuntu/kernel/patches/*.patch ~/alarm-xiaomi-diting/pkgbuilds/linux-diting/09*.patch; do patch -Np1 -s < "$p" || echo "ÉCHEC $p"; done
+```
+
+Configuration du noyau installé, puis préparation à la compilation de modules :
+```sh
+cp /usr/share/doc/linux-diting/config .config
+```
+```sh
+make LOCALVERSION= olddefconfig
+```
+```sh
+make LOCALVERSION= -j8 modules_prepare
+```
+
+`LOCALVERSION=` (vide) est indispensable : sans lui, l'arbre git ajoute un « + » à la version et le
+module est refusé. Les deux lignes suivantes doivent être identiques :
+```sh
+make -s LOCALVERSION= kernelrelease; uname -r
+```
+
+### b. Modifier le pilote
+
+Le fichier à modifier est `~/linux-7.2.10/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c`. Il est
+identique à `screen/pilote/` après l'étape a. Pour partir d'une copie déjà modifiée :
+```sh
+cp ~/alarm-xiaomi-diting/screen/pilote/panel-xiaomi-l12-36-02-0b.c drivers/gpu/drm/panel/
+```
+
+### c. Compiler le module seul
+```sh
+make LOCALVERSION= KBUILD_MODPOST_WARN=1 drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.ko
+```
+Les avertissements `WARNING: modpost: "…" undefined!` sont normaux (pas de `Module.symvers` du
+noyau installé) : les symboles sont résolus au chargement.
+
+Vérifier la version du module, qui doit être celle de `uname -r` :
+```sh
+modinfo -F vermagic drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.ko
+```
+
+### d. Installer
+
+Dans `updates/`, qui a priorité sur le module du paquet (l'original reste en place) :
+```sh
+sudo install -Dm644 -t /usr/lib/modules/$(uname -r)/updates/ drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.ko
+```
+```sh
+sudo depmod -a
+```
+
+La dalle est utilisée par l'affichage en permanence : on ne peut pas la décharger à chaud. Il faut
+redémarrer :
+```sh
+sudo reboot
+```
+
+Après le redémarrage, vérifier que c'est bien le module de `updates/` qui est chargé :
+```sh
+modinfo -n panel_xiaomi_l12_36_02_0b
+```
+```sh
+sudo dmesg | grep -i -E "panel|dsi"
+```
+
+Le module n'est pas dans l'initramfs (HOOKS `base udev modconf fsck`) : ni `mkinitcpio -P` ni
+`diting-install-bootimg` ne sont nécessaires. Ils ne le deviennent que si l'on modifie aussi le
+device tree (voir `docs/modules-sur-le-telephone.md`, section 3).
+
+### e. Revenir en arrière
+
+Si l'écran reste noir, se connecter en SSH (USB : `172.16.42.1`) et retirer le module de test :
+```sh
+sudo rm /usr/lib/modules/$(uname -r)/updates/panel-xiaomi-l12-36-02-0b.ko
+```
+```sh
+sudo depmod -a
+```
+```sh
+sudo reboot
+```
+
+À faire aussi après l'installation d'un nouveau paquet `linux-diting`, sinon le module de `updates/`
+masquerait celui du paquet. Une fois la modification validée, la voie normale reste le paquet : en
+faire un patch dans `pkgbuilds/linux-diting/`, puis
+`ONLY=linux-diting scripts/build-in-container.sh scripts/20-construire-paquets.sh`.
+
+### Même méthode pour le DSC (patch `0902`)
+Le paramètre `dsc_slice_per_pkt` vit dans `msm.ko` (`drivers/gpu/drm/msm/`). Même procédure, avec
+`drivers/gpu/drm/msm/msm.ko` à l'étape c et le nom `msm.ko` aux étapes d et e (compilation plus longue,
+car le module est gros).
+
+## 7. Journal du 29 oct. 2026 : ce qui a été analysé
 
 Démarrage de 14:17 à 17:05, terminé par un **gel sans arrêt propre**.
 
@@ -138,9 +263,8 @@ Hors écran, mais vu dans le même journal : interruption « handover » du SLPI
 (64 % du journal). Corrigée par le patch noyau `pkgbuilds/linux-diting/0910` (backport Linux 7.3,
 `linux-diting` pkgrel 13).
 
-## 7. Pistes ouvertes
+## 8. Pistes ouvertes
 - Tester la 0.3.0 de `diting-lever-reveil` sur le téléphone (réouverture du capteur).
-- Vérifier le 90 et le 120 Hz sur la 42 02 0a.
-- Lever le doute sur la fréquence SPI du tactile (1 MHz dans le DT, 12 MHz selon le README).
+- Mettre le patch `0900` à 12 MHz (`spi-max-frequency = <12000000>`), la valeur testée.
 - Lire pstore après le prochain gel.
 - Éventuellement : garer proprement l'horloge MDP au démarrage (WARNING `disp_cc`).
