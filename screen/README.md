@@ -82,11 +82,14 @@ Les deux dalles sont des AMOLED 1220×2712 avec un DDIC Novatek, en DSI **mode c
   de bord 2). `mode 2` le fait. Le mode jeu (`0x17`) envoie les coins plus tôt, mais le mode normal a
   été préféré (2026-10-26).
 - Avant toute écriture : `diting-touch-cmd config-read sauvegarde.bin`.
-- **Bus SPI à 12 MHz**, comme sous Android : testé et fonctionnel sur le téléphone. Attention, le
-  patch `0900` écrit encore `spi-max-frequency = <1000000>` (1 MHz) dans le DTB du paquet. Pour
-  vérifier la valeur du DTB en service :
+- **Bus SPI à 1 MHz** (`spi-max-frequency = <1000000>`, patch `0900`) : c'est la valeur en
+  service, et elle fonctionne bien. Android utilise 12 MHz, testé aussi. La valeur du DT est un
+  maximum ; le contrôleur QUP du SM8450 produit exactement 12 MHz (48 ÷ 4), 10 MHz (80 ÷ 8) et
+  8 MHz (32 ÷ 4) si l'on veut monter. Valeur en service :
   `find /sys/firmware/devicetree -path '*touchscreen*' -name spi-max-frequency -exec xxd {} \;`
-  (`00b71b00` = 12 MHz, `000f4240` = 1 MHz).
+  (`000f4240` = 1 MHz, `007a1200` = 8 MHz, `00989680` = 10 MHz, `00b71b00` = 12 MHz).
+  Test d'une autre valeur sans recompiler : `fdtput -t u` sur `/boot/dtbs/qcom/sm8475-xiaomi-diting.dtb`,
+  puis `mkinitcpio -P` et `diting-install-bootimg`.
 
 ## 4. Extinction et rallumage de l'écran
 
@@ -265,6 +268,5 @@ Hors écran, mais vu dans le même journal : interruption « handover » du SLPI
 
 ## 8. Pistes ouvertes
 - Tester la 0.3.0 de `diting-lever-reveil` sur le téléphone (réouverture du capteur).
-- Mettre le patch `0900` à 12 MHz (`spi-max-frequency = <12000000>`), la valeur testée.
 - Lire pstore après le prochain gel.
 - Éventuellement : garer proprement l'horloge MDP au démarrage (WARNING `disp_cc`).
