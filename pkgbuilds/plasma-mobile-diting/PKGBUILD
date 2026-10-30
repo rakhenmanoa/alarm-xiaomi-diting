@@ -1,0 +1,53 @@
+# Plasma Mobile 6.8.1 + diagnostic du tiroir des réglages rapides vide
+# (Qt 6.12.0 : chaque tuile reçoit modelData = undefined, erreurs
+# QuickSettings.qml:102-107). Le patch 0001 n'ajoute que des lignes de
+# journal préfixées « diting-qs » ; aucun changement de comportement.
+# À retirer une fois la cause trouvée : sudo pacman -S plasma-mobile
+pkgname=plasma-mobile-diting
+pkgver=6.8.1
+pkgrel=1
+pkgdesc="Plasma Mobile ${pkgver} avec journal de diagnostic des réglages rapides (diting)"
+arch=(aarch64)
+url="https://invent.kde.org/plasma/plasma-mobile"
+license=(GPL-2.0-or-later LGPL-2.0-or-later)
+provides=("plasma-mobile=${pkgver}")
+conflicts=(plasma-mobile)
+
+# Mêmes dépendances que le paquet plasma-mobile installé (lues dans la base
+# locale de pacman), pour que le remplacement ne change rien d'autre.
+_deps_installees() {
+  local d
+  for d in /var/lib/pacman/local/plasma-mobile-[0-9]*/desc /var/lib/pacman/local/plasma-mobile-diting-[0-9]*/desc; do
+    [ -f "$d" ] || continue
+    awk '/^%DEPENDS%$/{f=1; next} /^$/{f=0} f' "$d"
+    return
+  done
+}
+depends=($(_deps_installees))
+makedepends=(git extra-cmake-modules plasma-wayland-protocols wayland-protocols)
+source=("plasma-mobile::git+https://github.com/KDE/plasma-mobile.git#tag=v${pkgver}"
+        0001-diting-qs-diagnostic.patch)
+sha256sums=('SKIP' 'SKIP')
+
+prepare() {
+  if [ ${#depends[@]} -eq 0 ]; then
+    echo "dépendances de plasma-mobile introuvables dans /var/lib/pacman/local : installez d'abord plasma-mobile" >&2
+    return 1
+  fi
+  cd plasma-mobile
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0001-diting-qs-diagnostic.patch"
+}
+
+build() {
+  # options des paquets KDE d'Arch (libexec dans /usr/lib)
+  cmake -B build -S plasma-mobile \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DCMAKE_INSTALL_LIBEXECDIR=lib \
+    -DBUILD_TESTING=OFF
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}
