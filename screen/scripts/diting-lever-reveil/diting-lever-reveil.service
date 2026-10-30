@@ -1,0 +1,15 @@
+# Service utilisateur, activé pour tous les comptes par le paquet
+# (lien dans graphical-session.target.wants) : démarre et s'arrête avec la
+# session Plasma, qui lui transmet WAYLAND_DISPLAY.
+[Unit]
+Description=Diting : lever le téléphone pour rallumer l'écran
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/diting-lever-reveil
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

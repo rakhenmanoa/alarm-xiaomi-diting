@@ -1,0 +1,73 @@
+From: alarm-diting
+Subject: [PATCH] drm/msm/dsi: Add a DSC slices-per-packet option
+
+Upstream always sends one DSC slice per DSI packet. Some panel DDICs
+(vendor qcom,mdss-dsc-slice-per-pkt = 2) need all slices of a line in one
+packet. Add msm.dsc_slice_per_pkt for bring-up.
+---
+diff --git a/drivers/gpu/drm/msm/dsi/dsi_host.c b/drivers/gpu/drm/msm/dsi/dsi_host.c
+--- a/drivers/gpu/drm/msm/dsi/dsi_host.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_host.c
+@@ -926,12 +926,30 @@
+ 		dsi_write(msm_host, REG_DSI_CPHY_MODE_CTRL, BIT(0));
+ }
+ 
++/*
++ * DSC slices per DSI packet. Upstream sends one slice per packet; some panel
++ * DDICs (vendor qcom,mdss-dsc-slice-per-pkt = 2) expect all slices of a line
++ * in one packet. Bring-up override: msm.dsc_slice_per_pkt=2.
++ */
++static unsigned int dsc_slice_per_pkt = 1;
++module_param(dsc_slice_per_pkt, uint, 0444);
++MODULE_PARM_DESC(dsc_slice_per_pkt, "DSC slices per DSI packet (1, 2)");
++
++static u32 msm_dsi_dsc_slice_per_pkt(struct msm_dsi_host *msm_host)
++{
++	u32 n = dsc_slice_per_pkt;
++
++	if (!n || !msm_host->dsc || msm_host->dsc->slice_count % n)
++		return 1;
++	return n;
++}
++
+ static void dsi_update_dsc_timing(struct msm_dsi_host *msm_host, bool is_cmd_mode)
+ {
+ 	struct drm_dsc_config *dsc = msm_host->dsc;
+ 	u32 reg, reg_ctrl, reg_ctrl2;
+ 	u32 slice_per_intf, total_bytes_per_intf;
+-	u32 pkt_per_line;
++	u32 pkt_per_line, slice_per_pkt;
+ 	u32 eol_byte_num;
+ 	u32 bytes_per_pkt;
+ 
+@@ -939,9 +957,10 @@
+ 	 * compress mode registers
+ 	 */
+ 	slice_per_intf = dsc->slice_count;
++	slice_per_pkt = msm_dsi_dsc_slice_per_pkt(msm_host);
+ 
+ 	total_bytes_per_intf = dsc->slice_chunk_size * slice_per_intf;
+-	bytes_per_pkt = dsc->slice_chunk_size; /* * slice_per_pkt; */
++	bytes_per_pkt = dsc->slice_chunk_size * slice_per_pkt;
+ 
+ 	eol_byte_num = total_bytes_per_intf % 3;
+ 
+@@ -951,7 +970,7 @@
+ 	 * Since the current driver only supports slice_per_pkt = 1,
+ 	 * pkt_per_line will be equal to slice per intf for now.
+ 	 */
+-	pkt_per_line = slice_per_intf;
++	pkt_per_line = slice_per_intf / slice_per_pkt;
+ 
+ 	if (is_cmd_mode) /* packet data type */
+ 		reg = DSI_COMMAND_COMPRESSION_MODE_CTRL_STREAM0_DATATYPE(MIPI_DSI_DCS_LONG_WRITE);
+@@ -1112,7 +1131,8 @@
+ 			 * TODO: Expand mipi_dsi_device struct to hold slice_per_pkt info
+ 			 *       and adjust DSC math to account for slice_per_pkt.
+ 			 */
+-			wc = msm_host->dsc->slice_chunk_size + 1;
++			wc = msm_host->dsc->slice_chunk_size *
++			     msm_dsi_dsc_slice_per_pkt(msm_host) + 1;
+ 
+ 		dsi_write(msm_host, REG_DSI_CMD_MDP_STREAM0_CTRL,
+ 			DSI_CMD_MDP_STREAM0_CTRL_WORD_COUNT(wc) |

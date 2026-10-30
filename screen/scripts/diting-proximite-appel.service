@@ -1,0 +1,15 @@
+# Service utilisateur, activé pour tous les comptes par le paquet
+# (lien dans graphical-session.target.wants) : démarre et s'arrête avec la
+# session Plasma, qui lui transmet WAYLAND_DISPLAY.
+[Unit]
+Description=Diting : écran éteint pendant les appels (capteur de proximité)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=/usr/lib/diting/diting-proximite-appel
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target

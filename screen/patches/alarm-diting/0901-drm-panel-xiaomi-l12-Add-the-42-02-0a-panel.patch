@@ -1,0 +1,524 @@
+From: alarm-diting
+Subject: [PATCH] drm/panel: xiaomi-l12: Add the 42 02 0a panel variant
+
+The diting ships with a "36 02 0b" or a "42 02 0a" panel. Add the 42 02 0a
+init sequence and refresh rate commands from the vendor
+qcom,mdss_dsi_l12_42_02_0a_dsc_cmd node, selected from the panel the
+bootloader reports in the command line. The DSC rate control table and
+first_line_bpg_offset can be overridden with the dsc_rc / dsc_fl module
+parameters for bring-up.
+---
+diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c
+--- a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c
++++ b/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c
+@@ -7,6 +7,13 @@
+  * from the vendor device tree of a 22081212UG unit
+  * (qcom,mdss_dsi_l12_36_02_0b_dsc_cmd); supplies, power sequence and
+  * brightness handling follow the same vendor data. Local bring-up driver.
++ *
++ * The diting also ships with a second panel, "42 02 0a" (vendor
++ * qcom,mdss_dsi_l12_42_02_0a_dsc_cmd): same size, supplies and DSC slice
++ * layout, but its own init sequence, refresh rate commands and the standard
++ * DSC 1.1 (pre-SCR) rate control. The bootloader names the panel it found in
++ * the kernel command line (msm_drm.dsi_display0=...), which selects the
++ * variant at probe time.
+  */
+ 
+ #include <linux/backlight.h>
+@@ -14,6 +21,8 @@
+ #include <linux/gpio/consumer.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
++#include <linux/property.h>
++#include <linux/string.h>
+ #include <linux/regulator/consumer.h>
+ 
+ #include <video/mipi_display.h>
+@@ -28,11 +37,41 @@
+ #include <drm/drm_panel.h>
+ #include <drm/drm_probe_helper.h>
+ 
++/*
++ * DSC rate control used by the host encoder; it must match the DDIC's
++ * decoder. Selectable at load time for bring-up of new panel variants
++ * (e.g. options panel_xiaomi_l12_36_02_0b dsc_rc=2 dsc_fl=12):
++ *   dsc_rc: -1 = panel default, 0 = standard DSC 1.1 table (msm default),
++ *            1 = Novatek-tuned table, 2 = Qualcomm DSC 1.1 SCR table
++ *   dsc_fl: first_line_bpg_offset, 0 = panel default
++ */
++static int dsc_rc = -1;
++module_param(dsc_rc, int, 0444);
++MODULE_PARM_DESC(dsc_rc, "DSC RC table: -1 auto, 0 DSC 1.1, 1 Novatek, 2 DSC 1.1 SCR");
++static int dsc_fl;
++module_param(dsc_fl, int, 0444);
++MODULE_PARM_DESC(dsc_fl, "DSC first_line_bpg_offset (0 = auto)");
++
+ /* Vendor normal range; 2048..4095 is the high-brightness (HBM) range. */
+ #define XIAOMI_L12_MAX_BRIGHTNESS	2047
+ 
++struct xiaomi_l12;
++struct xiaomi_l12_mode;
++
++struct xiaomi_l12_desc {
++	const char *name;
++	int (*on)(struct xiaomi_l12 *ctx);
++	int (*set_rate)(struct xiaomi_l12 *ctx, const struct xiaomi_l12_mode *m);
++	const struct xiaomi_l12_mode *modes;
++	unsigned int num_modes;
++	unsigned int reset_last_ms;
++	int rc_table;		/* default dsc_rc */
++	u8 first_line_bpg_offset;
++};
++
+ struct xiaomi_l12 {
+ 	struct drm_panel panel;
++	const struct xiaomi_l12_desc *desc;
+ 	struct mipi_dsi_device *dsi;
+ 	struct drm_dsc_config dsc;
+ 	struct drm_connector *connector;
+@@ -47,7 +86,10 @@
+ 	return container_of_const(panel, struct xiaomi_l12, panel);
+ }
+ 
+-/* Vendor qcom,mdss-dsi-reset-sequence: high 11 ms, low 1 ms, high 20 ms */
++/*
++ * Vendor qcom,mdss-dsi-reset-sequence: high 11 ms, low 1 ms, then high for
++ * 20 ms (36 02 0b) or 11 ms (42 02 0a)
++ */
+ static void xiaomi_l12_reset(struct xiaomi_l12 *ctx)
+ {
+ 	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
+@@ -55,7 +97,7 @@
+ 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
+ 	usleep_range(1000, 2000);
+ 	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
+-	msleep(20);
++	msleep(ctx->desc->reset_last_ms);
+ }
+ 
+ /* Vendor dsi_panel_pwr_supply_L12: vddio, vddd, vci with these delays */
+@@ -98,7 +140,7 @@
+ 	usleep_range(10000, 11000);
+ }
+ 
+-static int xiaomi_l12_on(struct xiaomi_l12 *ctx)
++static int xiaomi_l12_36_on(struct xiaomi_l12 *ctx)
+ {
+ 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
+ 
+@@ -301,11 +343,98 @@
+ 	return dsi_ctx.accum_err;
+ }
+ 
++/* Vendor qcom,mdss-dsi-on-command of qcom,mdss_dsi_l12_42_02_0a_dsc_cmd (60 Hz) */
++static int xiaomi_l12_42_on(struct xiaomi_l12 *ctx)
++{
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
++
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x55, 0xaa, 0x52, 0x08, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x06);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb5, 0x2c);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x0c);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb5, 0x2c);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x55, 0xaa, 0x52, 0x08, 0x03);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0,
++				     0x0f, 0x00, 0x00, 0x0f, 0x00, 0x02, 0x0f,
++				     0x00, 0x00, 0x0f, 0x00, 0x00, 0x0f, 0x00,
++				     0x00, 0x0f, 0x00, 0x00, 0x0f, 0x00, 0x00,
++				     0x0f, 0x00, 0x00, 0x0f, 0x00, 0x00, 0x0f,
++				     0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x55, 0xaa, 0x52, 0x08, 0x05);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xd0, 0x00, 0x07, 0x10);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xe0, 0x00, 0x0a, 0x9e, 0x02);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x55, 0xaa, 0x52, 0x08, 0x06);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb1, 0x32, 0x31, 0x0f, 0x32, 0x31);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb3, 0x0e);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb7, 0x32, 0x31, 0x0f, 0x32, 0x31);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb9, 0x0e);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xff, 0xaa, 0x55, 0xa5, 0x80);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x1d);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf2, 0x05);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x55, 0xaa, 0x52, 0x08, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x1c);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xc0, 0x03, 0x12, 0x11);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x55, 0xaa, 0x52, 0x08, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x03, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x3b, 0x00, 0x14, 0x00, 0x14);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x90, 0x11);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x91,
++				     0xab, 0x28, 0x00, 0x0c, 0xc2, 0x00, 0x02,
++				     0x32, 0x01, 0x31, 0x00, 0x08, 0x08, 0xbb,
++				     0x07, 0x7b, 0x10, 0xf0);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_WRITE_MEMORY_START, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_SET_DISPLAY_BRIGHTNESS,
++				     0x00, 0x00, 0x0f, 0xfe);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_WRITE_CONTROL_DISPLAY,
++				     0x20);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_SET_TEAR_ON, 0x00);
++	mipi_dsi_dcs_set_column_address_multi(&dsi_ctx, 0x0000, 0x04c3);
++	mipi_dsi_dcs_set_page_address_multi(&dsi_ctx, 0x0000, 0x0a97);
++	/* 60 Hz (vendor timing@0 switch command) */
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2f, 0x02);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x5f, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x55, 0xaa, 0x52, 0x08, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x09);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xc0, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x55, 0xaa, 0x52, 0x08, 0x02);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xcc, 0x30);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xce, 0x01);
++	mipi_dsi_msleep(&dsi_ctx, 20);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xcc, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x55, 0xaa, 0x52, 0x08, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xc3,
++				     0x9b, 0x01, 0x94, 0xd0, 0x22, 0x02, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x55, 0xaa, 0x52, 0x08, 0x07);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xc0, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x55, 0xaa, 0x52, 0x08, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x05);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xbe, 0x88);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x55, 0xaa, 0x52, 0x08, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x02);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xc1, 0xd8);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xff, 0xaa, 0x55, 0xa5, 0x80);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x61);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf3, 0x80);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x55, 0xaa, 0x52, 0x08, 0x04);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x0d);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xca, 0x05);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x55, 0xaa, 0x52, 0x08, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb2, 0x98);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6f, 0x02);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb2, 0x0a, 0x0a);
++	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 120);
++	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
++
++	return dsi_ctx.accum_err;
++}
++
+ static int xiaomi_l12_off(struct xiaomi_l12 *ctx)
+ {
+ 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
+ 
+ 	mipi_dsi_dcs_set_display_off_multi(&dsi_ctx);
++	mipi_dsi_msleep(&dsi_ctx, 20);
+ 	mipi_dsi_dcs_enter_sleep_mode_multi(&dsi_ctx);
+ 	mipi_dsi_msleep(&dsi_ctx, 100);
+ 
+@@ -320,11 +449,13 @@
+  * the DSC-compressed width (1220 * 8 / 30 = 326 pixels per line), so the
+  * front porch of each mode is sized to land at that rate.
+  */
++/* both panels: vfp + vsync + vbp = 44 lines (24/4/16 and 20/4/20) */
+ #define XIAOMI_L12_VTOTAL	(2712 + 24 + 4 + 16)
+ #define XIAOMI_L12_PCLK		146666667	/* 1.1 Gbit/s * 4 lanes / 30 bpp */
+ #define XIAOMI_L12_HFP(fps)	(XIAOMI_L12_PCLK / (XIAOMI_L12_VTOTAL * (fps)) - \
+ 				 326 - 16 - 86)
+-#define XIAOMI_L12_MODE(fps, preferred) {					\
++#define XIAOMI_L12_MODE(fps, preferred) XIAOMI_L12_MODE_V(fps, preferred, 24)
++#define XIAOMI_L12_MODE_V(fps, preferred, vfp) {				\
+ 	.clock = (1220 + XIAOMI_L12_HFP(fps) + 16 + 86) *			\
+ 		 XIAOMI_L12_VTOTAL * (fps) / 1000,				\
+ 	.hdisplay = 1220,							\
+@@ -332,8 +463,8 @@
+ 	.hsync_end = 1220 + XIAOMI_L12_HFP(fps) + 16,				\
+ 	.htotal = 1220 + XIAOMI_L12_HFP(fps) + 16 + 86,				\
+ 	.vdisplay = 2712,							\
+-	.vsync_start = 2712 + 24,						\
+-	.vsync_end = 2712 + 24 + 4,						\
++	.vsync_start = 2712 + (vfp),						\
++	.vsync_end = 2712 + (vfp) + 4,						\
+ 	.vtotal = XIAOMI_L12_VTOTAL,						\
+ 	.width_mm = 70,								\
+ 	.height_mm = 155,							\
+@@ -348,9 +479,14 @@
+ 	u8 e2_12[3];		/* 0xe2 at offset 0x12 */
+ 	u8 ea_0[9];		/* 0xea */
+ 	u8 ea_17[4];		/* 0xea at offset 0x17 */
++	/* 42 02 0a */
++	u8 rate42;		/* 0x2f */
++	u8 c0_offset;		/* 0x6f before 0xc0 */
++	u8 c0;			/* 0xc0 */
++	unsigned int ce_wait_ms;
+ };
+ 
+-static const struct xiaomi_l12_mode xiaomi_l12_modes[] = {
++static const struct xiaomi_l12_mode xiaomi_l12_36_modes[] = {
+ 	{
+ 		.mode = XIAOMI_L12_MODE(60, DRM_MODE_TYPE_PREFERRED),
+ 		.rate = { 0x2f, 0x00 },
+@@ -375,26 +511,42 @@
+ 	},
+ };
+ 
++/* Vendor timing@0 (60 Hz), timing@2 (90 Hz), timing@1 (120 Hz) */
++static const struct xiaomi_l12_mode xiaomi_l12_42_modes[] = {
++	{
++		.mode = XIAOMI_L12_MODE_V(60, DRM_MODE_TYPE_PREFERRED, 20),
++		.rate42 = 0x02, .c0_offset = 0x09, .c0 = 0x00, .ce_wait_ms = 20,
++	}, {
++		.mode = XIAOMI_L12_MODE_V(90, 0, 20),
++		.rate42 = 0x04, .c0_offset = 0x0b, .c0 = 0x20, .ce_wait_ms = 13,
++	}, {
++		.mode = XIAOMI_L12_MODE_V(120, 0, 20),
++		.rate42 = 0x03, .c0_offset = 0x0a, .c0 = 0x20, .ce_wait_ms = 10,
++	},
++};
++
+ static const struct xiaomi_l12_mode *xiaomi_l12_current_mode(struct xiaomi_l12 *ctx)
+ {
+ 	struct drm_connector *connector = ctx->connector;
+ 	struct drm_crtc_state *crtc_state;
+ 	int i;
+ 
++	const struct xiaomi_l12_mode *modes = ctx->desc->modes;
++
+ 	if (!connector || !connector->state || !connector->state->crtc)
+-		return &xiaomi_l12_modes[0];
++		return &modes[0];
+ 
+ 	crtc_state = connector->state->crtc->state;
+-	for (i = 0; i < ARRAY_SIZE(xiaomi_l12_modes); i++)
+-		if (drm_mode_match(&crtc_state->mode, &xiaomi_l12_modes[i].mode,
++	for (i = 0; i < ctx->desc->num_modes; i++)
++		if (drm_mode_match(&crtc_state->mode, &modes[i].mode,
+ 				   DRM_MODE_MATCH_TIMINGS | DRM_MODE_MATCH_CLOCK))
+-			return &xiaomi_l12_modes[i];
++			return &modes[i];
+ 
+-	return &xiaomi_l12_modes[0];
++	return &modes[0];
+ }
+ 
+-static int xiaomi_l12_set_rate(struct xiaomi_l12 *ctx,
+-			       const struct xiaomi_l12_mode *m)
++static int xiaomi_l12_36_set_rate(struct xiaomi_l12 *ctx,
++				  const struct xiaomi_l12_mode *m)
+ {
+ 	struct mipi_dsi_multi_context dsi_ctx_ = { .dsi = ctx->dsi };
+ 	struct mipi_dsi_multi_context *dsi_ctx = &dsi_ctx_;
+@@ -414,6 +566,29 @@
+ 	return dsi_ctx->accum_err;
+ }
+ 
++/* Vendor qcom,mdss-dsi-timing-switch-command of the 42 02 0a */
++static int xiaomi_l12_42_set_rate(struct xiaomi_l12 *ctx,
++				  const struct xiaomi_l12_mode *m)
++{
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
++	const u8 rate[] = { 0x2f, m->rate42 };
++	const u8 offset[] = { 0x6f, m->c0_offset };
++	const u8 c0[] = { 0xc0, m->c0 };
++
++	mipi_dsi_dcs_write_buffer_multi(&dsi_ctx, rate, sizeof(rate));
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x55, 0xaa, 0x52, 0x08, 0x00);
++	mipi_dsi_dcs_write_buffer_multi(&dsi_ctx, offset, sizeof(offset));
++	mipi_dsi_dcs_write_buffer_multi(&dsi_ctx, c0, sizeof(c0));
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x55, 0xaa, 0x52, 0x08, 0x02);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xcc, 0x30);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xce, 0x01);
++	mipi_dsi_msleep(&dsi_ctx, m->ce_wait_ms);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xcc, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x55, 0xaa, 0x52, 0x08, 0x00);
++
++	return dsi_ctx.accum_err;
++}
++
+ static int xiaomi_l12_prepare(struct drm_panel *panel)
+ {
+ 	struct xiaomi_l12 *ctx = to_xiaomi_l12(panel);
+@@ -430,7 +605,7 @@
+ 
+ 	xiaomi_l12_reset(ctx);
+ 
+-	ret = xiaomi_l12_on(ctx);
++	ret = ctx->desc->on(ctx);
+ 	if (ret < 0) {
+ 		dev_err(dev, "failed to initialize panel: %d\n", ret);
+ 		goto err_off;
+@@ -452,8 +627,8 @@
+ 
+ 	/* on() sets up 60 Hz; switch like the vendor driver does at runtime */
+ 	mode = xiaomi_l12_current_mode(ctx);
+-	if (mode != &xiaomi_l12_modes[0]) {
+-		ret = xiaomi_l12_set_rate(ctx, mode);
++	if (mode != &ctx->desc->modes[0]) {
++		ret = ctx->desc->set_rate(ctx, mode);
+ 		if (ret < 0) {
+ 			dev_err(dev, "failed to set refresh rate: %d\n", ret);
+ 			goto err_off;
+@@ -496,18 +671,18 @@
+ 
+ 	ctx->connector = connector;
+ 
+-	for (i = 0; i < ARRAY_SIZE(xiaomi_l12_modes); i++) {
+-		mode = drm_mode_duplicate(connector->dev, &xiaomi_l12_modes[i].mode);
++	for (i = 0; i < ctx->desc->num_modes; i++) {
++		mode = drm_mode_duplicate(connector->dev, &ctx->desc->modes[i].mode);
+ 		if (!mode)
+ 			return -ENOMEM;
+ 		drm_mode_set_name(mode);
+ 		drm_mode_probed_add(connector, mode);
+ 	}
+ 
+-	connector->display_info.width_mm = xiaomi_l12_modes[0].mode.width_mm;
+-	connector->display_info.height_mm = xiaomi_l12_modes[0].mode.height_mm;
++	connector->display_info.width_mm = ctx->desc->modes[0].mode.width_mm;
++	connector->display_info.height_mm = ctx->desc->modes[0].mode.height_mm;
+ 
+-	return ARRAY_SIZE(xiaomi_l12_modes);
++	return ctx->desc->num_modes;
+ }
+ 
+ static const struct drm_panel_funcs xiaomi_l12_panel_funcs = {
+@@ -555,19 +730,39 @@
+  * vendor 0x91 command is derived from the same values. The host encoder has
+  * to use them as well.
+  */
+-static void xiaomi_l12_set_rc_params(struct drm_dsc_config *dsc)
++static void xiaomi_l12_set_rc_params(struct drm_dsc_config *dsc, int table,
++				     u8 first_line_bpg_offset)
+ {
+-	static const u8 min_qp[DSC_NUM_BUF_RANGES] = {
++	/* Novatek-tuned (vendor "nvt") */
++	static const u8 nvt_min_qp[DSC_NUM_BUF_RANGES] = {
+ 		0, 4, 5, 5, 7, 7, 7, 7, 7, 8, 9, 9, 9, 12, 16
+ 	};
+-	static const u8 max_qp[DSC_NUM_BUF_RANGES] = {
++	static const u8 nvt_max_qp[DSC_NUM_BUF_RANGES] = {
+ 		8, 8, 9, 10, 11, 11, 11, 12, 13, 14, 14, 15, 15, 16, 17
+ 	};
+-	static const s8 bpg_offset[DSC_NUM_BUF_RANGES] = {
++	static const s8 nvt_bpg[DSC_NUM_BUF_RANGES] = {
+ 		2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -10, -12, -12, -12
+ 	};
++	/* Qualcomm sde_dsc_helper.c, DSC v1.1 SCR, 10 bpc / 8 bpp */
++	static const u8 scr_min_qp[DSC_NUM_BUF_RANGES] = {
++		0, 4, 5, 5, 7, 7, 7, 7, 7, 7, 9, 9, 9, 13, 16
++	};
++	static const u8 scr_max_qp[DSC_NUM_BUF_RANGES] = {
++		8, 8, 9, 10, 11, 11, 11, 12, 13, 14, 14, 15, 15, 16, 17
++	};
++	static const s8 scr_bpg[DSC_NUM_BUF_RANGES] = {
++		2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -12, -12, -12, -12
++	};
++	const u8 *min_qp, *max_qp;
++	const s8 *bpg_offset;
+ 	int i;
+ 
++	if (table == 1) {
++		min_qp = nvt_min_qp; max_qp = nvt_max_qp; bpg_offset = nvt_bpg;
++	} else {
++		min_qp = scr_min_qp; max_qp = scr_max_qp; bpg_offset = scr_bpg;
++	}
++
+ 	for (i = 0; i < DSC_NUM_BUF_RANGES; i++) {
+ 		dsc->rc_range_params[i].range_min_qp = min_qp[i];
+ 		dsc->rc_range_params[i].range_max_qp = max_qp[i];
+@@ -575,7 +770,7 @@
+ 		dsc->rc_range_params[i].range_bpg_offset =
+ 			bpg_offset[i] & DSC_RANGE_BPG_OFFSET_MASK;
+ 	}
+-	dsc->first_line_bpg_offset = 13;
++	dsc->first_line_bpg_offset = first_line_bpg_offset;
+ 	dsc->initial_offset = 6144;
+ 	dsc->initial_xmit_delay = 512;
+ 	dsc->flatness_min_qp = 7;
+@@ -584,6 +779,55 @@
+ 	dsc->rc_quant_incr_limit1 = 15;
+ }
+ 
++static const struct xiaomi_l12_desc xiaomi_l12_36_02_0b_desc = {
++	.name = "36 02 0b",
++	.on = xiaomi_l12_36_on,
++	.set_rate = xiaomi_l12_36_set_rate,
++	.modes = xiaomi_l12_36_modes,
++	.num_modes = ARRAY_SIZE(xiaomi_l12_36_modes),
++	.reset_last_ms = 20,
++	.rc_table = 1,
++	.first_line_bpg_offset = 13,
++};
++
++static const struct xiaomi_l12_desc xiaomi_l12_42_02_0a_desc = {
++	.name = "42 02 0a",
++	.on = xiaomi_l12_42_on,
++	.set_rate = xiaomi_l12_42_set_rate,
++	.modes = xiaomi_l12_42_modes,
++	.num_modes = ARRAY_SIZE(xiaomi_l12_42_modes),
++	.reset_last_ms = 11,
++	/*
++	 * Vendor 0x91 command: first_line_bpg_offset 12. The standard DSC 1.1
++	 * table (msm default) gives corrupted output on this DDIC; it is
++	 * Novatek-based like the 36 02 0b.
++	 */
++	.rc_table = 1,
++	.first_line_bpg_offset = 12,
++};
++
++/* The bootloader passes msm_drm.dsi_display0=qcom,mdss_dsi_<panel>... */
++static const struct xiaomi_l12_desc *xiaomi_l12_detect(struct device *dev,
++						      const struct xiaomi_l12_desc *dt)
++{
++	struct device_node *chosen;
++	const char *bootargs = NULL;
++	const struct xiaomi_l12_desc *desc = dt;
++
++	chosen = of_find_node_by_path("/chosen");
++	if (chosen) {
++		of_property_read_string(chosen, "bootargs", &bootargs);
++		if (bootargs && strstr(bootargs, "mdss_dsi_l12_42_02_0a"))
++			desc = &xiaomi_l12_42_02_0a_desc;
++		else if (bootargs && strstr(bootargs, "mdss_dsi_l12_36_02_0b"))
++			desc = &xiaomi_l12_36_02_0b_desc;
++		of_node_put(chosen);
++	}
++	dev_info(dev, "panel %s%s\n", desc->name,
++		 desc == dt ? "" : " (from the bootloader)");
++	return desc;
++}
++
+ static int xiaomi_l12_probe(struct mipi_dsi_device *dsi)
+ {
+ 	struct device *dev = &dsi->dev;
+@@ -611,6 +855,8 @@
+ 		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
+ 				     "failed to get reset-gpios\n");
+ 
++	ctx->desc = xiaomi_l12_detect(dev, device_get_match_data(dev));
++
+ 	ctx->dsi = dsi;
+ 	mipi_dsi_set_drvdata(dsi, ctx);
+ 
+@@ -640,13 +886,23 @@
+ 	ctx->dsc.bits_per_component = 10;
+ 	ctx->dsc.bits_per_pixel = 8 << 4; /* 4 fractional bits */
+ 	ctx->dsc.block_pred_enable = true;
+-	xiaomi_l12_set_rc_params(&ctx->dsc);
++	{
++		int table = dsc_rc >= 0 ? dsc_rc : ctx->desc->rc_table;
++		u8 fl = dsc_fl > 0 ? dsc_fl : ctx->desc->first_line_bpg_offset;
++
++		/* table 0: leave rc_range_params empty, msm uses DSC 1.1 */
++		if (table > 0)
++			xiaomi_l12_set_rc_params(&ctx->dsc, table, fl);
++		dev_info(dev, "DSC rate control: table %d, first_line_bpg_offset %u\n",
++			 table, table > 0 ? fl : 12);
++	}
+ 
+ 	return devm_mipi_dsi_attach(dev, dsi);
+ }
+ 
+ static const struct of_device_id xiaomi_l12_of_match[] = {
+-	{ .compatible = "xiaomi,l12-36-02-0b" },
++	{ .compatible = "xiaomi,l12-36-02-0b", .data = &xiaomi_l12_36_02_0b_desc },
++	{ .compatible = "xiaomi,l12-42-02-0a", .data = &xiaomi_l12_42_02_0a_desc },
+ 	{ }
+ };
+ MODULE_DEVICE_TABLE(of, xiaomi_l12_of_match);
+@@ -660,5 +916,5 @@
+ };
+ module_mipi_dsi_driver(xiaomi_l12_driver);
+ 
+-MODULE_DESCRIPTION("DRM driver for the Xiaomi 12T Pro 36 02 0b DSC command mode panel");
++MODULE_DESCRIPTION("DRM driver for the Xiaomi 12T Pro 36 02 0b / 42 02 0a DSC command mode panels");
+ MODULE_LICENSE("GPL");

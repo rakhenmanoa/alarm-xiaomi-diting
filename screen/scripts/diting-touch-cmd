@@ -1,0 +1,341 @@
+#!/usr/bin/python3 -I
+"""Envoie une commande au contrôleur tactile Goodix GT9916 (pilote mainline
+goodix_berlin) par son fichier sysfs « registers », comme le pilote Xiaomi
+goodix_9916 (MiCode, bsp-diting-s-oss, goodix_brl_hw.c).
+
+  diting-touch-cmd info                  adresses lues dans IC_INFO
+  diting-touch-cmd mode EDGE [ORIENT] [CLÉ=VAL ...]   commande 0x18 (normal)
+  diting-touch-cmd game EDGE [ORIENT] [CLÉ=VAL ...]   commande 0x17 (jeu)
+        EDGE   = filtre de bord 0..3 (Android : 2)
+        ORIENT = 0 portrait, 1 = 90°, 2 = 270° (défaut 0)
+        réglages du pilote Xiaomi, 0..4, 0 par défaut comme Android :
+        seuil=N (Touch_UP_THRESHOLD, sensibilité au toucher)
+        tolerance=N (Touch_Tolerance, « latency » dans le pilote)
+        visee=N (Touch_Aim_Sensitivity) stabilite=N (Touch_Tap_Stability)
+  diting-touch-cmd rate 480|240          fréquence de rapport (commande 0xC0)
+  diting-touch-cmd palm on|off           détection de paume (commande 0x70)
+  diting-touch-cmd charger on|off        mode chargeur, anti-bruit (0xAF)
+  diting-touch-cmd raw CMD [D0 ...]      commande brute (valeurs hexa)
+  diting-touch-cmd config-read FICHIER   sauvegarde la configuration du contrôleur
+  diting-touch-cmd config-write FICHIER [--oui]
+        envoie une configuration, comme Android au démarrage : FICHIER est
+        un goodix_cfg_group_*.bin de /vendor/firmware ou une sauvegarde de
+        config-read. Refusé si le firmware visé (fw_pid/fw_vid) n'est pas
+        celui du contrôleur. Sans --oui, vérifie seulement.
+        Pour restaurer, préférer la sauvegarde de config-read : sur le
+        diting, le firmware a ajusté un tableau de 39 octets (dalle FPC2L,
+        même config_id) ; le fichier d'Android remettrait les valeurs
+        génériques.
+  diting-touch-cmd config-patch ENTRÉE SORTIE POS=OCTETS ...
+        copie une configuration en changeant des octets (POS décimal depuis
+        le début de la configuration, OCTETS en hexa, ex. 1316=0002) et
+        recalcule les sommes de contrôle ; n'écrit rien dans le contrôleur.
+  diting-touch-cmd config-dump FICHIER   modules de paramètres (longueur, id)
+  diting-touch-cmd grip [on|off]         retenue des touchers des coins du bas
+        jusqu'au relâchement (module 0x64 de la configuration) ; sans
+        argument, affiche l'état. Perdu à la mise sous tension du contrôleur.
+
+Trame (struct goodix_ts_cmd) : state, ack, len = 4 + nombre de données, cmd,
+données, puis la somme des octets 2..len-1 sur 16 bits LE ; écrite à
+cmd_addr, puis l'octet ack doit passer à 0x80. Mode normal : data0 = orientation << 6 ;
+data1 = filtre de bord << 6 (sensibilités à 0 comme Android par défaut).
+"""
+import glob
+import os
+import struct
+import sys
+import time
+
+IC_INFO_ADDR = 0x10070          # GOODIX_BERLIN_IC_INFO_ADDR_D (GT9916)
+FW_VERSION_ADDR = 0x10014       # GOODIX_BERLIN_FW_VERSION_INFO_ADDR_D
+CMD_GAME = 0x17
+CMD_NORMAL = 0x18
+CMD_RATE = 0xC0
+CMD_PALM = 0x70
+CMD_CHARGER = 0xAF
+# goodix_brl_hw.c : CONFIG_CMD_*
+CFG_START, CFG_WRITE, CFG_EXIT, CFG_READ_START, CFG_READ_EXIT = 0x04, 0x05, 0x06, 0x07, 0x08
+CFG_HEAD_LEN = 64               # struct goodix_config_head
+ACK_OK = 0x80
+
+
+def regs():
+    p = glob.glob("/sys/bus/spi/drivers/goodix-berlin-spi/*/registers")
+    if not p:
+        sys.exit("fichier registers du goodix-berlin-spi introuvable")
+    return os.open(p[0], os.O_RDWR)
+
+
+def ic_info(fd):
+    length = struct.unpack("<H", os.pread(fd, 2, IC_INFO_ADDR))[0]
+    if not 64 <= length < 1024:
+        sys.exit(f"longueur IC_INFO invalide : {length}")
+    d = os.pread(fd, length, IC_INFO_ADDR)
+    if sum(d[:-2]) & 0xFFFF != struct.unpack("<H", d[-2:])[0]:
+        sys.exit("somme de contrôle IC_INFO invalide")
+    # comme goodix_berlin_parse_ic_info() : longueur, version (16 octets),
+    # features (10), 4 compteurs, puis 5 tableaux de le16 de taille variable
+    off = 2 + 16 + 10 + 4
+    for _ in range(5):
+        off += 1 + 2 * d[off]
+    cmd_addr = struct.unpack_from("<I", d, off)[0]
+    touch_addr = struct.unpack_from("<I", d, off + 44)[0]
+    # struct goodix_berlin_ic_info_version, juste après la longueur
+    ic_info.config = struct.unpack_from("<IB", d, 2 + 4)
+    # misc : fw_buffer_addr et fw_buffer_max_len
+    ic_info.fw_buffer = struct.unpack_from("<IH", d, off + 18)
+    return cmd_addr, touch_addr
+
+
+def send(fd, cmd_addr, cmd, data):
+    n = 4 + len(data)
+    buf = bytearray(16)
+    buf[2], buf[3] = n, cmd
+    buf[4:4 + len(data)] = bytes(data)
+    struct.pack_into("<H", buf, n, sum(buf[2:n]) & 0xFFFF)
+    for _ in range(6):
+        os.pwrite(fd, bytes(buf), cmd_addr)
+        for _ in range(6):
+            ack = os.pread(fd, 16, cmd_addr)[1]
+            if ack == ACK_OK:
+                return True
+            time.sleep(0.002 if ack in (0x00, 0x02) else 0.011)
+    return False
+
+
+def wait_state(fd, cmd_addr):
+    """wait_cmd_status() : l'octet state doit passer à 0x80"""
+    for _ in range(20):
+        if os.pread(fd, 16, cmd_addr)[0] == 0x80:
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def cfg_cmd(fd, cmd_addr, cmd):
+    if not (send(fd, cmd_addr, cmd, []) and wait_state(fd, cmd_addr)):
+        sys.exit(f"le contrôleur ne répond pas à la commande de configuration 0x{cmd:02x}")
+
+
+def cfg_check(cfg):
+    """somme de l'entête (u8) et du corps (u16 → u32), comme checksum_cmp()"""
+    head, body = cfg[:CFG_HEAD_LEN], cfg[CFG_HEAD_LEN:]
+    ln = struct.unpack_from("<H", head, 59)[0]
+    if sum(head[:-2]) & 0xFFFF != struct.unpack_from("<H", head, 62)[0]:
+        return "somme de l'entête fausse"
+    if len(body) != ln:
+        return f"longueur {len(body)} au lieu de {ln}"
+    w = sum(struct.unpack_from(f"<{(ln - 4) // 2}H", body, 0))
+    if w != struct.unpack_from("<I", body, ln - 4)[0]:
+        return "somme du corps fausse"
+    return None
+
+
+def cfg_from_file(path, sensor_id):
+    d = open(path, "rb").read()
+    if d[:4] != struct.pack("<I", len(d)):     # sauvegarde de config-read
+        return d
+    if sum(d[5:]) & 0xFF != d[4]:              # goodix_parse_cfg_bin()
+        sys.exit("fichier de groupe : somme de contrôle fausse")
+    n = d[9]
+    offs = [struct.unpack_from("<H", d, 16 + 2 * i)[0] for i in range(n)]
+    for i, o in enumerate(offs):
+        end = offs[i + 1] if i + 1 < n else len(d)
+        if d[o + 20] in (sensor_id, 0xFF) and d[o + 19] == 1:   # TS_NORMAL_CFG
+            return d[o + 56 + 65:end]          # const_info + reg_info
+    sys.exit(f"aucune configuration normale pour le sensor_id {sensor_id}")
+
+
+def describe(cfg):
+    h = cfg[:CFG_HEAD_LEN]
+    name = lambda b: b.split(b"\0")[0].decode(errors="replace")
+    cid, cver = struct.unpack_from("<IB", h, 30)
+    return (f"dalle {name(h[0:8])} firmware {name(h[8:16])} {h[16:20].hex()} "
+            f"projet {name(h[20:28])} config_id 0x{cid:08x} version {cver} "
+            f"{len(cfg)} octets")
+
+
+def cfg_fix(cfg):
+    """recalcule la somme du corps (u32 des mots u16), l'entête ne change pas"""
+    cfg = bytearray(cfg)
+    ln = struct.unpack_from("<H", cfg, 59)[0]
+    body = cfg[CFG_HEAD_LEN:]
+    w = sum(struct.unpack_from(f"<{(ln - 4) // 2}H", body, 0))
+    struct.pack_into("<I", cfg, CFG_HEAD_LEN + ln - 4, w & 0xFFFFFFFF)
+    return bytes(cfg)
+
+
+def cfg_modules(cfg):
+    """après la partie fixe, des modules « longueur, id, données » (id 0x51..)"""
+    i = cfg.find(bytes([0x0E, 0x51]), CFG_HEAD_LEN)
+    out = []
+    while 0 <= i < len(cfg) - 4 and cfg[i] >= 2 and 0x50 <= cfg[i + 1] <= 0x7F:
+        out.append((i, cfg[i + 1], cfg[i + 2:i + cfg[i]]))
+        i += cfg[i]
+    return out
+
+
+def offline(a):
+    if a[0] == "config-dump":
+        cfg = cfg_from_file(a[1], 255)
+        print(describe(cfg))
+        for pos, mid, data in cfg_modules(cfg):
+            words = " ".join(str(struct.unpack_from("<H", data, k)[0])
+                             for k in range(0, len(data) - 1, 2))
+            print(f"{pos:5d} module 0x{mid:02x} ({len(data)} o) : {data.hex(' ')}\n"
+                  f"      en u16 : {words}")
+        return True
+    if a[0] == "config-patch":
+        cfg = bytearray(cfg_from_file(a[1], 255))
+        if cfg_check(bytes(cfg)):
+            sys.exit("configuration d'entrée invalide")
+        for spec in a[3:]:
+            pos, val = spec.split("=")
+            pos, val = int(pos), bytes.fromhex(val)
+            if pos < CFG_HEAD_LEN or pos + len(val) > len(cfg) - 4:
+                sys.exit(f"position {pos} hors du corps de la configuration")
+            print(f"{pos} : {cfg[pos:pos + len(val)].hex()} → {val.hex()}")
+            cfg[pos:pos + len(val)] = val
+        cfg = cfg_fix(cfg)
+        err = cfg_check(cfg)
+        if err:
+            sys.exit(f"échec : {err}")
+        open(a[2], "wb").write(cfg)
+        print(f"écrit dans {a[2]} (rien envoyé au contrôleur)")
+        return True
+    return False
+
+
+def read_config(fd, cmd_addr):
+    """brl_read_config()"""
+    addr, maxlen = ic_info.fw_buffer
+    cfg_cmd(fd, cmd_addr, CFG_READ_START)
+    try:
+        head = os.pread(fd, CFG_HEAD_LEN, addr)
+        ln = struct.unpack_from("<H", head, 59)[0]
+        if ln > maxlen:
+            sys.exit(f"longueur annoncée {ln} > {maxlen}")
+        cfg = head + os.pread(fd, ln, addr + CFG_HEAD_LEN)
+    finally:
+        cfg_cmd(fd, cmd_addr, CFG_READ_EXIT)
+    err = cfg_check(cfg)
+    if err:
+        sys.exit(f"configuration lue invalide : {err}")
+    return cfg
+
+
+def write_config(fd, cmd_addr, cfg):
+    """brl_send_config()"""
+    addr, _ = ic_info.fw_buffer
+    cfg_cmd(fd, cmd_addr, CFG_START)
+    ok = False
+    try:
+        os.pwrite(fd, cfg, addr)
+        if os.pread(fd, len(cfg), addr) != cfg:
+            sys.exit("relecture différente : configuration NON appliquée")
+        cfg_cmd(fd, cmd_addr, CFG_WRITE)
+        ok = True
+    finally:
+        cfg_cmd(fd, cmd_addr, CFG_EXIT)
+    time.sleep(0.1)
+    return ok
+
+
+def main():
+    a = sys.argv[1:]
+    if not a:
+        sys.exit(__doc__)
+    if offline(a):
+        return
+    fd = regs()
+    cmd_addr, touch_addr = ic_info(fd)
+    if a[0] == "info":
+        print(f"cmd_addr 0x{cmd_addr:x}  touch_data_addr 0x{touch_addr:x}")
+        v = os.pread(fd, 28, FW_VERSION_ADDR)
+        cid, cver = ic_info.config
+        print(f"firmware {v[10:18].decode(errors='replace').strip(chr(0))} "
+              f"{v[18:22].hex()}  sensor_id {v[23]}  config_id 0x{cid:08x}  config_version {cver}")
+        return
+    if a[0] in ("config-read", "config-write"):
+        addr, maxlen = ic_info.fw_buffer
+        v = os.pread(fd, 28, FW_VERSION_ADDR)
+        if a[0] == "config-read":
+            cfg = read_config(fd, cmd_addr)
+            open(a[1], "wb").write(cfg)
+            print(f"enregistrée dans {a[1]} : {describe(cfg)}")
+            return
+        cfg = cfg_from_file(a[1], v[23])
+        err = cfg_check(cfg)
+        if err:
+            sys.exit(f"configuration du fichier invalide : {err}")
+        print(f"fichier    : {describe(cfg)}")
+        print(f"contrôleur : firmware {v[10:18].split(bytes(1))[0].decode()} {v[18:22].hex()} "
+              f"config_id 0x{ic_info.config[0]:08x} version {ic_info.config[1]}")
+        if cfg[8:12] != v[10:14] or cfg[16:20] != v[18:22]:
+            sys.exit("REFUSÉ : cette configuration vise un autre firmware (autre dalle)")
+        if len(cfg) > maxlen:
+            sys.exit(f"REFUSÉ : {len(cfg)} octets > tampon de {maxlen}")
+        if "--oui" not in a:
+            print("vérification seulement ; ajouter --oui pour écrire")
+            return
+        ok = write_config(fd, cmd_addr, cfg)
+        cmd_addr, _ = ic_info(fd)
+        print(f"configuration envoyée ; config_id du contrôleur maintenant "
+              f"0x{ic_info.config[0]:08x}" if ok else "échec")
+        return
+    if a[0] == "grip":
+        # module 0x64, premier octet : retenue des touchers dans les coins
+        # du bas jusqu'au relâchement (trouvé par essais le 2026-10-27).
+        # Pas conservé à la mise sous tension : à réappliquer.
+        want = {"on": 1, "off": 0}.get(a[1] if len(a) > 1 else "")
+        cfg = bytearray(read_config(fd, cmd_addr))
+        mods = {mid: pos for pos, mid, _ in cfg_modules(bytes(cfg))}
+        if 0x64 not in mods or cfg[mods[0x64] + 2] not in (0, 1):
+            sys.exit("module 0x64 introuvable ou inattendu : rien changé")
+        cur = cfg[mods[0x64] + 2]
+        if want is None:
+            print(f"retenue des coins : {'on' if cur else 'off'}")
+            return
+        if cur == want:
+            print(f"retenue des coins déjà {a[1]}")
+            return
+        cfg[mods[0x64] + 2] = want
+        cfg = cfg_fix(cfg)
+        err = cfg_check(cfg)
+        if err:
+            sys.exit(f"échec : {err}")
+        ok = write_config(fd, cmd_addr, cfg)
+        print(f"retenue des coins : {a[1]}" if ok else "échec")
+        sys.exit(0 if ok else 1)
+    if a[0] in ("mode", "game"):
+        pos = [x for x in a[1:] if "=" not in x]
+        kv = dict(x.split("=", 1) for x in a[1:] if "=" in x)
+        edge = int(pos[0])
+        orient = int(pos[1]) if len(pos) > 1 else 0
+        f = {k: int(kv.pop(k, 0)) for k in ("seuil", "tolerance", "visee", "stabilite")}
+        if kv:
+            sys.exit(f"clé inconnue : {', '.join(kv)}")
+        if not (0 <= edge <= 3 and 0 <= orient <= 2 and all(0 <= v <= 4 for v in f.values())):
+            sys.exit("EDGE 0..3, ORIENT 0..2, réglages 0..4")
+        cmd = CMD_NORMAL if a[0] == "mode" else CMD_GAME
+        # goodix_set_game_work() : data0 = orientation<<6 | tolerance<<3 | seuil
+        #                          data1 = bord<<6 | visee<<3 | stabilite
+        data = [orient << 6 | f["tolerance"] << 3 | f["seuil"],
+                edge << 6 | f["visee"] << 3 | f["stabilite"]]
+    elif a[0] == "rate":
+        cmd, data = CMD_RATE, [1 if a[1] == "480" else 0]
+    elif a[0] in ("palm", "charger"):
+        cmd = CMD_PALM if a[0] == "palm" else CMD_CHARGER
+        data = [1 if a[1] == "on" else 0]
+    elif a[0] == "raw":
+        cmd, data = int(a[1], 16), [int(x, 16) for x in a[2:]]
+        if len(data) > 10:
+            sys.exit("10 octets de données au plus")
+    else:
+        sys.exit(__doc__)
+    ok = send(fd, cmd_addr, cmd, data)
+    print(f"commande 0x{cmd:02x} {bytes(data).hex(' ')} : {'acceptée' if ok else 'PAS d’accusé'}")
+    sys.exit(0 if ok else 1)
+
+
+main()

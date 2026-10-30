@@ -1,0 +1,14 @@
+# Fluidité de Plasma Mobile : le GPU (simple_ondemand) et les petits cœurs
+# montent trop tard en fréquence. Minima testés sur le téléphone le
+# 2026-10-26 : GPU 439 MHz, policy0 1056 MHz, policy4 1113,6 MHz,
+# schedutil rate_limit 500 µs. Désactiver : systemctl disable diting-perf.
+[Unit]
+Description=Diting : fréquences minimales CPU et GPU (fluidité)
+After=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'for i in $(seq 30); do [ -e /sys/class/devfreq/3d00000.gpu/min_freq ] && [ -e /sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq ] && break; sleep 1; done; echo 1056000 > /sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq; echo 1113600 > /sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq; for p in /sys/devices/system/cpu/cpufreq/policy*/schedutil/rate_limit_us; do echo 500 > $p; done; echo 439000000 > /sys/class/devfreq/3d00000.gpu/min_freq'
+
+[Install]
+WantedBy=multi-user.target
