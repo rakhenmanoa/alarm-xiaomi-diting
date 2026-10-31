@@ -19,6 +19,7 @@ appels dans l'ADSP, et la configuration UCM et PipeWire.
 | `patches/alarm-diting/` | `0903` : ports et lanes SoundWire séparés pour les deux micros | `pkgbuilds/linux-diting/0903` |
 | `scripts/` | `ucm-diting.py`, hook pacman et script CallAudio de ce dépôt | `pkgbuilds/diting-device/` |
 | `scripts/diting-ubuntu/` | Démons d'appel, protection des haut-parleurs, audio PD, services et règles udev, **tels qu'installés** (avec les `sed` du PKGBUILD de `diting-device`) | `ubuntu-diting/packages/device-xiaomi-diting/` |
+| `scripts/pipewire/` | `60-diting-latence.conf` : latence minimale des clients PulseAudio | `pkgbuilds/diting-device/diting-pulse-latence.conf` |
 | `scripts/ucm/` | Profil UCM : `HiFi.conf` **tel qu'installé** (après `ucm-diting.py`) et l'original `HiFi.conf.diting-ubuntu` | idem |
 | `scripts/topologie/` | Sources m4 de la topologie AudioReach des haut-parleurs (compilées en `XIAOMI-DITING-tplg.bin` par le PKGBUILD de `diting-device`) | `ubuntu-diting/packages/audio-topology/` |
 
@@ -165,6 +166,13 @@ allumés ensemble : l'ADC4 seul bloque la capture (cause non trouvée, testé le
 séparés par micro, sur le même PCM de capture, feraient des profils combinés (« Speaker + micro »). Après une
 modification de `HiFi.conf`, redémarrer PipeWire : il ne relit l'UCM qu'à son démarrage.
 
+### Latence minimale — `scripts/pipewire/60-diting-latence.conf`
+La capture par le DSP ne tient pas de très petits blocs. Le test du micro de Plasma (plasma-pa) demande des
+fragments de 256 octets (environ 2,7 ms) : toute la chaîne passait à 128 échantillons, avec des hachures, puis
+plasma-settings plantait (`abort` dans `pa_stream_unref` : dans `microphonetest.cpp`, le vidage du flux peut être
+lancé deux fois, et le flux libéré deux fois). `pulse.min.req`, `pulse.min.frag` et `pulse.min.quantum` à
+1024/48000 (environ 21 ms) corrigent les deux. Le bug de plasma-pa reste à signaler à KDE.
+
 ### Audio des appels (diting-ubuntu)
 L'audio des appels tourne entièrement dans l'ADSP (modem ↔ VCPM ↔ codecs), comme le PAL d'Android.
 
@@ -308,6 +316,7 @@ Les commandes `fdtput` qui ont servi à mettre au point `0903` sont dans le READ
 | PipeWire n'offre pas le profil HiFi | Profil UCM non corrigé : vérifier que `HiFi.conf` contient `MultiMedia2 Mixer TX_CODEC_DMA_TX_3`. |
 | Bruit blanc au micro | Patch `0903` absent du DTB, ou UCM encore sur `SWR_MIC1`. |
 | Souffle continu à certains démarrages, sans xrun | `0903` ancien (les deux ports sur la lane 1) : vérifier `xxd /proc/device-tree/soc@0/soundwire@33b0000/qcom,ports-lane-control` → `0102 0000`. |
+| Hachures ou plantage de plasma-settings au test du micro | `60-diting-latence.conf` absent de `/usr/share/pipewire/pipewire-pulse.conf.d/` : `pw-top` montre QUANT sous 1024 pendant le test. |
 | Haut-parleur du bas muet | Patch `0086` absent (RX2 sur son propre canal avec le firmware de protection). |
 | Souffle fort, signal faible | Horloge de bit TDM non inversée (patch `0048`). |
 | Pas d'audio en appel | `systemctl status diting-audiopd diting-voice-call` ; topologie d'appel et modules ADSP présents dans `firmware-xiaomi-diting`. |
