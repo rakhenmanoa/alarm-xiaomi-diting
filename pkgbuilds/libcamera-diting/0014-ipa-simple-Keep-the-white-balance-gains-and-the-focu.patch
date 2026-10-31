@@ -1,0 +1,125 @@
+From 6c75c091396f3d4ad1bb29099e1e68d8d2ca75ad Mon Sep 17 00:00:00 2001
+From: alarm <alarm@localhost>
+Date: Sat, 31 Oct 2026 13:21:08 +0300
+Subject: [PATCH] ipa: simple: Keep the white balance gains and the focus
+ across configurations
+
+---
+ src/ipa/simple/algorithms/af.cpp  | 16 ++++++++++++++++
+ src/ipa/simple/algorithms/af.h    |  4 ++++
+ src/ipa/simple/algorithms/awb.cpp | 10 +++++++++-
+ src/ipa/simple/algorithms/awb.h   |  6 ++++++
+ 4 files changed, 35 insertions(+), 1 deletion(-)
+
+diff --git a/src/ipa/simple/algorithms/af.cpp b/src/ipa/simple/algorithms/af.cpp
+index d7e3a8c..9b90439 100644
+--- a/src/ipa/simple/algorithms/af.cpp
++++ b/src/ipa/simple/algorithms/af.cpp
+@@ -83,6 +83,20 @@ int Af::configure(IPAContext &context,
+ 	if (context.configuration.focus.focus_max <= context.configuration.focus.focus_min)
+ 		return 0;
+ 
++	/*
++	 * Reconfigured after a successful scan (diting: switch from the
++	 * viewfinder to a still capture and back): keep the focus, the
++	 * scene change monitor rescans if needed.
++	 */
++	if (lastPosition_) {
++		af.position = *lastPosition_;
++		context.activeState.knobs.focus_pos = af.position;
++		af.state = controls::AfStateFocused;
++		af.settle = settleFrames_ + 2;
++		af.refScore = 0.0;
++		return 0;
++	}
++
+ 	startScan(context);
+ 
+ 	return 0;
+@@ -120,6 +134,8 @@ void Af::stopScan(IPAContext &context, bool found)
+ 	af.refScore = 0.0;	/* measured once the lens is back */
+ 	af.changed = 0;
+ 	af.state = found ? controls::AfStateFocused : controls::AfStateFailed;
++	if (found)
++		lastPosition_ = af.bestPosition;
+ 
+ 	LOG(IPASoftAutoFocus, Debug)
+ 		<< "Scan done: position " << af.bestPosition
+diff --git a/src/ipa/simple/algorithms/af.h b/src/ipa/simple/algorithms/af.h
+index 041ca86..5f0b08f 100644
+--- a/src/ipa/simple/algorithms/af.h
++++ b/src/ipa/simple/algorithms/af.h
+@@ -7,6 +7,8 @@
+ 
+ #pragma once
+ 
++#include <optional>
++
+ #include "algorithm.h"
+ 
+ namespace libcamera {
+@@ -47,6 +49,8 @@ private:
+ 	unsigned int peakDropSteps_ = 2;
+ 	double changeThreshold_ = 0.5;
+ 	unsigned int changeFrames_ = 10;
++	/* Focus found by the last scan, kept across configurations */
++	std::optional<double> lastPosition_;
+ };
+ 
+ } /* namespace ipa::soft::algorithms */
+diff --git a/src/ipa/simple/algorithms/awb.cpp b/src/ipa/simple/algorithms/awb.cpp
+index e66f229..faee65a 100644
+--- a/src/ipa/simple/algorithms/awb.cpp
++++ b/src/ipa/simple/algorithms/awb.cpp
+@@ -28,8 +28,14 @@ namespace ipa::soft::algorithms {
+ int Awb::configure(IPAContext &context,
+ 		   [[maybe_unused]] const IPAConfigInfo &configInfo)
+ {
++	/*
++	 * Start from the last gains of this camera (diting): an application
++	 * that reconfigures for a still capture gets the right colours from
++	 * the first frame.
++	 */
+ 	auto &gains = context.activeState.awb.gains;
+-	gains = { { 1.0, 1.0, 1.0 } };
++	gains = lastGains_.value_or(RGB<float>{ { 1.0, 1.0, 1.0 } });
++	context.activeState.awb.temperatureK = lastTemperatureK_;
+ 
+ 	return 0;
+ }
+@@ -96,6 +102,8 @@ void Awb::process(IPAContext &context,
+ 
+ 	RGB<double> rgbGains{ { 1 / gains.r(), 1 / gains.g(), 1 / gains.b() } };
+ 	context.activeState.awb.temperatureK = estimateCCT(rgbGains);
++	lastGains_ = gains;
++	lastTemperatureK_ = context.activeState.awb.temperatureK;
+ 	metadata.set(controls::ColourTemperature, context.activeState.awb.temperatureK);
+ 
+ 	LOG(IPASoftAwb, Debug)
+diff --git a/src/ipa/simple/algorithms/awb.h b/src/ipa/simple/algorithms/awb.h
+index ad993f3..e9d6716 100644
+--- a/src/ipa/simple/algorithms/awb.h
++++ b/src/ipa/simple/algorithms/awb.h
+@@ -7,6 +7,8 @@
+ 
+ #pragma once
+ 
++#include <optional>
++
+ #include "algorithm.h"
+ 
+ namespace libcamera {
+@@ -29,6 +31,10 @@ public:
+ 		     IPAFrameContext &frameContext,
+ 		     const SwIspStats *stats,
+ 		     ControlList &metadata) override;
++
++private:
++	std::optional<RGB<float>> lastGains_;
++	unsigned int lastTemperatureK_ = 5000;
+ };
+ 
+ } /* namespace ipa::soft::algorithms */
+-- 
+2.43.0
+

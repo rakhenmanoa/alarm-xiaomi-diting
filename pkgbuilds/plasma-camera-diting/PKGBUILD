@@ -1,0 +1,37 @@
+# plasma-camera avec un aperçu réduit (2048 de large) et des photos en pleine
+# résolution (rôle StillCapture : 50 MP sur la caméra principale). Avec les
+# patches libcamera-diting 0014/0015 (exposition, balance des blancs et mise
+# au point gardées d'une configuration à l'autre, mode 4:3 pour l'aperçu).
+pkgname=plasma-camera-diting
+_tag=v26.08.2
+pkgver=26.08.2
+pkgrel=1
+pkgdesc="Appareil photo de Plasma Mobile, aperçu réduit et photos en pleine résolution (Xiaomi diting)"
+arch=(aarch64)
+url="https://invent.kde.org/plasma-mobile/plasma-camera"
+license=(GPL-2.0-or-later LGPL-2.1-or-later)
+depends=(gcc-libs glibc qt6-base qt6-declarative qt6-multimedia qt6-svg qt6-sensors
+         kirigami kcoreaddons ki18n kconfig exiv2 libcamera)
+makedepends=(git extra-cmake-modules qt6-tools)
+provides=(plasma-camera=${pkgver})
+conflicts=(plasma-camera)
+source=("plasma-camera::git+https://github.com/KDE/plasma-camera.git#tag=${_tag}"
+        0001-Reduced-viewfinder-full-resolution-still-capture-dit.patch)
+sha256sums=('SKIP' 'SKIP')
+
+prepare() {
+  cd plasma-camera
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0001-Reduced-viewfinder-full-resolution-still-capture-dit.patch"
+}
+
+build() {
+  cmake -B build -S plasma-camera \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DBUILD_TESTING=OFF
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}

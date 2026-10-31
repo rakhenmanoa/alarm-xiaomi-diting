@@ -7,7 +7,7 @@ pkgname=linux-diting
 _kver=7.2.10
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=${_kver}
-pkgrel=15
+pkgrel=16
 pkgdesc="Linux ${_kver} pour le Xiaomi 12T Pro / Redmi K50 Ultra (diting, SM8475)"
 arch=(aarch64)
 url="https://github.com/royka1/diting-ubuntu"
@@ -28,8 +28,10 @@ source=("https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${_kver}.tar.xz"
         0906-arm64-dts-qcom-sm8475-xiaomi-diting-Add-the-front-an.patch
         0907-media-i2c-s5khp1-Allow-64x-analogue-gain-in-the-binn.patch
         0908-media-qcom-camss-Allow-16384-pixel-raw-frames-s5khp1.patch
-        0910-remoteproc-qcom_q6v5-Disable-the-handover-IRQ-once-h.patch)
+        0910-remoteproc-qcom_q6v5-Disable-the-handover-IRQ-once-h.patch
+        0911-media-i2c-s5khp1-Keep-the-exposure-across-mode-chang.patch)
 sha256sums=('2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -79,6 +81,8 @@ prepare() {
   # SLPI : IRQ handover coupée une fois le handover fait (backport Linux 7.3) ;
   # sinon chaque échantillon d'un capteur ouvert la redéclenche (~10/s)
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0910-remoteproc-qcom_q6v5-Disable-the-handover-IRQ-once-h.patch"
+  # HP1 : exposition gardée d'un mode à l'autre (aperçu -> photo 50 MP)
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0911-media-i2c-s5khp1-Keep-the-exposure-across-mode-chang.patch"
 
   _make defconfig
   scripts/kconfig/merge_config.sh -m .config "$srcdir/diting-ubuntu/kernel/config/diting.config"

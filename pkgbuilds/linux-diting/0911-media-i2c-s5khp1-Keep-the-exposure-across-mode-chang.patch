@@ -1,0 +1,45 @@
+From 2e65a0310ed8f5bc37ef4f5a9faed5f4f49e9fe5 Mon Sep 17 00:00:00 2001
+From: alarm <alarm@localhost>
+Date: Sat, 31 Oct 2026 13:21:22 +0300
+Subject: [PATCH] media: i2c: s5khp1: Keep the exposure across mode changes
+
+---
+ drivers/media/i2c/s5khp1.c | 11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/media/i2c/s5khp1.c b/drivers/media/i2c/s5khp1.c
+index 91e8cbfd7..93735d75a 100644
+--- a/drivers/media/i2c/s5khp1.c
++++ b/drivers/media/i2c/s5khp1.c
+@@ -266,7 +266,7 @@ static int s5khp1_write_table(struct s5khp1 *s5khp1,
+ static void s5khp1_update_mode_ctrls(struct s5khp1 *s5khp1,
+ 				     const struct s5khp1_mode *mode)
+ {
+-	s64 hblank, vblank, exposure_max;
++	s64 hblank, vblank, exposure_max, exposure;
+ 
+ 	__v4l2_ctrl_s_ctrl(s5khp1->link_freq, mode->link_freq_index);
+ 	__v4l2_ctrl_modify_range(s5khp1->pixel_rate, mode->pixel_rate,
+@@ -280,11 +280,18 @@ static void s5khp1_update_mode_ctrls(struct s5khp1 *s5khp1,
+ 				 S5KHP1_VTS_MAX - mode->height, 1, vblank);
+ 	__v4l2_ctrl_s_ctrl(s5khp1->vblank, vblank);
+ 
++	/*
++	 * Keep the exposure (and the gain, below) across mode changes, within
++	 * the new mode's range: the line times of the modes are within 3% of
++	 * each other, so an application switching from the viewfinder to a
++	 * still capture keeps the AGC's exposure instead of the mode default.
++	 */
+ 	exposure_max = mode->vts - S5KHP1_EXPOSURE_MARGIN;
++	exposure = min_t(s64, s5khp1->exposure->val, exposure_max);
+ 	__v4l2_ctrl_modify_range(s5khp1->exposure, S5KHP1_EXPOSURE_MIN,
+ 				 exposure_max, S5KHP1_EXPOSURE_STEP,
+ 				 mode->exposure);
+-	__v4l2_ctrl_s_ctrl(s5khp1->exposure, mode->exposure);
++	__v4l2_ctrl_s_ctrl(s5khp1->exposure, exposure);
+ 
+ 	__v4l2_ctrl_modify_range(s5khp1->again, S5KHP1_AGAIN_MIN,
+ 				 mode->again_max, S5KHP1_AGAIN_STEP,
+-- 
+2.43.0
+

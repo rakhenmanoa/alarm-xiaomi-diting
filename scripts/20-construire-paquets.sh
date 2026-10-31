@@ -102,7 +102,7 @@ done
 if [ "$BUILD_LIBCAMERA" = 1 ]; then
 	v="$(ch "$BR" pacman -Si libcamera 2>/dev/null | awk -F': ' '/^Version/ {print $2; exit}')"
 	case "$v" in
-	""|0.7.*) chroot_build "$PB/libcamera-diting" ;;
+	""|0.7.*) chroot_build "$PB/libcamera-diting"; chroot_build "$PB/plasma-camera-diting" ;;
 	*) warn "libcamera d'ALARM en version $v (≠ 0.7.x) : patches caméra non appliqués, libcamera-diting ignoré" ;;
 	esac
 fi

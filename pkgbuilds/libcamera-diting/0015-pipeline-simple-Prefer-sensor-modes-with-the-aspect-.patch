@@ -1,0 +1,58 @@
+From 286dd0950c8046e046ef339d06be467dcb5436d1 Mon Sep 17 00:00:00 2001
+From: alarm <alarm@localhost>
+Date: Sat, 31 Oct 2026 13:22:52 +0300
+Subject: [PATCH] pipeline: simple: Prefer sensor modes with the aspect ratio
+ of the processed stream
+
+---
+ src/libcamera/pipeline/simple/simple.cpp | 20 +++++++++++++++++++-
+ 1 file changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
+index feb96bb..5c6efab 100644
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <algorithm>
++#include <cmath>
+ #include <iterator>
+ #include <list>
+ #include <map>
+@@ -1243,6 +1244,20 @@ CameraConfiguration::Status SimpleCameraConfiguration::validate()
+ 	const SimpleCameraData::Configuration *maxPipeConfig = nullptr;
+ 	pipeConfig_ = nullptr;
+ 
++	/*
++	 * diting: among the sensor modes that fit, prefer one with the aspect
++	 * ratio of the processed stream, so that a reduced 4:3 viewfinder
++	 * uses the 4:3 mode (same field of view as the photos) rather than a
++	 * smaller 16:9 one cropped to 4:3.
++	 */
++	auto sameAspect = [&](const Size &size) {
++		if (maxProcessedStreamSize.isNull())
++			return true;
++		double a = static_cast<double>(size.width) * maxProcessedStreamSize.height;
++		double b = static_cast<double>(size.height) * maxProcessedStreamSize.width;
++		return std::abs(a - b) <= 0.02 * a;
++	};
++
+ 	for (const SimpleCameraData::Configuration *pipeConfig : *configs) {
+ 		const Size &captureSize = pipeConfig->captureSize;
+ 		const Size &maxOutputSize = pipeConfig->outputSizes.max;
+@@ -1251,7 +1266,10 @@ CameraConfiguration::Status SimpleCameraConfiguration::validate()
+ 		    maxOutputSize.height >= maxProcessedStreamSize.height &&
+ 		    captureSize.width >= maxRawStreamSize.width &&
+ 		    captureSize.height >= maxRawStreamSize.height) {
+-			if (!pipeConfig_ || captureSize < pipeConfig_->captureSize)
++			bool aspect = sameAspect(captureSize);
++			bool currentAspect = pipeConfig_ && sameAspect(pipeConfig_->captureSize);
++			if (!pipeConfig_ || (aspect && !currentAspect) ||
++			    (aspect == currentAspect && captureSize < pipeConfig_->captureSize))
+ 				pipeConfig_ = pipeConfig;
+ 		}
+ 
+-- 
+2.43.0
+

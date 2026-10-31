@@ -6,7 +6,7 @@ pkgname=libcamera-diting
 _tag=v0.7.0
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=0.7.0
-pkgrel=10
+pkgrel=11
 pkgdesc="libcamera avec la prise en charge des caméras du Xiaomi diting"
 arch=(aarch64)
 url="https://libcamera.org"
@@ -28,8 +28,10 @@ source=("libcamera::git+https://github.com/libcamera-org/libcamera.git#tag=${_ta
         0010-pipeline-simple-Default-streaming-roles-to-a-sensor-.patch
         0011-ipa-simple-Tunable-exposure-target-contrast-and-satu.patch
         0012-software_isp-Leave-saturated-samples-out-of-the-whit.patch
-        0013-software_isp-Back-to-statistics-every-fourth-frame.patch)
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+        0013-software_isp-Back-to-statistics-every-fourth-frame.patch
+        0014-ipa-simple-Keep-the-white-balance-gains-and-the-focu.patch
+        0015-pipeline-simple-Prefer-sensor-modes-with-the-aspect-.patch)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 prepare() {
   cd libcamera
@@ -56,6 +58,10 @@ prepare() {
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0012-software_isp-Leave-saturated-samples-out-of-the-whit.patch"
   # statistiques de nouveau une image sur quatre (gain qui oscillait entre 4x et 64x)
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0013-software_isp-Back-to-statistics-every-fourth-frame.patch"
+  # balance des blancs et mise au point gardées d'une configuration à l'autre (photo)
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0014-ipa-simple-Keep-the-white-balance-gains-and-the-focu.patch"
+  # mode capteur au rapport de l'image demandée (aperçu 4:3 réduit sans recadrage)
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0015-pipeline-simple-Prefer-sensor-modes-with-the-aspect-.patch"
 }
 build() {
   arch-meson libcamera build \
