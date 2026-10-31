@@ -72,7 +72,8 @@ def brut(d, data_off, off, size):
 
 # Blocs compactés (kind=1 ou gros tableaux) : affichés en entier
 BLOCS = {'sensorDriverData', 'cameraModuleData', 'resolutionData', 'moduleConfiguration',
-         'powerSetting', 'customInfo', 'delayInfo', 'initSettings', 'resolutionInfo'}
+         'powerSetting', 'customInfo', 'delayInfo', 'initSettings', 'resolutionInfo',
+         'OISDriver', 'actuatorDriver', 'EEPROMDriverData', 'flashDriverData'}
 
 
 def main():
