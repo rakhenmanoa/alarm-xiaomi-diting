@@ -171,7 +171,8 @@ La capture par le DSP ne tient pas de très petits blocs. Le test du micro de Pl
 fragments de 256 octets (environ 2,7 ms) : toute la chaîne passait à 128 échantillons, avec des hachures, puis
 plasma-settings plantait (`abort` dans `pa_stream_unref` : dans `microphonetest.cpp`, le vidage du flux peut être
 lancé deux fois, et le flux libéré deux fois). `pulse.min.req`, `pulse.min.frag` et `pulse.min.quantum` à
-1024/48000 (environ 21 ms) corrigent les deux. Le bug de plasma-pa reste à signaler à KDE.
+1024/48000 (environ 21 ms) corrigent les deux. Le bug de plasma-pa lui-même est corrigé par
+`pkgbuilds/plasma-pa-diting` (patch `0001` : un seul vidage par flux, flux retiré de l'objet avant d'être libéré).
 
 ### Audio des appels (diting-ubuntu)
 L'audio des appels tourne entièrement dans l'ADSP (modem ↔ VCPM ↔ codecs), comme le PAL d'Android.

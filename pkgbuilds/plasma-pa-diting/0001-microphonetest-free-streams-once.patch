@@ -1,0 +1,94 @@
+From b66272fa2bb36bd0a3a7f293abcca53724391d1c Mon Sep 17 00:00:00 2001
+From: alarm-diting <alarm@diting>
+Date: Sat, 31 Oct 2026 10:02:39 +0300
+Subject: [PATCH] microphonetest: Free the test streams only once
+
+The playback write callback started a new drain on every write request
+after the end of the recording, and each drain callback disconnected and
+unreffed the same stream; m_playbackStream was only cleared later from a
+queued call. When the server asks for data several times after the end
+(low latency, a capture through a DSP), plasma-settings aborts in
+pa_stream_unref. stopRecording() had the same problem when called twice
+(auto-stop timer and button), as did stopPlaying() or cleanupStreams()
+racing a drain callback.
+
+Drain the playback stream once (no write callback after the end), and
+take each stream away from the object before it is drained and freed.
+---
+ src/microphonetest.cpp | 25 +++++++++++++++++--------
+ 1 file changed, 17 insertions(+), 8 deletions(-)
+
+diff --git a/src/microphonetest.cpp b/src/microphonetest.cpp
+index 4cd9df2..6ff3c0d 100644
+--- a/src/microphonetest.cpp
++++ b/src/microphonetest.cpp
+@@ -204,13 +204,19 @@ void MicrophoneTest::stopRecording()
+         return;
+     }
+ 
+-    pa_operation *cork_op = pa_stream_cork(m_recordStream, 1, nullptr, nullptr);
++    // Take the stream away from the object before draining it: a second
++    // stopRecording() (auto-stop timer and button at nearly the same time)
++    // or cleanupStreams() must not disconnect and unref it a second time.
++    pa_stream *stream = m_recordStream;
++    m_recordStream = nullptr;
++
++    pa_operation *cork_op = pa_stream_cork(stream, 1, nullptr, nullptr);
+     if (cork_op) {
+         pa_operation_unref(cork_op);
+     }
+ 
+     pa_operation *drain_op = pa_stream_drain(
+-        m_recordStream,
++        stream,
+         [](pa_stream *s, int success, void *userdata) {
+             auto *self = static_cast<MicrophoneTest *>(userdata);
+             if (!self) return;
+@@ -219,7 +225,6 @@ void MicrophoneTest::stopRecording()
+             pa_stream_unref(s);
+ 
+             QMetaObject::invokeMethod(self, [self]() {
+-                self->m_recordStream = nullptr;
+                 self->m_volumeLevel = 0.0;
+                 self->m_recording = false;
+                 Q_EMIT self->recordingChanged();
+@@ -234,9 +239,8 @@ void MicrophoneTest::stopRecording()
+     if (drain_op) {
+         pa_operation_unref(drain_op);
+     } else {
+-        pa_stream_disconnect(m_recordStream);
+-        pa_stream_unref(m_recordStream);
+-        m_recordStream = nullptr;
++        pa_stream_disconnect(stream);
++        pa_stream_unref(stream);
+         m_volumeLevel = 0.0;
+         m_recording = false;
+         Q_EMIT recordingChanged();
+@@ -381,17 +385,22 @@ void MicrophoneTest::stream_write_callback(pa_stream *s, size_t nbytes, void *us
+     if (!self || !self->m_playbackStream) return;
+ 
+     if (self->m_playbackOffset >= self->m_recordedData.size()) {
++        // Every write request after the end used to start another drain, and
++        // each drain callback disconnected and unreffed the same stream
++        // (abort in pa_stream_unref): drain once only.
++        pa_stream_set_write_callback(s, nullptr, nullptr);
+         pa_operation *op = pa_stream_drain(
+             s,
+             [](pa_stream *s, int, void *userdata) {
+                 auto *self = static_cast<MicrophoneTest *>(userdata);
+-                if (!self || !self->m_playbackStream) return;
++                if (!self || s != self->m_playbackStream) return;
+ 
++                // stopPlaying() or cleanupStreams() must not free it again
++                self->m_playbackStream = nullptr;
+                 pa_stream_disconnect(s);
+                 pa_stream_unref(s);
+ 
+                 QMetaObject::invokeMethod(self, [self]() {
+-                    self->m_playbackStream = nullptr;
+                     self->m_playing = false;
+                     Q_EMIT self->playingChanged();
+                     Q_EMIT self->playbackFinished();
+-- 
+2.43.0
+

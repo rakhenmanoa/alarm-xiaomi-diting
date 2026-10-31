@@ -1,0 +1,63 @@
+# plasma-pa (module audio de Plasma, kcm_pulseaudio) + correction du
+# plantage de plasma-settings au test du micro.
+# Le test libérait deux fois le même flux PulseAudio (abort dans
+# pa_stream_unref) : chaque demande de données après la fin de la relecture
+# lançait un nouveau vidage, et chaque vidage libérait le flux ; même risque
+# sur l'enregistrement si l'arrêt automatique et le bouton arrivent ensemble.
+# Patch 0001 : un seul vidage, flux retiré de l'objet avant d'être libéré.
+# Version : celle de plasma-pa installée (pacman -Q plasma-pa), à ajuster.
+# Retour au paquet d'Arch : sudo pacman -S plasma-pa
+pkgname=plasma-pa-diting
+pkgver=6.8.1
+pkgrel=1
+pkgdesc="Module audio de Plasma ${pkgver} avec correction du plantage du test du micro (diting)"
+arch=(aarch64)
+url="https://invent.kde.org/plasma/plasma-pa"
+license=(GPL-2.0-or-later LGPL-2.0-or-later)
+provides=("plasma-pa=${pkgver}")
+conflicts=(plasma-pa)
+
+# Mêmes dépendances que le paquet plasma-pa installé (lues dans la base
+# locale de pacman), pour que le remplacement ne change rien d'autre.
+_deps_installees() {
+  local d
+  for d in /var/lib/pacman/local/plasma-pa-[0-9]*/desc /var/lib/pacman/local/plasma-pa-diting-[0-9]*/desc; do
+    [ -f "$d" ] || continue
+    awk '/^%DEPENDS%$/{f=1; next} /^$/{f=0} f' "$d"
+    return
+  done
+}
+depends=($(_deps_installees))
+makedepends=(git extra-cmake-modules kdoctools)
+source=("plasma-pa::git+https://github.com/KDE/plasma-pa.git#tag=v${pkgver}"
+        0001-microphonetest-free-streams-once.patch)
+sha256sums=('SKIP' 'SKIP')
+
+prepare() {
+  if [ ${#depends[@]} -eq 0 ]; then
+    echo "dépendances de plasma-pa introuvables dans /var/lib/pacman/local : installez d'abord plasma-pa" >&2
+    return 1
+  fi
+  local v
+  v=$(pacman -Q plasma-pa 2>/dev/null | awk '{sub(/-[^-]*$/, "", $2); print $2}')
+  if [ -n "$v" ] && [ "$v" != "$pkgver" ]; then
+    echo "plasma-pa installé en $v, ce PKGBUILD construit $pkgver : ajustez pkgver" >&2
+    return 1
+  fi
+  cd plasma-pa
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0001-microphonetest-free-streams-once.patch"
+}
+
+build() {
+  # options des paquets KDE d'Arch (libexec dans /usr/lib)
+  cmake -B build -S plasma-pa \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DCMAKE_INSTALL_LIBEXECDIR=lib \
+    -DBUILD_TESTING=OFF
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}
