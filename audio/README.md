@@ -16,9 +16,10 @@ appels dans l'ADSP, et la configuration UCM et PipeWire.
 | `pilote/sound/soc/qcom/` | Pilote machine `sc8280xp.c` et fichiers AudioReach (`qdsp6/`) **après** toute la série de patches (Linux 7.2.10 + diting-ubuntu `c68ff47` + `0903`) | patches `0023`, `0046`, `0047`, `0049`–`0051`, `0086` |
 | `pilote/include/dt-bindings/sound/` | `qcom,q6dsp-lpass-ports.h` après le patch `0047` (identifiants d'horloge TDM) | patch `0047` |
 | `patches/diting-ubuntu/` | Patches audio de diting-ubuntu | `kernel/patches/` de diting-ubuntu |
-| `patches/alarm-diting/` | `0903` : ports SoundWire séparés pour les deux micros | `pkgbuilds/linux-diting/0903` |
+| `patches/alarm-diting/` | `0903` : ports et lanes SoundWire séparés pour les deux micros | `pkgbuilds/linux-diting/0903` |
 | `scripts/` | `ucm-diting.py`, hook pacman et script CallAudio de ce dépôt | `pkgbuilds/diting-device/` |
 | `scripts/diting-ubuntu/` | Démons d'appel, protection des haut-parleurs, audio PD, services et règles udev, **tels qu'installés** (avec les `sed` du PKGBUILD de `diting-device`) | `ubuntu-diting/packages/device-xiaomi-diting/` |
+| `scripts/pipewire/` | `50-diting-micros.conf` : sources « Micro du bas » et « Micro du haut » | `pkgbuilds/diting-device/diting-micros.conf` |
 | `scripts/ucm/` | Profil UCM : `HiFi.conf` **tel qu'installé** (après `ucm-diting.py`) et l'original `HiFi.conf.diting-ubuntu` | idem |
 | `scripts/topologie/` | Sources m4 de la topologie AudioReach des haut-parleurs (compilées en `XIAOMI-DITING-tplg.bin` par le PKGBUILD de `diting-device`) | `ubuntu-diting/packages/audio-topology/` |
 
@@ -35,6 +36,97 @@ Ils sont fournis par le paquet local `firmware-xiaomi-diting`.
 | Écouteur | Sortie de l'ampli du **haut**, commutée par TLMM 52 (« Top MUX » : Speaker / Earpiece) | — |
 | Micros | 2 micros analogiques (AMIC1, AMIC5) sur un codec WCD938x, micbias 2,75 V | SoundWire → macro TX du LPASS → `TX_CODEC_DMA_TX_3` |
 | Prise casque | aucune | — |
+
+### Schéma complet de la topologie audio
+
+Chemins actifs : média en lecture (haut-parleurs), média en capture (micros) et appels. Le bus SoundWire RX
+(`3210000`, sortie casque du WCD938x) existe mais ne sert pas : il n'y a pas de prise casque.
+
+```mermaid
+flowchart LR
+    subgraph US["Espace utilisateur"]
+        APP["Applications<br/>Plasma, plasma-dialer"]
+        PW["PipeWire + WirePlumber<br/>profil UCM HiFi"]
+        SINK["Sortie<br/>HiFi__Speaker__sink"]
+        SRC["Source stéréo<br/>HiFi__Mic__source<br/>FL = bas, FR = haut"]
+        MBAS["Micro du bas<br/>loopback FL"]
+        MHAUT["Micro du haut<br/>loopback FR"]
+        VC["diting-voice-call<br/>+ diting-voice-pcm"]
+        CA["diting-callaudio<br/>écouteur / haut-parleur, sourdine"]
+        SP["diting-speaker-protection<br/>firmware CSPL + calibration"]
+        MM["ModemManager"]
+    end
+
+    subgraph DSP["ADSP (LPASS), AudioReach"]
+        MM1["MultiMedia1<br/>lecture, hw:0,0"]
+        MM2["MultiMedia2<br/>capture, hw:0,1"]
+        MM3["MultiMedia3 Voice<br/>appel RX, hostless"]
+        MM4["MultiMedia4 Voice<br/>appel TX, hostless"]
+        VCPM["VCPM + Fluence ECNS<br/>graphes d'appel du vendeur"]
+        TDMRX["TERTIARY_TDM_RX_0"]
+        TXDMA["TX_CODEC_DMA_TX_3"]
+    end
+
+    subgraph LPASS["LPASS, macro TX"]
+        DEC0["DEC0<br/>TX SMIC MUX0 = SWR_MIC0"]
+        DEC1["DEC1<br/>TX SMIC MUX1 = SWR_MIC5"]
+        AIF["TX_AIF1_CAP"]
+        SWRTX["SoundWire TX 33b0000<br/>port 1 : lane 1, gpio2<br/>port 2 : lane 2, gpio14"]
+    end
+
+    subgraph WCD["Codec WCD938x"]
+        ADC1["ADC1<br/>codec port 1"]
+        ADC4["ADC4, ADC4 MUX INP5<br/>codec port 2"]
+    end
+
+    subgraph MICS["Micros"]
+        AMIC1["AMIC1 : micro du bas<br/>MIC BIAS1"]
+        AMIC5["AMIC5 : micro du haut<br/>MIC BIAS4"]
+    end
+
+    subgraph AMPS["Amplis CS35L41, TDM tertiaire<br/>horloge de bit inversée"]
+        AMPB["B 0x40<br/>canal droit"]
+        AMPT["T 0x42<br/>canal gauche"]
+    end
+
+    TOPMUX{"Top MUX<br/>TLMM 52"}
+    HPB["Haut-parleur du bas"]
+    HPT["Haut-parleur du haut"]
+    EAR["Écouteur"]
+
+    APP --> PW
+    PW --> SINK --> MM1 --> TDMRX
+    TDMRX --> AMPB --> HPB
+    TDMRX --> AMPT --> TOPMUX
+    TOPMUX -- Speaker --> HPT
+    TOPMUX -- Earpiece --> EAR
+
+    AMIC1 --> ADC1 --> SWRTX
+    AMIC5 --> ADC4 --> SWRTX
+    SWRTX --> DEC0 --> AIF
+    SWRTX --> DEC1 --> AIF
+    AIF --> TXDMA --> MM2 --> SRC
+    SRC --> MBAS --> PW
+    SRC --> MHAUT --> PW
+    SRC --> PW
+
+    MM -. "état des appels" .-> VC
+    VC -. "routes + ouverture" .-> MM3
+    VC -. "routes + ouverture" .-> MM4
+    MM3 --> TDMRX
+    TXDMA --> MM4
+    MM3 <--> VCPM
+    MM4 <--> VCPM
+    VCPM <-. "voix" .-> MODEM["Modem"]
+    CA -. "Top MUX, volumes" .-> TOPMUX
+    SP -. "I2C QUP SE15" .-> AMPS
+```
+
+| Chemin | Trajet |
+|---|---|
+| Lecture média | PipeWire → `MultiMedia1` (`hw:0,0`) → `TERTIARY_TDM_RX_0` → CS35L41 B (bas, canal droit) et T (haut, canal gauche) → haut-parleurs ; le « Top MUX » envoie l'ampli du haut vers le haut-parleur du haut. |
+| Capture média | AMIC1 → ADC1 → port 1 (lane 1) → `SWR_MIC0` → DEC0 → canal gauche ; AMIC5 → ADC4 → port 2 (lane 2) → `SWR_MIC5` → DEC1 → canal droit ; puis `TX_AIF1_CAP` → `TX_CODEC_DMA_TX_3` → `MultiMedia2` (`hw:0,1`) → source stéréo, et les sources « Micro du bas » et « Micro du haut ». |
+| Appel | `diting-voice-call` route `MultiMedia3` vers les amplis et `TX_CODEC_DMA_TX_3` vers `MultiMedia4`, puis `diting-voice-pcm` ouvre les deux sessions hostless : la voix passe modem ↔ VCPM ↔ codecs dans l'ADSP, avec la réduction de bruit Fluence sur les deux micros. `diting-callaudio` bascule le « Top MUX » sur l'écouteur ou le haut-parleur. |
 
 ## 2. Patches du noyau, dans l'ordre d'application
 
@@ -55,7 +147,7 @@ Ils sont fournis par le paquet local `firmware-xiaomi-diting`.
 | `0052` | diting-ubuntu | DT : commutateur écouteur / haut-parleur du haut (TLMM 52, `simple-audio-mux` « Top MUX »). |
 | `0053` | diting-ubuntu | DT : I2C des amplis à 400 kHz (le firmware de protection, écrit par blocs de 20 Ko, dépassait le délai à 100 kHz). |
 | `0086` | diting-ubuntu | Pilote machine : pour une paire stéréo, RX1 = son canal, RX2 = l'autre (sinon le firmware de protection rendait muet l'ampli du bas). |
-| `0903` | ce dépôt | DT : les ports 1 et 2 du codec partageaient le port maître SoundWire 1, donc ADC1 et ADC4 émettaient dans la même case : **bruit blanc**. Le port 2 passe sur le port maître 2 (lane 1, décalage 1) ; l'ADC4 arrive alors sur `SWR_MIC5`, et la route DAPM suit. |
+| `0903` | ce dépôt | DT : les ports 1 et 2 du codec partageaient le port maître SoundWire 1, donc ADC1 et ADC4 émettaient dans la même case : **bruit blanc**. Le port 2 passe sur le port maître 2 ; l'ADC4 arrive alors sur `SWR_MIC5`, et la route DAPM suit. Lanes et décalages d'Android : port 1 sur la lane 1 (`gpio2`), port 2 sur la lane 2 (`gpio14`), décalage 0 tous les deux. Les deux ports sur la lane 1 (décalages 0 et 1) soufflaient encore à certains démarrages. |
 
 Autres patches utiles à l'audio mais pas propres à lui : `0029` (modem), `0085` (fastrpc : requêtes DSP
 gardées pendant la veille), `0910` de ce dépôt (interruptions SMP2P du SLPI).
@@ -68,15 +160,18 @@ Il corrige le `HiFi.conf` de diting-ubuntu à la construction de `diting-device`
   la capture et rejette tout le profil HiFi ;
 - **stéréo** : la protection CS35L41 mélangeait les deux canaux, et les deux amplis les recevaient dans un ordre
   inverse. `ASPRX1` sur les deux entrées des deux amplis donne la gauche en haut et la droite en bas ;
-- **micro du bas (ADC1) seul pour les enregistrements**, sur les deux canaux (`TX SMIC MUX1` = `SWR_MIC0`) : avec ADC1
-  et ADC4 actifs ensemble, les ports SoundWire entrent encore en collision à certains démarrages malgré `0903`
-  (souffle sur les deux canaux, sans xrun), et l'ADC4 seul bloque la capture (testé le 2026-10-31). L'ADC4 est
-  coupé à l'activation du micro, pour repartir propre après un appel ;
+- **micro du haut (ADC4) sur `SWR_MIC5`**, conséquence du patch `0903` ;
 - **gain des décimateurs +24 dB** (108 au lieu de 84) : voix vers -42 dBFS, pics vers -18 dBFS sans écrêtage.
 
-Les changements `SWR_MIC5` et `108` sont appliqués par `sed` aux scripts d'appel (PKGBUILD de `diting-device`), qui
-gardent les deux micros pour la réduction de bruit Fluence ; en fin d'appel,
-`diting-voice-call` revient au micro du bas seul (ADC4 coupé, `TX SMIC MUX1` = `SWR_MIC0`).
+Les mêmes changements `SWR_MIC5` et `108` sont appliqués par `sed` aux scripts d'appel (PKGBUILD de `diting-device`).
+
+### Choix du micro — `scripts/pipewire/50-diting-micros.conf`
+La source stéréo porte le micro du bas à gauche (ADC1) et le micro du haut à droite (ADC4). Deux sources mono
+(`libpipewire-module-loopback`) en prennent chacune un canal : « Micro du bas » et « Micro du haut », à choisir
+dans Plasma. Le profil HiFi et le haut-parleur ne changent pas : des devices UCM séparés sur le même PCM de
+capture feraient des profils combinés (« Speaker + micro »). Les deux ADC restent allumés ensemble, car l'ADC4
+seul bloque la capture (cause non trouvée, testé le 2026-10-31). Après une modification de `HiFi.conf`,
+redémarrer PipeWire : il ne relit l'UCM qu'à son démarrage.
 
 ### Audio des appels (diting-ubuntu)
 L'audio des appels tourne entièrement dans l'ADSP (modem ↔ VCPM ↔ codecs), comme le PAL d'Android.
@@ -98,8 +193,8 @@ pour lancer `/usr/libexec/diting/diting-callaudio`.
 ## 4. État
 
 - **Haut-parleurs** : stéréo propre à travers le firmware de protection (calibration d'usine), au niveau d'Android.
-- **Micros** : en enregistrement, micro du bas seul, propre (gain +24 dB). Les deux ensemble soufflent à certains
-  démarrages (collision SoundWire restante) : utilisés seulement en appel, où Fluence masque le souffle.
+- **Micros** : les deux capturent sans souffle, à chaque démarrage, depuis les lanes d'Android dans `0903` ;
+  gain réglé (+24 dB) ; choix du micro du bas ou du haut dans Plasma.
 - **Appels** (3G) : audio dans les deux sens, démarrage sur l'écouteur, haut-parleur et sourdine fonctionnels,
   annulation d'écho Fluence active.
 - Limites : pas de VoLTE ; TX des appels fixé à 16 kHz (appels bande étroite 8 kHz non testés) ; pas de prise casque.
@@ -219,7 +314,8 @@ Les commandes `fdtput` qui ont servi à mettre au point `0903` sont dans le READ
 |---|---|
 | Pas de carte son au démarrage, batterie à 0 % | `diting-dsp.conf` absent (softdep `qcom_pd_mapper`). |
 | PipeWire n'offre pas le profil HiFi | Profil UCM non corrigé : vérifier que `HiFi.conf` contient `MultiMedia2 Mixer TX_CODEC_DMA_TX_3`. |
-| Bruit blanc au micro | Patch `0903` absent du DTB, ou UCM ancien (`SWR_MIC1`, ou ADC4 encore activé avec l'ADC1). |
+| Bruit blanc au micro | Patch `0903` absent du DTB, ou UCM encore sur `SWR_MIC1`. |
+| Souffle continu à certains démarrages, sans xrun | `0903` ancien (les deux ports sur la lane 1) : vérifier `xxd /proc/device-tree/soc@0/soundwire@33b0000/qcom,ports-lane-control` → `0102 0000`. |
 | Haut-parleur du bas muet | Patch `0086` absent (RX2 sur son propre canal avec le firmware de protection). |
 | Souffle fort, signal faible | Horloge de bit TDM non inversée (patch `0048`). |
 | Pas d'audio en appel | `systemctl status diting-audiopd diting-voice-call` ; topologie d'appel et modules ADSP présents dans `firmware-xiaomi-diting`. |
