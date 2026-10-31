@@ -14,6 +14,7 @@ les données mobiles 4G.
 
 | Dossier | Contenu | Original |
 |---|---|---|
+| `pilote/drivers/net/ipa/` | Pilote IPA complet (liaison data du modem) **après** application de la série (Linux 7.2.10 + diting-ubuntu `c68ff47`, patches `0030` et `0032`–`0040`). Compilable seul, voir la section 9. | `drivers/net/ipa/` du noyau patché |
 | `patches/diting-ubuntu/` | Patches noyau du modem (`0029`) et de la liaison data IPA v5.1 (`0030`–`0043`) | `kernel/patches/` de diting-ubuntu |
 | `patches/modemmanager/` | `0001` : plantage netlink ; `0002` : client data lié à l'abonnement primaire | `pkgbuilds/modemmanager-fix/` |
 | `scripts/diting-ubuntu/` | `diting-modem-setup` (SIM et technologies radio), son service, et le réglage « quick suspend/resume » de ModemManager | `ubuntu-diting/packages/device-xiaomi-diting/` |
@@ -252,7 +253,151 @@ Autres commandes utiles :
 Les messages `Handover signaled, but it already happened` du noyau viennent du SLPI (capteurs), pas
 du modem. Ils sont sans gravité.
 
-## 9. Pistes ouvertes
+## 9. Compiler et installer le pilote IPA sans recompiler le noyau
+
+Le pilote IPA est un module (`CONFIG_QCOM_IPA=m`, fichier `ipa.ko`). Le noyau du diting n'impose ni
+signature des modules ni `MODVERSIONS` : un module compilé à part se charge dès que sa version
+(`vermagic`) est exactement celle du noyau en service. La méthode générale est décrite dans
+[docs/modules-sur-le-telephone.md](../docs/modules-sur-le-telephone.md).
+
+`pilote/drivers/net/ipa/` contient **tout** le pilote, déjà patché. On le compile donc comme un
+module externe (`M=`), contre un arbre noyau Linux 7.2.10 **sans aucun patch** : il suffit d'avoir
+la configuration du noyau installé. Si vous avez déjà préparé l'arbre patché de
+[screen/README.md](../screen/README.md) (section 6), il convient aussi : passez directement à l'étape b.
+Tout se fait **sur le téléphone**, une commande à la fois.
+
+Vérifié le 2026-10-31 en compilation croisée (GCC 13, configuration `defconfig` + `diting.config`) :
+`ipa.ko` avec `vermagic=7.2.10-diting`, alias `qcom,sm8450-ipa` et données v5.1.
+
+### a. Préparer l'arbre noyau (une seule fois)
+
+Outils :
+```sh
+sudo pacman -S --needed base-devel bc git
+```
+
+Sources à la version du paquet (`_kver` du PKGBUILD de `linux-diting`) :
+```sh
+git clone --depth 1 --branch v7.2.10 https://github.com/gregkh/linux ~/linux-7.2.10
+```
+```sh
+cd ~/linux-7.2.10
+```
+
+Configuration du noyau installé, puis préparation à la compilation de modules :
+```sh
+cp /usr/share/doc/linux-diting/config .config
+```
+```sh
+make LOCALVERSION= olddefconfig
+```
+```sh
+make LOCALVERSION= -j8 modules_prepare
+```
+
+`LOCALVERSION=` (vide) est indispensable : sans lui, l'arbre git ajoute un « + » à la version et le
+module est refusé. Les deux lignes suivantes doivent être identiques :
+```sh
+make -s LOCALVERSION= kernelrelease; uname -r
+```
+
+### b. Modifier le pilote
+
+Travailler sur une copie, pour garder la référence intacte :
+```sh
+cp -a ~/alarm-xiaomi-diting/modem/pilote/drivers/net/ipa ~/ipa
+```
+
+Les fichiers propres au diting :
+
+| Fichier | Contenu |
+|---|---|
+| `data/ipa_data-v5.1.c` | Description de l'IPA v5.1 : endpoints (modem, AP), groupes de ressources, régions mémoire, bande passante, adresse IMEM |
+| `ipa_data.h`, `ipa_main.c` | Déclaration des données v5.1 et association à `qcom,sm8450-ipa` |
+| `ipa_mem.c`, `ipa_mem.h` | Région `IPA_MEM_MODEM_STATS_DROP` |
+| `ipa_reg.c`, `gsi_reg.c` | Choix des registres IPA et GSI pour la v5.1 (elle réutilise ceux de la v5.0) |
+| `Makefile` | Ajout de `5.1` à `IPA_DATA_VERSIONS` |
+
+### c. Compiler le module seul
+```sh
+cd ~/ipa
+```
+```sh
+make -C ~/linux-7.2.10 LOCALVERSION= M=$PWD KBUILD_MODPOST_WARN=1 -j8 modules
+```
+Compter une à deux minutes. Les avertissements `WARNING: modpost: "…" undefined!` sont normaux (pas
+de `Module.symvers` du noyau installé) : les symboles sont résolus au chargement, et `depmod`
+retrouve les dépendances (`qmi_helpers`, `qcom_smem`…).
+
+Vérifier la version du module, qui doit être celle de `uname -r` :
+```sh
+modinfo -F vermagic ipa.ko
+```
+```sh
+modinfo -F alias ipa.ko | grep 8450
+```
+
+### d. Installer
+
+Dans `updates/`, qui a priorité sur le module du paquet (l'original reste en place) :
+```sh
+sudo install -Dm644 -t /usr/lib/modules/$(uname -r)/updates/ ipa.ko
+```
+```sh
+sudo depmod -a
+```
+
+Ne pas décharger l'IPA à chaud : le modem tourne en permanence et dialogue avec lui (SMP2P, QMI).
+Il faut redémarrer :
+```sh
+sudo reboot
+```
+
+Après le redémarrage, vérifier que c'est bien le module de `updates/` qui est chargé et que la
+liaison data revient :
+```sh
+modinfo -n ipa
+```
+```sh
+sudo dmesg | grep -i ipa
+```
+```sh
+ip -br link | grep -iE "rmnet|qmap"
+```
+```sh
+nmcli device | grep -i gsm
+```
+
+Le module n'est pas dans l'initramfs (HOOKS `base udev modconf fsck`) : ni `mkinitcpio -P` ni
+`diting-install-bootimg` ne sont nécessaires. Ils ne le deviennent que si l'on modifie aussi le
+device tree (patches `0029`, `0031`, `0041`–`0043`, voir `docs/modules-sur-le-telephone.md`,
+section 3).
+
+### e. Revenir en arrière
+
+Si la data mobile ne revient pas, se connecter en SSH (USB : `172.16.42.1`, ou Wi-Fi) et retirer le
+module de test :
+```sh
+sudo rm /usr/lib/modules/$(uname -r)/updates/ipa.ko
+```
+```sh
+sudo depmod -a
+```
+```sh
+sudo reboot
+```
+
+À faire aussi après l'installation d'un nouveau paquet `linux-diting`, sinon le module de `updates/`
+masquerait celui du paquet. Une fois la modification validée, la voie normale reste le paquet : en
+faire un patch dans `pkgbuilds/linux-diting/`, puis
+`ONLY=linux-diting scripts/build-in-container.sh scripts/20-construire-paquets.sh`.
+
+Les autres pilotes du modem (`qcom_q6v5_pas` pour le remoteproc MPSS, `rmtfs_mem`, `qrtr`,
+`qrtr-smd`) sont ceux de Linux 7.2.10, sans modification pour le modem. Pour les recompiler, même
+méthode à partir de l'arbre de l'étape a, avec la cible du module :
+`make LOCALVERSION= KBUILD_MODPOST_WARN=1 drivers/remoteproc/qcom_q6v5_pas.ko`.
+
+## 10. Pistes ouvertes
 - Rendre configurable l'abonnement du correctif `0002` (deux SIM actives).
 - L'abonnement data désigné du modem n'est pas modifié (libqmi n'a pas de message pour cela). Le
   correctif contourne le problème client par client.
