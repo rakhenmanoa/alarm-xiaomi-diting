@@ -1,15 +1,17 @@
 # plasma-pa (module audio de Plasma, kcm_pulseaudio) + correction du
 # plantage de plasma-settings au test du micro.
-# Le test libérait deux fois le même flux PulseAudio (abort dans
+# Le test libérait deux fois le même flux de relecture (abort dans
 # pa_stream_unref) : chaque demande de données après la fin de la relecture
-# lançait un nouveau vidage, et chaque vidage libérait le flux ; même risque
-# sur l'enregistrement si l'arrêt automatique et le bouton arrivent ensemble.
-# Patch 0001 : un seul vidage, flux retiré de l'objet avant d'être libéré.
+# lance un nouveau vidage, et deux rappels de vidage pouvaient libérer le
+# flux avant que m_playbackStream soit remis à zéro (appel différé).
+# Patch 0001 : remise à zéro dans le rappel lui-même, rappels d'un ancien
+# flux ignorés. (pkgrel 1 coupait aussi le rappel d'écriture après la fin :
+# les flux de relecture restaient ouverts, avec des hachures. Retiré.)
 # Version : celle de plasma-pa installée (pacman -Q plasma-pa), à ajuster.
 # Retour au paquet d'Arch : sudo pacman -S plasma-pa
 pkgname=plasma-pa-diting
 pkgver=6.8.1
-pkgrel=1
+pkgrel=2
 pkgdesc="Module audio de Plasma ${pkgver} avec correction du plantage du test du micro (diting)"
 arch=(aarch64)
 url="https://invent.kde.org/plasma/plasma-pa"
