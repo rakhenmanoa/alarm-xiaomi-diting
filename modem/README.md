@@ -286,14 +286,6 @@ problèmes s'alimentaient.
 PolicyKit refusait `org.freedesktop.ModemManager1.Voice` à la session. Corrigé par la règle de la
 section 6 (`diting-device` 0.1.6).
 
-Fausse piste à retenir : un peu plus tard, les appels sortants sonnaient une fraction de seconde
-chez le correspondant puis coupaient (`dialing`, `ringing-out`, puis `terminated` dans la même
-seconde ; en QMI, `alerting` puis `disconnecting`). Cause de fin décodée : 156 `NORMAL_UNSPECIFIED`,
-cause réseau 31. Ni la 4G (la 3G forcée ne changeait rien), ni le service voix (arrêté, l'appel coupait
-encore), ni plasma-dialer n'étaient en cause : **le crédit d'appel était épuisé**. Avant de chercher
-plus loin sur un appel coupé par le réseau, vérifier le solde par USSD
-(`mmcli -m any --3gpp-ussd-initiate="CODE"`).
-
 ### 9.4 Données mobiles impossibles avec la SIM 2 : `cm error: no-service` (2026-10-30)
 
 C'est le problème qui a demandé de patcher **ModemManager**. NetworkManager n'est pas en cause : il
