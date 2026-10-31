@@ -7,12 +7,15 @@
 # Patch 0001 : remise à zéro dans le rappel lui-même, rappels d'un ancien
 # flux ignorés. (pkgrel 1 coupait aussi le rappel d'écriture après la fin :
 # les flux de relecture restaient ouverts, avec des hachures. Retiré.)
+# Patch 0002 : le niveau du test lisait un seul fragment par rappel ; le
+# retard s'accumulait et la barre ne correspondait plus à la voix. Tous les
+# fragments en attente sont lus (et les trous jetés).
 # Version : celle de plasma-pa installée (pacman -Q plasma-pa), à ajuster.
 # Retour au paquet d'Arch : sudo pacman -S plasma-pa
 pkgname=plasma-pa-diting
 pkgver=6.8.1
-pkgrel=2
-pkgdesc="Module audio de Plasma ${pkgver} avec correction du plantage du test du micro (diting)"
+pkgrel=3
+pkgdesc="Module audio de Plasma ${pkgver} avec corrections du test du micro (diting)"
 arch=(aarch64)
 url="https://invent.kde.org/plasma/plasma-pa"
 license=(GPL-2.0-or-later LGPL-2.0-or-later)
@@ -32,8 +35,9 @@ _deps_installees() {
 depends=($(_deps_installees))
 makedepends=(git extra-cmake-modules kdoctools)
 source=("plasma-pa::git+https://github.com/KDE/plasma-pa.git#tag=v${pkgver}"
-        0001-microphonetest-free-streams-once.patch)
-sha256sums=('SKIP' 'SKIP')
+        0001-microphonetest-free-streams-once.patch
+        0002-microphonetest-read-all-fragments.patch)
+sha256sums=('SKIP' 'SKIP' 'SKIP')
 
 prepare() {
   if [ ${#depends[@]} -eq 0 ]; then
@@ -47,7 +51,10 @@ prepare() {
     return 1
   fi
   cd plasma-pa
-  patch -Np1 --no-backup-if-mismatch < "$srcdir/0001-microphonetest-free-streams-once.patch"
+  local p
+  for p in "$srcdir"/0*.patch; do
+    patch -Np1 --no-backup-if-mismatch < "$p"
+  done
 }
 
 build() {

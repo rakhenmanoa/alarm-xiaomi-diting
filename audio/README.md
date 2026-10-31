@@ -173,7 +173,8 @@ plasma-settings plantait (`abort` dans `pa_stream_unref` : dans `microphonetest.
 lancé deux fois, et le flux libéré deux fois). `pulse.min.req`, `pulse.min.frag` et `pulse.min.quantum` à
 1024/48000 (environ 21 ms) corrigent les deux. Le bug de plasma-pa lui-même est corrigé par
 `pkgbuilds/plasma-pa-diting` (patch `0001` : le flux de relecture n'est libéré qu'une fois, même si plusieurs
-rappels de vidage arrivent).
+rappels de vidage arrivent), et patch `0002` : la barre de niveau du test lisait un seul fragment par rappel, le
+retard s'accumulait et elle ne correspondait plus à la voix.
 
 ### Audio des appels (diting-ubuntu)
 L'audio des appels tourne entièrement dans l'ADSP (modem ↔ VCPM ↔ codecs), comme le PAL d'Android.
