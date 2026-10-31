@@ -22,6 +22,8 @@ algorithms:
       saturation: 1.25
   - Agc:
       exposureTarget: 2.0
+      # images de 50 ms au plus en basse lumière (20 i/s), le gain fait le reste
+      maxFrameDuration: 50000
   - Af:
       settleFrames: 0
       coarseStep: 10
