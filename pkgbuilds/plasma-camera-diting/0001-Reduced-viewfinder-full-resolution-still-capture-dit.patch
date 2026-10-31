@@ -1,15 +1,15 @@
-From 1b422471cb048fbabd5c5fe74b87c78d25965492 Mon Sep 17 00:00:00 2001
+From 8fd3a531acec7765b4bb2e61a19ee42f8976a46d Mon Sep 17 00:00:00 2001
 From: alarm <alarm@localhost>
 Date: Sat, 31 Oct 2026 13:23:42 +0300
 Subject: [PATCH] Reduced viewfinder, full resolution still capture (diting)
 
 ---
- src/plasmacamera/worker.cpp | 97 ++++++++++++++++++++++++++++++++-----
- src/plasmacamera/worker.h   |  3 ++
- 2 files changed, 87 insertions(+), 13 deletions(-)
+ src/plasmacamera/worker.cpp | 100 +++++++++++++++++++++++++++++++-----
+ src/plasmacamera/worker.h   |   3 ++
+ 2 files changed, 90 insertions(+), 13 deletions(-)
 
 diff --git a/src/plasmacamera/worker.cpp b/src/plasmacamera/worker.cpp
-index db11662..fb7e8bb 100644
+index db11662..800e380 100644
 --- a/src/plasmacamera/worker.cpp
 +++ b/src/plasmacamera/worker.cpp
 @@ -3,6 +3,8 @@
@@ -144,18 +144,21 @@ index db11662..fb7e8bb 100644
          }
  
          // Cleanup signals
-@@ -466,6 +518,25 @@ void Worker::configure()
+@@ -466,6 +518,28 @@ void Worker::configure()
          }
      }
  
-+    // Viewfinder: reduced size, same aspect ratio as the default
-+    if (!m_stillConfig) {
++    // Viewfinder: reduced size, same aspect ratio as the default, only for
++    // cameras larger than that. Widths are kept to multiples of 64 pixels:
++    // the GPU cannot import some other output buffers (1400x1050 on the
++    // diting macro camera: eglCreateImageKHR fails)
++    if (!m_stillConfig && streamConfig.size.width > kViewfinderMaxWidth) {
 +        const libcamera::Size def = streamConfig.size;
 +        libcamera::Size best;
 +        for (const libcamera::Size &size : streamConfig.formats().sizes(streamConfig.pixelFormat)) {
 +            const double a = static_cast<double>(size.width) * def.height;
 +            const double b = static_cast<double>(size.height) * def.width;
-+            if (size.width > kViewfinderMaxWidth || std::abs(a - b) > 0.02 * a) {
++            if (size.width > kViewfinderMaxWidth || size.width % 64 || std::abs(a - b) > 0.02 * a) {
 +                continue;
 +            }
 +            if (static_cast<uint64_t>(size.width) * size.height > static_cast<uint64_t>(best.width) * best.height) {

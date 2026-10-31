@@ -5,7 +5,7 @@
 pkgname=plasma-camera-diting
 _tag=v26.08.2
 pkgver=26.08.2
-pkgrel=1
+pkgrel=2
 pkgdesc="Appareil photo de Plasma Mobile, aperçu réduit et photos en pleine résolution (Xiaomi diting)"
 arch=(aarch64)
 url="https://invent.kde.org/plasma-mobile/plasma-camera"
