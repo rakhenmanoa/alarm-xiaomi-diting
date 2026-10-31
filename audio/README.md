@@ -68,10 +68,15 @@ Il corrige le `HiFi.conf` de diting-ubuntu à la construction de `diting-device`
   la capture et rejette tout le profil HiFi ;
 - **stéréo** : la protection CS35L41 mélangeait les deux canaux, et les deux amplis les recevaient dans un ordre
   inverse. `ASPRX1` sur les deux entrées des deux amplis donne la gauche en haut et la droite en bas ;
-- **micro du haut (ADC4) sur `SWR_MIC5`**, conséquence du patch `0903` ;
+- **micro du bas (ADC1) seul pour les enregistrements**, sur les deux canaux (`TX SMIC MUX1` = `SWR_MIC0`) : avec ADC1
+  et ADC4 actifs ensemble, les ports SoundWire entrent encore en collision à certains démarrages malgré `0903`
+  (souffle sur les deux canaux, sans xrun), et l'ADC4 seul bloque la capture (testé le 2026-10-31). L'ADC4 est
+  coupé à l'activation du micro, pour repartir propre après un appel ;
 - **gain des décimateurs +24 dB** (108 au lieu de 84) : voix vers -42 dBFS, pics vers -18 dBFS sans écrêtage.
 
-Les mêmes changements `SWR_MIC5` et `108` sont appliqués par `sed` aux scripts d'appel (PKGBUILD de `diting-device`).
+Les changements `SWR_MIC5` et `108` sont appliqués par `sed` aux scripts d'appel (PKGBUILD de `diting-device`), qui
+gardent les deux micros pour la réduction de bruit Fluence ; en fin d'appel,
+`diting-voice-call` revient au micro du bas seul (ADC4 coupé, `TX SMIC MUX1` = `SWR_MIC0`).
 
 ### Audio des appels (diting-ubuntu)
 L'audio des appels tourne entièrement dans l'ADSP (modem ↔ VCPM ↔ codecs), comme le PAL d'Android.
@@ -93,7 +98,8 @@ pour lancer `/usr/libexec/diting/diting-callaudio`.
 ## 4. État
 
 - **Haut-parleurs** : stéréo propre à travers le firmware de protection (calibration d'usine), au niveau d'Android.
-- **Micros** : les deux capturent, sans bruit blanc depuis `0903` ; gain réglé (+24 dB).
+- **Micros** : en enregistrement, micro du bas seul, propre (gain +24 dB). Les deux ensemble soufflent à certains
+  démarrages (collision SoundWire restante) : utilisés seulement en appel, où Fluence masque le souffle.
 - **Appels** (3G) : audio dans les deux sens, démarrage sur l'écouteur, haut-parleur et sourdine fonctionnels,
   annulation d'écho Fluence active.
 - Limites : pas de VoLTE ; TX des appels fixé à 16 kHz (appels bande étroite 8 kHz non testés) ; pas de prise casque.
@@ -213,7 +219,7 @@ Les commandes `fdtput` qui ont servi à mettre au point `0903` sont dans le READ
 |---|---|
 | Pas de carte son au démarrage, batterie à 0 % | `diting-dsp.conf` absent (softdep `qcom_pd_mapper`). |
 | PipeWire n'offre pas le profil HiFi | Profil UCM non corrigé : vérifier que `HiFi.conf` contient `MultiMedia2 Mixer TX_CODEC_DMA_TX_3`. |
-| Bruit blanc au micro | Patch `0903` absent du DTB, ou UCM encore sur `SWR_MIC1`. |
+| Bruit blanc au micro | Patch `0903` absent du DTB, ou UCM ancien (`SWR_MIC1`, ou ADC4 encore activé avec l'ADC1). |
 | Haut-parleur du bas muet | Patch `0086` absent (RX2 sur son propre canal avec le firmware de protection). |
 | Souffle fort, signal faible | Horloge de bit TDM non inversée (patch `0048`). |
 | Pas d'audio en appel | `systemctl status diting-audiopd diting-voice-call` ; topologie d'appel et modules ADSP présents dans `firmware-xiaomi-diting`. |

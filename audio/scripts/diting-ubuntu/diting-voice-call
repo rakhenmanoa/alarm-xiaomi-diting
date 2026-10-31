@@ -137,6 +137,9 @@ class VoiceCall:
         for name, value in amp_media():
             amixer_set(name, value)
         amixer_set(MEDIA_ROUTE, self.media_route or "1")
+        for name, value in (("ADC4 Switch", "0"), ("ADC4_MIXER Switch", "0"),
+                            ("TX SMIC MUX1", "SWR_MIC0")):
+            amixer_set(name, value)
 
     def pcm_exited(self, pid, status):
         """the only place that reaps diting-voice-pcm (GLib child watch)"""

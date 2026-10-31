@@ -5,7 +5,7 @@
 pkgname=diting-device
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 _artcommit=b4c1510fe6686ab8053715a02c34bec875ca5c6c
-pkgver=0.1.18
+pkgver=0.1.19
 pkgrel=1
 pkgdesc="Intégration du Xiaomi 12T Pro (diting) : images de démarrage, audio, appels, modem, capteurs, USB"
 arch=(any)
@@ -104,6 +104,11 @@ package() {
     -e "s/(\"TX_DEC\([01]\) Volume\", \"84\")/(\"TX_DEC\1 Volume\", \"108\")/g" \
     "$pkgdir/usr/libexec/diting/diting-voice-call" "$pkgdir/usr/libexec/diting/diting-callaudio"
   grep -q '"SWR_MIC5"' "$pkgdir/usr/libexec/diting/diting-voice-call"
+  # fin d'appel : retour au micro du bas seul, comme l'UCM (l'ADC4 avec l'ADC1
+  # fait souffler les enregistrements, voir audio/README.md)
+  sed -i '/amixer_set(MEDIA_ROUTE, self.media_route or "1")/a\        for name, value in (("ADC4 Switch", "0"), ("ADC4_MIXER Switch", "0"),\n                            ("TX SMIC MUX1", "SWR_MIC0")):\n            amixer_set(name, value)' \
+    "$pkgdir/usr/libexec/diting/diting-voice-call"
+  grep -q '"SWR_MIC0"' "$pkgdir/usr/libexec/diting/diting-voice-call"
 
   # NetworkManager ignore les connexions lisibles par d'autres
   chmod 600 "$pkgdir"/usr/lib/NetworkManager/system-connections/*.nmconnection
