@@ -1,0 +1,37 @@
+#!/bin/sh
+# Prepare the SM8475 in-SoC modem for ModemManager (runs before it):
+#  - activate the USIM application for the primary GW provisioning session;
+#    without it ModemManager fails with "GW primary session index unknown"
+#    (same job as postmarketOS msm-modem-uim-selection).
+#  - allow all radio technologies; the modem NV defaults to GSM only, and
+#    rmtfs runs read-only (-r) so changes made by the modem do not persist.
+q="qmicli -d qrtr://0"
+
+# wait for the modem's UIM service (QMI service 11) to appear on QRTR
+i=0
+while ! qrtr-lookup 2>/dev/null | awk '$1 == 11' | grep -q .; do
+	i=$((i + 1))
+	[ "$i" -ge 60 ] && { echo "diting-modem-setup: modem UIM service not found" >&2; exit 0; }
+	sleep 1
+done
+
+# the card shows up a few seconds after the UIM service; then activate the
+# first USIM application of the first slot with a card present
+i=0
+while :; do
+	status="$($q --uim-get-card-status 2>/dev/null)"
+	echo "$status" | grep -q "Primary GW:   slot" && break
+	slot=$(echo "$status" | awk '/^Slot \[/ { s = substr($2, 2, 1) } /Card state: .present./ { print s; exit }')
+	aid=$(echo "$status" | sed -n "/^Slot \[$slot\]/,/^Slot \[/p" |
+		awk '/Application type:  .usim/ { u = 1 } u && /Application ID:/ { getline; gsub(/[ \t]/, ""); print; exit }')
+	if [ -n "$slot" ] && [ -n "$aid" ]; then
+		$q --uim-change-provisioning-session="slot=$slot,activate=yes,session-type=primary-gw-provisioning,aid=$aid" &&
+			break
+	fi
+	i=$((i + 1))
+	[ "$i" -ge 60 ] && { echo "diting-modem-setup: no SIM application to activate" >&2; break; }
+	sleep 1
+done
+
+$q --nas-set-system-selection-preference="gsm|umts|lte|5gnr" >/dev/null 2>&1 || true
+exit 0

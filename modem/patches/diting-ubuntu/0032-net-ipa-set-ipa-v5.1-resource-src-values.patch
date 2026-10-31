@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ZXlieC <xlie7669@gmail.com>
+Date: Tue, 3 Mar 2026 09:31:08 +0200
+Subject: [PATCH 32/46] net: ipa: set ipa v5.1 resource src values
+
+Source: https://github.com/OnePlusOSS/android_kernel_modules_and_devicetree_oneplus_sm8450/blob/oneplus/sm8450_v_15.0.0_oneplus_10_pro/vendor/qcom/opensource/dataipa/drivers/platform/msm/ipa/ipa_v3/ipa_utils.c#L598
+---
+ drivers/net/ipa/data/ipa_data-v5.1.c | 23 ++++-------------------
+ 1 file changed, 4 insertions(+), 19 deletions(-)
+
+diff --git a/drivers/net/ipa/data/ipa_data-v5.1.c b/drivers/net/ipa/data/ipa_data-v5.1.c
+index 7e97467c3..52b9684eb 100644
+--- a/drivers/net/ipa/data/ipa_data-v5.1.c
++++ b/drivers/net/ipa/data/ipa_data-v5.1.c
+@@ -186,10 +186,7 @@ static const struct ipa_gsi_endpoint_data ipa_gsi_endpoint_data[] = {
+ static const struct ipa_resource ipa_resource_src[] = {
+ 	[IPA_RESOURCE_TYPE_SRC_PKT_CONTEXTS] = {
+ 		.limits[IPA_RSRC_GROUP_SRC_UL] = {
+-			.min = 3,	.max = 9,
+-		},
+-		.limits[IPA_RSRC_GROUP_SRC_DL] = {
+-			.min = 4,	.max = 10,
++			.min = 7,	.max = 12,
+ 		},
+ 		.limits[IPA_RSRC_GROUP_SRC_URLLC] = {
+ 			.min = 1,	.max = 63,
+@@ -200,10 +197,7 @@ static const struct ipa_resource ipa_resource_src[] = {
+ 	},
+ 	[IPA_RESOURCE_TYPE_SRC_DESCRIPTOR_LISTS] = {
+ 		.limits[IPA_RSRC_GROUP_SRC_UL] = {
+-			.min = 9,	.max = 9,
+-		},
+-		.limits[IPA_RSRC_GROUP_SRC_DL] = {
+-			.min = 12,	.max = 12,
++			.min = 21,	.max = 21,
+ 		},
+ 		.limits[IPA_RSRC_GROUP_SRC_URLLC] = {
+ 			.min = 10,	.max = 10,
+@@ -211,10 +205,7 @@ static const struct ipa_resource ipa_resource_src[] = {
+ 	},
+ 	[IPA_RESOURCE_TYPE_SRC_DESCRIPTOR_BUFF] = {
+ 		.limits[IPA_RSRC_GROUP_SRC_UL] = {
+-			.min = 9,	.max = 9,
+-		},
+-		.limits[IPA_RSRC_GROUP_SRC_DL] = {
+-			.min = 24,	.max = 24,
++			.min = 33,	.max = 33,
+ 		},
+ 		.limits[IPA_RSRC_GROUP_SRC_URLLC] = {
+ 			.min = 20,	.max = 20,
+@@ -224,9 +215,6 @@ static const struct ipa_resource ipa_resource_src[] = {
+ 		.limits[IPA_RSRC_GROUP_SRC_UL] = {
+ 			.min = 0,	.max = 63,
+ 		},
+-		.limits[IPA_RSRC_GROUP_SRC_DL] = {
+-			.min = 0,	.max = 63,
+-		},
+ 		.limits[IPA_RSRC_GROUP_SRC_URLLC] = {
+ 			.min = 1,	.max = 63,
+ 		},
+@@ -236,10 +224,7 @@ static const struct ipa_resource ipa_resource_src[] = {
+ 	},
+ 	[IPA_RESOURCE_TYPE_SRC_ACK_ENTRIES] = {
+ 		.limits[IPA_RSRC_GROUP_SRC_UL] = {
+-			.min = 22,	.max = 22,
+-		},
+-		.limits[IPA_RSRC_GROUP_SRC_DL] = {
+-			.min = 16,	.max = 16,
++			.min = 38,	.max = 38,
+ 		},
+ 		.limits[IPA_RSRC_GROUP_SRC_URLLC] = {
+ 			.min = 16,	.max = 16,

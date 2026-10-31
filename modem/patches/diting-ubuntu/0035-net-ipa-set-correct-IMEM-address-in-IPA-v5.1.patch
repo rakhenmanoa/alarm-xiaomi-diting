@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ZXlieC <xlie7669@gmail.com>
+Date: Wed, 24 Jun 2026 21:40:07 +0300
+Subject: [PATCH 35/46] net: ipa: set correct IMEM address in IPA v5.1
+
+---
+ drivers/net/ipa/data/ipa_data-v5.1.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/net/ipa/data/ipa_data-v5.1.c b/drivers/net/ipa/data/ipa_data-v5.1.c
+index 35dd4cec2..4d9519c9c 100644
+--- a/drivers/net/ipa/data/ipa_data-v5.1.c
++++ b/drivers/net/ipa/data/ipa_data-v5.1.c
+@@ -419,7 +419,7 @@ static const struct ipa_mem ipa_mem_local_data[] = {
+ static const struct ipa_mem_data ipa_mem_data = {
+ 	.local_count	= ARRAY_SIZE(ipa_mem_local_data),
+ 	.local		= ipa_mem_local_data,
+-	.imem_addr	= 0x14688000,
++	.imem_addr	= 0x146a8000,
+ 	.imem_size	= 0x00002000,
+ 	.smem_size	= 0x00009000,
+ };

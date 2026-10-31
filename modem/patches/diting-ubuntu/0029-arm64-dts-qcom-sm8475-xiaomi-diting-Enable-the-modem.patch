@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: royka1 <397414+royka1@users.noreply.github.com>
+Date: Mon, 12 Oct 2026 16:42:43 +0200
+Subject: [PATCH 29/46] arm64: dts: qcom: sm8475-xiaomi-diting: Enable the
+ modem
+
+MPSS remoteproc with the vendor modem image (squashed), and the rmtfs
+shared memory the modem uses for its EFS (vendor: 0x280000, client-id 1,
+placed at runtime; the address follows the sm8450-mainline diting DTS).
+---
+ .../boot/dts/qcom/sm8475-xiaomi-diting.dts    | 20 +++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+index 5c936cd0d..ace9772eb 100644
+--- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
++++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+@@ -92,6 +92,20 @@ xbl_sc_mem: memory@a6e00000 {
+ 			no-map;
+ 		};
+ 
++		/*
++		 * Modem EFS shared memory (vendor qcom,rmtfs_sharedmem: 0x280000,
++		 * client-id 1, placed at runtime). The address is the one the
++		 * sm8450-mainline diting DTS uses; it is plain RAM on this unit.
++		 */
++		rmtfs_mem: memory@f8700000 {
++			compatible = "qcom,rmtfs-mem";
++			reg = <0x0 0xf8700000 0x0 0x280000>;
++			no-map;
++
++			qcom,client-id = <1>;
++			qcom,vmid = <QCOM_SCM_VMID_MSS_MSA>;
++		};
++
+ 		adsp_mem: memory@9fd00000 {
+ 			reg = <0x0 0x9fd00000 0x0 0x3100000>;
+ 			no-map;
+@@ -489,6 +503,12 @@ eusb2_repeater: redriver@4f {
+ 	};
+ };
+ 
++&remoteproc_mpss {
++	/* squashed from the vendor firmware_mnt modem.mdt + modem.bNN */
++	firmware-name = "qcom/sm8475/xiaomi/diting/modem.mbn";
++	status = "okay";
++};
++
+ &remoteproc_adsp {
+ 	/* squashed from the vendor firmware_mnt adsp.mdt + adsp.bNN */
+ 	firmware-name = "qcom/sm8475/xiaomi/diting/adsp.mbn";

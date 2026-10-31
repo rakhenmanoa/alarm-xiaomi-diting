@@ -1,0 +1,22 @@
+# Utilisé seulement si le dépôt ALARM ne fournit pas « qrtr »
+pkgname=qrtr
+_commit=29e36ae164389580a0f8ea7a7fdb728140ae978d
+pkgver=1.2.r18.g${_commit:0:7}
+pkgrel=1
+pkgdesc="Bibliothèque et outils QRTR (Qualcomm IPC Router)"
+arch=(aarch64)
+url="https://github.com/linux-msm/qrtr"
+license=(BSD-3-Clause)
+depends=(glibc)
+makedepends=(git meson ninja)
+source=("qrtr::git+https://github.com/linux-msm/qrtr.git#commit=${_commit}")
+sha256sums=('SKIP')
+
+build() {
+  arch-meson qrtr build
+  meson compile -C build
+}
+package() {
+  meson install -C build --destdir "$pkgdir"
+  install -Dm644 qrtr/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

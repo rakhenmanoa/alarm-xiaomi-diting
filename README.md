@@ -202,6 +202,7 @@ scripts/restaurer-android.sh --donnees  # + userdata/metadata d'origine (si sauv
   Gardez-le, ou acceptez la version d'ALARM : la caméra arrière ne fonctionnera alors plus.
 - Tout ce qui concerne l'écran (dalle, DSC, tactile, extinction et rallumage, analyse des journaux) : [screen/README.md](screen/README.md).
 - Tout ce qui concerne l'audio (haut-parleurs, écouteur, micros, appels, UCM) : [audio/README.md](audio/README.md).
+- Tout ce qui concerne le modem (MPSS, IPA, rmtfs, SIM, ModemManager, données mobiles, appels et SMS) : [modem/README.md](modem/README.md).
 - Pour tester un pilote ou le device tree sans reconstruire tout le noyau : compiler seulement les
   modules et le DTB sur le téléphone, voir [docs/modules-sur-le-telephone.md](docs/modules-sur-le-telephone.md).
 

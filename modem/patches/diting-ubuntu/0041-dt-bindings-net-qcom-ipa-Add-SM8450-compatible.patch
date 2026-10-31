@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: royka1 <397414+royka1@users.noreply.github.com>
+Date: Mon, 12 Oct 2026 17:22:27 +0200
+Subject: [PATCH 41/46] dt-bindings: net: qcom,ipa: Add SM8450 compatible
+
+The SM8450 family (including SM8475) has IPA v5.1, which the ipa driver
+now supports as qcom,sm8450-ipa.
+---
+ Documentation/devicetree/bindings/net/qcom,ipa.yaml | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/Documentation/devicetree/bindings/net/qcom,ipa.yaml b/Documentation/devicetree/bindings/net/qcom,ipa.yaml
+index 68ec76fe4..db91bfaaf 100644
+--- a/Documentation/devicetree/bindings/net/qcom,ipa.yaml
++++ b/Documentation/devicetree/bindings/net/qcom,ipa.yaml
+@@ -53,6 +53,7 @@ properties:
+           - qcom,sdx65-ipa
+           - qcom,sm6350-ipa
+           - qcom,sm8350-ipa
++          - qcom,sm8450-ipa
+           - qcom,sm8550-ipa
+       - items:
+           - enum:

@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ZXlieC <xlie7669@gmail.com>
+Date: Wed, 24 Jun 2026 21:58:27 +0300
+Subject: [PATCH 36/46] net: ipa: remove unused DST groups for IPA v5.1
+
+---
+ drivers/net/ipa/data/ipa_data-v5.1.c | 8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/net/ipa/data/ipa_data-v5.1.c b/drivers/net/ipa/data/ipa_data-v5.1.c
+index 4d9519c9c..cf6d85be2 100644
+--- a/drivers/net/ipa/data/ipa_data-v5.1.c
++++ b/drivers/net/ipa/data/ipa_data-v5.1.c
+@@ -39,10 +39,10 @@ enum ipa_rsrc_group_id {
+ 	/* Destination resource group identifiers */
+ 	IPA_RSRC_GROUP_DST_UL				= 0,
+ 	IPA_RSRC_GROUP_DST_DL,
+-	IPA_RSRC_GROUP_DST_DMA,
+-	IPA_RSRC_GROUP_DST_QDSS,
+-	IPA_RSRC_GROUP_DST_CV2X,
+-	IPA_RSRC_GROUP_DST_UC,
++	IPA_RSRC_GROUP_DST_UNUSED_2,
++	IPA_RSRC_GROUP_DST_UNUSED_3,
++	IPA_RSRC_GROUP_DST_UNUSED_4,
++	IPA_RSRC_GROUP_DST_UNUSED_5,
+ 	IPA_RSRC_GROUP_DST_DRB_IP,
+ 	IPA_RSRC_GROUP_DST_COUNT,	/* Last; not a destination group */
+ };

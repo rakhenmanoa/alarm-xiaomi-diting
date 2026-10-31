@@ -1,0 +1,15 @@
+[Unit]
+Description=Prepare the Xiaomi Diting modem for ModemManager
+After=rmtfs.service tqftpserv.service
+Wants=rmtfs.service tqftpserv.service
+Before=ModemManager.service
+ConditionPathExists=/usr/bin/qmicli
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/diting/diting-modem-setup
+TimeoutStartSec=90
+
+[Install]
+WantedBy=ModemManager.service

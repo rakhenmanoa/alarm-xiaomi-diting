@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ZXlieC <xlie7669@gmail.com>
+Date: Tue, 3 Mar 2026 16:46:42 +0200
+Subject: [PATCH 33/46] net: ipa: ipa_data-v5.1: add IPA_MEM_STATS_TETHERING
+ and remove IPA_MEM_AP_V6_FILTER
+
+---
+ drivers/net/ipa/data/ipa_data-v5.1.c | 12 +++---------
+ 1 file changed, 3 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/net/ipa/data/ipa_data-v5.1.c b/drivers/net/ipa/data/ipa_data-v5.1.c
+index 52b9684eb..932498144 100644
+--- a/drivers/net/ipa/data/ipa_data-v5.1.c
++++ b/drivers/net/ipa/data/ipa_data-v5.1.c
+@@ -378,15 +378,9 @@ static const struct ipa_mem ipa_mem_local_data[] = {
+ 		.canary_count	= 0,
+ 	},
+ 	{
+-		.id		= IPA_MEM_AP_V4_FILTER,
+-		.offset		= 0x2918,
+-		.size		= 0x0118,
+-		.canary_count	= 2,
+-	},
+-	{
+-		.id		= IPA_MEM_AP_V6_FILTER,
+-		.offset		= 0x2aa0,
+-		.size		= 0x0228,
++		.id		= IPA_MEM_STATS_TETHERING,
++		.offset		= 0x2910,
++		.size		= 0x03c0,
+ 		.canary_count	= 0,
+ 	},
+ 	{

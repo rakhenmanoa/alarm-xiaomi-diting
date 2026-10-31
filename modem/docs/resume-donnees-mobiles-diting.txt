@@ -1,0 +1,123 @@
+DONNÉES MOBILES 4G SUR XIAOMI 12T PRO (diting) SOUS ARCH LINUX ARM
+Résumé du problème et de la solution — 30 octobre 2026
+======================================================================
+
+CONTEXTE
+--------
+- Téléphone : Xiaomi 12T Pro (diting, SM8475), Arch Linux ARM + Plasma Mobile
+- Opérateur : Airtel Madagascar (64601), eSIM dans l'emplacement 2
+- ModemManager 1.24.2 (déjà recompilé avec le correctif netlink 9317cbc4)
+- libqmi 1.38.0, modem joint en QRTR (qrtr://0), liaison data par IPA (rmnet_ipa0)
+
+
+SYMPTÔMES
+---------
+- Le modem s'enregistre normalement : state registered, access tech lte,
+  signal ~73 %, packet service state attached.
+- Les appels et SMS fonctionnent, mais aucune connexion data ne s'établit.
+- NetworkManager relance la connexion en boucle (bearer 45, 46, 47...), et
+  chaque tentative échoue aussitôt :
+
+    couldn't start IPv4 network: QMI protocol error (14): 'CallFailed'
+    verbose call end reason (3,2001): [cm] no-service
+    couldn't connect bearer: Call failed: cm error: no-service
+
+
+PISTES ÉCARTÉES
+---------------
+1. APN : l'APN "internet" est correct. Le bearer initial (attache 4G) utilise
+   déjà "internet" en ipv4v6, et le profil modem n° 4 (qdp_profile_ia) aussi.
+2. Type d'IP : l'échec est identique en IPv4 seul.
+3. Profil modem : l'échec est identique avec profile-id=1 (APN vide) et
+   profile-id=4 (internet).
+4. Mode réseau : le préféré était 2g, corrigé en 4g, sans effet sur l'erreur.
+5. Provisionnement SIM : qmicli --uim-get-card-status montre
+   "Primary GW: slot '2', application '1'". L'eSIM est donc bien l'abonnement
+   primaire.
+6. Liaison noyau : rmnet_ipa0 est présent et actif. Le refus vient du modem
+   avant même l'utilisation du chemin data.
+7. Requête de ModemManager : le journal DEBUG montre une requête "Start
+   Network" correcte (APN internet, IPv4, système data préféré lte), refusée
+   par le modem lui-même.
+
+
+CAUSE
+-----
+Le modem Qualcomm est multi-SIM. Un client data (WDS) doit être rattaché à
+un abonnement (primaire / secondaire). Or ModemManager 1.24.2 ne fait jamais
+ce rattachement : son client reste sur "any". Le modem envoie alors la
+session vers l'abonnement data désigné laissé par Android, qui n'est pas
+celui où l'eSIM est provisionnée sous Linux. Le gestionnaire d'appels du
+modem ne trouve "aucun service" sur cet abonnement, d'où no-service (3,2001).
+
+Il était impossible de le vérifier avec qmicli :
+- qmicli 1.38 n'a pas d'option pour le message WDS "Bind Subscription" (0x00AF),
+  même si libqmi le connaît depuis la version 1.37 ;
+- en QRTR, le client WDS disparaît à la fin de chaque appel de qmicli, donc
+  on ne peut pas enchaîner liaison puis démarrage de session.
+
+
+PREUVE
+------
+Un script Python (libqmi via GObject introspection) fait tout dans un seul
+processus : extra/qmi-dds-test/qmi-dds-test.py
+
+    sudo python3 qmi-dds-test.py lire
+      -> Abonnement par défaut de ce client : any
+
+    sudo python3 qmi-dds-test.py test primary
+      -> Liaison au canal data (mux 5) : OK
+      -> Client lié à l'abonnement primary
+      -> SESSION DATA OUVERTE
+      -> Session refermée.
+
+Une fois le client rattaché explicitement à l'abonnement primaire, le modem
+accepte la session. La cause est confirmée.
+
+
+SOLUTION
+--------
+Patch ModemManager :
+  0002-bearer-qmi-bind-WDS-client-to-primary-subscription.patch
+  (dans pkgbuilds/modemmanager-fix/)
+
+Juste après la liaison du client WDS au canal data (mux), en IPv4 comme en
+IPv6, ModemManager envoie "Bind Subscription = primary". Si le modem refuse,
+il note un avertissement et continue.
+
+Application sur le téléphone, une commande à la fois :
+
+    cd ~/modemmanager
+    patch -d src/ModemManager -p1 < ~/0002-bearer-qmi-bind-WDS-client-to-primary-subscription.patch
+    makepkg -efA --nocheck
+    sudo pacman -U modemmanager-1.24.2-2-aarch64.pkg.tar.zst libmm-glib-1.24.2-2-aarch64.pkg.tar.zst
+    sudo systemctl restart ModemManager
+    sudo nmcli connection modify Airtel gsm.apn internet connection.autoconnect yes
+    sudo nmcli connection up Airtel
+
+Résultat : nmcli device affiche qrtr0 / gsm / connecté / Airtel.
+
+Protection contre les mises à jour, dans /etc/pacman.conf, section [options] :
+
+    IgnorePkg = modemmanager libmm-glib
+
+
+VÉRIFICATIONS UTILES
+--------------------
+    nmcli device | grep -i gsm
+    ip -br addr show qmapmux0.0
+    ping -c3 -I qmapmux0.0 1.1.1.1
+    mmcli -m any | grep -E "  state|packet service"
+
+
+LIMITES ET POINTS À SURVEILLER
+------------------------------
+- Le patch force l'abonnement primaire. C'est correct avec une seule SIM
+  active (physique ou eSIM). Avec deux SIM, il faudrait rendre ce choix
+  configurable.
+- Le réglage persistant du modem (abonnement data désigné) n'est pas
+  modifié : libqmi n'a pas de message pour cela. Le patch contourne le
+  problème client par client.
+- Toute recompilation de ModemManager doit appliquer les deux correctifs
+  (0001 netlink et 0002 abonnement).
+- Les commandes nmcli prennent le nom de la connexion : "Airtel".

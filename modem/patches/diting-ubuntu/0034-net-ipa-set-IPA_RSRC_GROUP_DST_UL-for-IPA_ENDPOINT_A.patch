@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ZXlieC <xlie7669@gmail.com>
+Date: Thu, 7 May 2026 20:56:38 +0300
+Subject: [PATCH 34/46] net: ipa: set `IPA_RSRC_GROUP_DST_UL` for
+ `IPA_ENDPOINT_AP_MODEM_RX`
+
+---
+ drivers/net/ipa/data/ipa_data-v5.1.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/net/ipa/data/ipa_data-v5.1.c b/drivers/net/ipa/data/ipa_data-v5.1.c
+index 932498144..35dd4cec2 100644
+--- a/drivers/net/ipa/data/ipa_data-v5.1.c
++++ b/drivers/net/ipa/data/ipa_data-v5.1.c
+@@ -144,7 +144,7 @@ static const struct ipa_gsi_endpoint_data ipa_gsi_endpoint_data[] = {
+ 		},
+ 		.endpoint = {
+ 			.config = {
+-				.resource_group	= IPA_RSRC_GROUP_DST_DL,
++				.resource_group	= IPA_RSRC_GROUP_DST_UL,
+ 				.checksum       = true,
+ 				.qmap		= true,
+ 				.aggregation	= true,

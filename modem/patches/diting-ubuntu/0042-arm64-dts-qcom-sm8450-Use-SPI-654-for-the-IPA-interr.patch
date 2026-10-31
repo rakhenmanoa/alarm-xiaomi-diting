@@ -1,0 +1,27 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: royka1 <397414+royka1@users.noreply.github.com>
+Date: Mon, 12 Oct 2026 17:22:42 +0200
+Subject: [PATCH 42/46] arm64: dts: qcom: sm8450: Use SPI 654 for the IPA
+ interrupt
+
+The IPA node added for SM8450 took the IPA interrupt (SPI 655) from
+SM8350. The vendor device trees for SM8450-family phones (Xiaomi diting,
+Nothing pong: qcom,ipa@3e00000 interrupts <0 0x28e 4>) use SPI 654, as
+the upstream SM8550 and SM8650 nodes do.
+---
+ arch/arm64/boot/dts/qcom/sm8450.dtsi | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8450.dtsi b/arch/arm64/boot/dts/qcom/sm8450.dtsi
+index 5b25b45b8..bdcaca369 100644
+--- a/arch/arm64/boot/dts/qcom/sm8450.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8450.dtsi
+@@ -3084,7 +3084,7 @@ ipa: ipa@3f40000 {
+ 				    "ipa-shared",
+ 				    "gsi";
+ 
+-			interrupts-extended = <&intc GIC_SPI 655 IRQ_TYPE_EDGE_RISING>,
++			interrupts-extended = <&intc GIC_SPI 654 IRQ_TYPE_EDGE_RISING>,
+ 					      <&intc GIC_SPI 432 IRQ_TYPE_LEVEL_HIGH>,
+ 					      <&ipa_smp2p_in 0 IRQ_TYPE_EDGE_RISING>,
+ 					      <&ipa_smp2p_in 1 IRQ_TYPE_EDGE_RISING>;
