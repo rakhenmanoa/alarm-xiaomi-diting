@@ -1,15 +1,15 @@
-From 8fd3a531acec7765b4bb2e61a19ee42f8976a46d Mon Sep 17 00:00:00 2001
+From 376c545277d03b7bca2d4430ad527c1cc8546896 Mon Sep 17 00:00:00 2001
 From: alarm <alarm@localhost>
 Date: Sat, 31 Oct 2026 13:23:42 +0300
 Subject: [PATCH] Reduced viewfinder, full resolution still capture (diting)
 
 ---
- src/plasmacamera/worker.cpp | 100 +++++++++++++++++++++++++++++++-----
- src/plasmacamera/worker.h   |   3 ++
- 2 files changed, 90 insertions(+), 13 deletions(-)
+ src/plasmacamera/worker.cpp | 109 +++++++++++++++++++++++++++++++-----
+ src/plasmacamera/worker.h   |   5 +-
+ 2 files changed, 99 insertions(+), 15 deletions(-)
 
 diff --git a/src/plasmacamera/worker.cpp b/src/plasmacamera/worker.cpp
-index db11662..800e380 100644
+index db11662..95561bf 100644
 --- a/src/plasmacamera/worker.cpp
 +++ b/src/plasmacamera/worker.cpp
 @@ -3,6 +3,8 @@
@@ -63,7 +63,7 @@ index db11662..800e380 100644
 +void Worker::switchConfiguration(bool still)
 +{
 +    setMode(CaptureMode::None);
-+    stopViewFinder();
++    stopViewFinder(false);
 +    m_stillConfig = still;
 +    startViewFinder();
 +    if (!still) {
@@ -129,7 +129,14 @@ index db11662..800e380 100644
  
      configure();
  
-@@ -301,11 +353,11 @@ void Worker::stopViewFinder()
+@@ -295,17 +347,17 @@ void Worker::startViewFinder()
+     m_framePollTimer->start();
+ }
+ 
+-void Worker::stopViewFinder()
++void Worker::stopViewFinder(bool release)
+ {
+     qDebug() << "stop view finder";
      m_framePollTimer->stop();
  
      if (m_camera) {
@@ -144,7 +151,28 @@ index db11662..800e380 100644
          }
  
          // Cleanup signals
-@@ -466,6 +518,28 @@ void Worker::configure()
+@@ -320,6 +372,7 @@ void Worker::stopViewFinder()
+     if (m_allocator) {
+         m_allocator->free(m_stream);
+         delete m_allocator;
++        m_allocator = nullptr;
+     }
+ 
+     m_mappedBuffers.clear();
+@@ -339,6 +392,12 @@ void Worker::stopViewFinder()
+         m_doneQueue.clear();
+     }
+ 
++    // Switching between the viewfinder and the still configuration keeps
++    // the camera acquired
++    if (!release) {
++        return;
++    }
++
+     if (m_camera) {
+         int ret = m_camera->release();
+         if (ret < 0) {
+@@ -466,6 +525,28 @@ void Worker::configure()
          }
      }
  
@@ -174,13 +202,15 @@ index db11662..800e380 100644
      //  - https://git.libcamera.org/libcamera/libcamera.git/tree/src/apps/qcam/main_window.cpp#n399
  
 diff --git a/src/plasmacamera/worker.h b/src/plasmacamera/worker.h
-index f2e92c7..5b57703 100644
+index f2e92c7..4f15a1d 100644
 --- a/src/plasmacamera/worker.h
 +++ b/src/plasmacamera/worker.h
-@@ -100,6 +100,7 @@ private:
+@@ -99,7 +99,8 @@ private:
+     };
  
      void startViewFinder();
-     void stopViewFinder();
+-    void stopViewFinder();
++    void stopViewFinder(bool release = true);
 +    void switchConfiguration(bool still); // viewfinder <-> still capture
  
      void setState(State state);
