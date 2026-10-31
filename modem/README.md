@@ -14,7 +14,7 @@ les données mobiles 4G.
 
 | Dossier | Contenu | Original |
 |---|---|---|
-| `pilote/drivers/net/ipa/` | Pilote IPA complet (liaison data du modem) **après** application de la série (Linux 7.2.10 + diting-ubuntu `c68ff47`, patches `0030` et `0032`–`0040`). Compilable seul, voir la section 9. | `drivers/net/ipa/` du noyau patché |
+| `pilote/drivers/net/ipa/` | Pilote IPA complet (liaison data du modem) **après** application de la série (Linux 7.2.10 + diting-ubuntu `c68ff47`, patches `0030` et `0032`–`0040`). Compilable seul, voir la section 10. | `drivers/net/ipa/` du noyau patché |
 | `patches/diting-ubuntu/` | Patches noyau du modem (`0029`) et de la liaison data IPA v5.1 (`0030`–`0043`) | `kernel/patches/` de diting-ubuntu |
 | `patches/modemmanager/` | `0001` : plantage netlink ; `0002` : client data lié à l'abonnement primaire | `pkgbuilds/modemmanager-fix/` |
 | `scripts/diting-ubuntu/` | `diting-modem-setup` (SIM et technologies radio), son service, et le réglage « quick suspend/resume » de ModemManager | `ubuntu-diting/packages/device-xiaomi-diting/` |
@@ -134,7 +134,8 @@ ModemManager envoie `Bind Subscription = primary` (message WDS `0x00AF`, connu d
 Valable pour une seule SIM active, physique ou eSIM. Avec deux SIM, il faudrait rendre ce choix
 configurable.
 
-**Preuve sans recompiler** : `outils/qmi-dds-test.py` (voir la section 8).
+**Preuve sans recompiler** : `outils/qmi-dds-test.py` (voir la section 8). Le déroulé complet de
+l'enquête est dans la section 9.4.
 
 ### Recompiler ModemManager avec les deux correctifs
 
@@ -253,7 +254,137 @@ Autres commandes utiles :
 Les messages `Handover signaled, but it already happened` du noyau viennent du SLPI (capteurs), pas
 du modem. Ils sont sans gravité.
 
-## 9. Compiler et installer le pilote IPA sans recompiler le noyau
+## 9. Problèmes rencontrés, dans l'ordre
+
+### 9.1 « No modems were found » au premier démarrage
+`mmcli -L` ne trouvait aucun modem juste après le démarrage. Le modem démarre en cascade : rmtfs
+lance le MPSS (`-P`), le modem publie ses services sur QRTR, puis `diting-modem-setup` active la SIM
+avant que ModemManager ne le détecte. Il faut compter une bonne minute après le démarrage. Quelques
+instants plus tard : `/org/freedesktop/ModemManager1/Modem/0 [QUALCOMM INCORPORATED]`, inscrit en 4G
+sur Airtel, IMEI intact (lu depuis les partitions `modemst` sauvegardées).
+
+Si le modem n'apparaît toujours pas, contrôler la chaîne dans l'ordre :
+`/sys/class/remoteproc/*/state` (`running`), `systemctl status rmtfs` (option `-P`),
+`ls /dev/qcom_rmtfs_mem*`, puis `qrtr-lookup` (le modem publie de nombreux services).
+
+### 9.2 ModemManager plante toutes les 20 à 30 s (2026-10-26)
+**Symptômes** : la 4G coupe sans cesse, `ModemManager.service: Failed with result 'core-dump'`,
+8 plantages en 3 minutes (`coredumpctl list ModemManager`), saut vers l'adresse `0x30`. Le modem
+disparaissait aussi de plasma-dialer pendant les appels.
+
+**Cause** : un use-after-free dans `mm-netlink.c` de la 1.24.2. Chaque nouvelle tentative de connexion
+data crée et supprime des liens réseau, et c'est là que ModemManager plante. Les tentatives étaient
+très fréquentes parce que les connexions échouaient déjà avec `no-service` (section 9.4) : les deux
+problèmes s'alimentaient.
+
+**Solution** : correctif `0001` (commit officiel 9317cbc4). Deux obstacles pendant la recompilation :
+- `makepkg` répond « modemmanager is not available for the 'aarch64' architecture » : le PKGBUILD
+  d'Arch ne déclare que `x86_64`, d'où l'option `-A` ;
+- « unknown public key 734614319E26A433 » : `gpg --import keys/pgp/*.asc` dans le dossier du PKGBUILD.
+
+### 9.3 Appels et USSD refusés à plasma-dialer (2026-10-26)
+PolicyKit refusait `org.freedesktop.ModemManager1.Voice` à la session. Corrigé par la règle de la
+section 6 (`diting-device` 0.1.6).
+
+Fausse piste à retenir : un peu plus tard, les appels sortants sonnaient une fraction de seconde
+chez le correspondant puis coupaient (`dialing`, `ringing-out`, puis `terminated` dans la même
+seconde ; en QMI, `alerting` puis `disconnecting`). Cause de fin décodée : 156 `NORMAL_UNSPECIFIED`,
+cause réseau 31. Ni la 4G (la 3G forcée ne changeait rien), ni le service voix (arrêté, l'appel coupait
+encore), ni plasma-dialer n'étaient en cause : **le crédit d'appel était épuisé**. Avant de chercher
+plus loin sur un appel coupé par le réseau, vérifier le solde par USSD
+(`mmcli -m any --3gpp-ussd-initiate="CODE"`).
+
+### 9.4 Données mobiles impossibles avec la SIM 2 : `cm error: no-service` (2026-10-30)
+
+C'est le problème qui a demandé de patcher **ModemManager**. NetworkManager n'est pas en cause : il
+se contente de demander la connexion à ModemManager, et c'est ModemManager qui parle au modem (QMI).
+Il n'a donc pas fallu toucher à NetworkManager.
+
+**Situation** : une seule SIM, l'eSIM Airtel, qui occupe l'**emplacement 2**. L'emplacement 1 (tiroir
+physique) est vide.
+
+**Symptômes** : appels et SMS fonctionnent. Le modem est enregistré en 4G, mais aucune connexion
+internet ne s'établit. NetworkManager relance en boucle (bearers 45, 46, 47…), et chaque tentative
+échoue dans la seconde :
+```
+couldn't start IPv4 network: QMI protocol error (14): 'CallFailed'
+verbose call end reason (3,2001): [cm] no-service
+couldn't connect bearer: Call failed: cm error: no-service
+```
+Le message trompe : `no-service` laisse croire à une absence de réseau, alors que `mmcli -m any`
+montre `state: registered`, `access tech: lte`, `signal quality: 73%`, `registration: home` et
+`packet service state: attached`. La couche radio va bien. C'est l'ouverture de la session data qui
+est refusée par le gestionnaire d'appels interne du modem (`cm`, type 3, code 2001).
+
+**L'enquête, étape par étape**
+
+| Étape | Test | Résultat | Conclusion |
+|---|---|---|---|
+| 1 | `mmcli -m any` : état réseau | `attached` en LTE, mode préféré `2g` | Radio correcte. Mode préféré corrigé en 4G (`--set-allowed-modes="2g\|3g\|4g\|5g" --set-preferred-mode=4g`), sans effet sur l'erreur. |
+| 2 | Bearer initial (section « 3GPP EPS ») | APN `internet`, `ipv4v6` | L'attache 4G utilise déjà le bon APN : le réseau l'accepte. |
+| 3 | Connexion NetworkManager `Airtel` | APN `internet` | Pas d'erreur d'APN côté NetworkManager. |
+| 4 | `--simple-connect="apn=internet,ip-type=ipv4"`, autoconnect coupé | `no-service` | Ni l'APN ni le type d'IP. |
+| 5 | `--simple-connect="profile-id=1"` | `no-service` | Profil 1 : APN vide. |
+| 6 | Piste double SIM, première version : « la data part vers l'emplacement 1 » | `qmicli --uim-get-card-status` : `Primary GW: slot '2'` | L'eSIM est bien l'abonnement **primaire**. Piste écartée sous cette forme. |
+| 7 | `qmicli --dsd-get-system-status` | `3gpp-lte`, système préféré | Le module data du modem voit bien la LTE. |
+| 8 | `qmicli --wds-get-profile-list=3gpp` | Profil 4 `qdp_profile_ia`, APN `internet` (`ia` = *initial attach*) | — |
+| 9 | `--simple-connect="profile-id=4"` | `no-service` | Même le profil d'attache échoue. |
+| 10 | `qmicli --wds-start-network` direct | `InvalidOperation` | Sur ce modem, il faut d'abord lier le client WDS au canal data (mux). |
+| 11 | Liaison mux puis démarrage, en deux appels de qmicli | « Unknown client 1 for service wds » | En QRTR, le client WDS disparaît à la fin de chaque processus `qmicli`. |
+| 12 | Même chose via `qmi-proxy` (`-p`) | « Transaction timed out » | Le proxy n'est pas utilisable ici en QRTR. |
+| 13 | Journal DEBUG de ModemManager | Requête `Start Network` correcte (APN `internet`, IPv4, `lte`), réponse `CallFailed` | Le refus vient du **modem**. Liaison noyau présente (`rmnet_ipa0` `UP`). |
+| 14 | Options de qmicli 1.38 sur les abonnements | Seulement `--wds-bind-data-port` et `--wds-bind-mux-data-port` | Pas d'option pour `Bind Subscription`, même si libqmi connaît le message depuis la 1.37. |
+| 15 | `outils/qmi-dds-test.py lire` | Abonnement du client : `any` | ModemManager ne lie jamais ses clients data à un abonnement. |
+| 16 | `outils/qmi-dds-test.py test primary` | **SESSION DATA OUVERTE** | Cause trouvée. |
+
+**Cause** : le modem est multi-SIM (deux emplacements, plusieurs abonnements). Pour qu'une session data
+parte sur la bonne SIM, le client WDS doit être lié à un abonnement. ModemManager 1.24.2 ne le fait
+jamais, et son client reste sur `any`. Le modem choisit alors lui-même l'abonnement data, sans doute
+d'après le réglage laissé par Android (avec la SIM dans l'emplacement 2), qui ne correspond pas à
+l'abonnement primaire où Linux a provisionné l'eSIM. Sur cet abonnement, il n'y a « aucun service »,
+d'où `no-service`. Probablement, le problème n'apparaît pas avec une SIM dans l'emplacement 1 (non
+vérifié). rmtfs étant en lecture seule, ce réglage du modem ne peut d'ailleurs pas être changé
+durablement.
+
+**Solution** : correctif ModemManager `0002`. Dans `src/mm-bearer-qmi.c`, juste après la liaison du
+client WDS au canal data (`bind_mux_data_port_ready`), ModemManager envoie maintenant
+`Bind Subscription = QMI_SUBSCRIPTION_TYPE_PRIMARY`, pour le client IPv4 comme pour l'IPv6. Si le
+modem refuse cette liaison, il note un avertissement (« couldn't bind WDS client to primary
+subscription ») et continue comme avant : le patch ne casse rien sur un modem qui ne connaît pas ce
+message.
+
+Après recompilation, puis `sudo nmcli connection modify Airtel connection.autoconnect yes` et
+`sudo nmcli connection up Airtel` :
+```
+qrtr0           gsm       connecté      Airtel
+qmapmux0.0      rmnet     non-géré      --
+```
+Un dernier message trompeur : `nmcli connection up Airtel` a d'abord répondu « No suitable device
+found for this connection (device usb0 not available…) ». ModemManager venait de redémarrer et le
+modem n'était pas encore revenu : NetworkManager ne voyait que `usb0`. Quelques secondes plus tard,
+l'autoconnect avait déjà ouvert la connexion.
+
+**Ce qu'il faut retenir**
+- `cm error: no-service` avec `packet service state: attached` n'est pas un problème de réseau ni
+  d'APN, mais d'abonnement : vérifier d'abord `outils/qmi-dds-test.py lire` puis `test primary`.
+- Une mise à jour d'Arch remet un ModemManager sans les correctifs : `IgnorePkg = modemmanager
+  libmm-glib`.
+- Avec deux SIM actives, le correctif forcerait toujours l'abonnement primaire : il faudrait le rendre
+  configurable (section 11).
+
+### 9.5 Deux barres de réseau dans la barre d'état (2026-10-30)
+Après le correctif, Plasma Mobile affiche deux indicateurs en forme de barres. Ce n'est pas un second
+modem (`mmcli -L` n'en liste qu'un) : la première barre est le signal du modem (ModemManager), la
+seconde la connexion internet active par la 4G (NetworkManager, icône `network-mobile`). Avant le
+correctif, la data ne se connectait jamais, donc cette seconde icône n'apparaissait pas.
+`sudo nmcli connection down Airtel` la fait disparaître.
+
+### 9.6 Point d'accès Wi-Fi : « device is not available » (2026-10-30)
+`nmcli device wifi hotspot` échouait parce que le Wi-Fi était resté coupé après un test
+(`nmcli radio wifi off`). `nmcli radio wifi on`, puis `sudo nmcli connection up Hotspot`. Voir la
+section 7.
+
+## 10. Compiler et installer le pilote IPA sans recompiler le noyau
 
 Le pilote IPA est un module (`CONFIG_QCOM_IPA=m`, fichier `ipa.ko`). Le noyau du diting n'impose ni
 signature des modules ni `MODVERSIONS` : un module compilé à part se charge dès que sa version
@@ -397,7 +528,7 @@ Les autres pilotes du modem (`qcom_q6v5_pas` pour le remoteproc MPSS, `rmtfs_mem
 méthode à partir de l'arbre de l'étape a, avec la cible du module :
 `make LOCALVERSION= KBUILD_MODPOST_WARN=1 drivers/remoteproc/qcom_q6v5_pas.ko`.
 
-## 10. Pistes ouvertes
+## 11. Pistes ouvertes
 - Rendre configurable l'abonnement du correctif `0002` (deux SIM actives).
 - L'abonnement data désigné du modem n'est pas modifié (libqmi n'a pas de message pour cela). Le
   correctif contourne le problème client par client.
