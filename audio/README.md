@@ -171,10 +171,10 @@ La capture par le DSP ne tient pas de très petits blocs. Le test du micro de Pl
 fragments de 256 octets (environ 2,7 ms) : toute la chaîne passait à 128 échantillons, avec des hachures, puis
 plasma-settings plantait (`abort` dans `pa_stream_unref` : dans `microphonetest.cpp`, le vidage du flux peut être
 lancé deux fois, et le flux libéré deux fois). `pulse.min.req`, `pulse.min.frag` et `pulse.min.quantum` à
-1024/48000 (environ 21 ms) corrigent les deux. Le bug de plasma-pa lui-même est corrigé par
-`pkgbuilds/plasma-pa-diting` (patch `0001` : le flux de relecture n'est libéré qu'une fois, même si plusieurs
-rappels de vidage arrivent), et patch `0002` : la barre de niveau du test lisait un seul fragment par rappel, le
-retard s'accumulait et elle ne correspondait plus à la voix.
+1024/48000 (environ 21 ms) évitent le plantage. Le test du micro de Plasma reste peu fiable sur le diting (barre de
+niveau en retard ou sans rapport avec la voix, hachures après plusieurs essais, arrêts avant la fin) : c'est l'outil
+de test qui est en cause, pas la capture. L'enregistreur de Plasma Mobile et `pw-record` donnent un son propre
+(testé le 2026-10-31). Des correctifs de `microphonetest.cpp` ont été essayés sans succès et retirés.
 
 ### Audio des appels (diting-ubuntu)
 L'audio des appels tourne entièrement dans l'ADSP (modem ↔ VCPM ↔ codecs), comme le PAL d'Android.
@@ -319,7 +319,7 @@ Les commandes `fdtput` qui ont servi à mettre au point `0903` sont dans le READ
 | PipeWire n'offre pas le profil HiFi | Profil UCM non corrigé : vérifier que `HiFi.conf` contient `MultiMedia2 Mixer TX_CODEC_DMA_TX_3`. |
 | Bruit blanc au micro | Patch `0903` absent du DTB, ou UCM encore sur `SWR_MIC1`. |
 | Souffle continu à certains démarrages, sans xrun | `0903` ancien (les deux ports sur la lane 1) : vérifier `xxd /proc/device-tree/soc@0/soundwire@33b0000/qcom,ports-lane-control` → `0102 0000`. |
-| Hachures ou plantage de plasma-settings au test du micro | `60-diting-latence.conf` absent de `/usr/share/pipewire/pipewire-pulse.conf.d/` : `pw-top` montre QUANT sous 1024 pendant le test. |
+| Plantage de plasma-settings au test du micro | `60-diting-latence.conf` absent de `/usr/share/pipewire/pipewire-pulse.conf.d/` : `pw-top` montre QUANT sous 1024 pendant le test. Le niveau et les hachures du test restent peu fiables : vérifier le micro avec l'enregistreur de Plasma Mobile ou `pw-record`. |
 | Haut-parleur du bas muet | Patch `0086` absent (RX2 sur son propre canal avec le firmware de protection). |
 | Souffle fort, signal faible | Horloge de bit TDM non inversée (patch `0048`). |
 | Pas d'audio en appel | `systemctl status diting-audiopd diting-voice-call` ; topologie d'appel et modules ADSP présents dans `firmware-xiaomi-diting`. |
