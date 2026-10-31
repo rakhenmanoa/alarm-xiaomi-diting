@@ -5,7 +5,7 @@
 pkgname=diting-device
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 _artcommit=b4c1510fe6686ab8053715a02c34bec875ca5c6c
-pkgver=0.1.20
+pkgver=0.1.21
 pkgrel=1
 pkgdesc="Intégration du Xiaomi 12T Pro (diting) : images de démarrage, audio, appels, modem, capteurs, USB"
 arch=(any)
@@ -44,10 +44,9 @@ source=("diting-ubuntu::git+https://github.com/royka1/diting-ubuntu.git#commit=$
         diting-proximite-appel
         diting-proximite-appel.service
         diting-capteurs.rules
-        diting-udmabuf.conf
-        diting-micros.conf)
+        diting-udmabuf.conf)
 sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
-            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+            'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 _ud() { echo "$srcdir/diting-ubuntu/ubuntu-diting"; }
 
@@ -124,8 +123,6 @@ package() {
   install -Dm644 "$srcdir/zram-generator.conf" "$pkgdir/usr/lib/systemd/zram-generator.conf"
   install -Dm644 "$srcdir/90-diting-vibreur.rules" "$pkgdir/usr/lib/udev/rules.d/90-diting-vibreur.rules"
   install -Dm644 "$srcdir/diting-udmabuf.conf" "$pkgdir/usr/lib/tmpfiles.d/diting-udmabuf.conf"
-  # micros : sources « Micro du bas » et « Micro du haut » (un canal chacune)
-  install -Dm644 "$srcdir/diting-micros.conf" "$pkgdir/usr/share/pipewire/pipewire.conf.d/50-diting-micros.conf"
 
   # Réglages libcamera des quatre capteurs (remplace le s5khp1.yaml de
   # diting-ubuntu) : exposition, contraste, saturation, autofocus

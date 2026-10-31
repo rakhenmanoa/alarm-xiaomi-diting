@@ -19,7 +19,6 @@ appels dans l'ADSP, et la configuration UCM et PipeWire.
 | `patches/alarm-diting/` | `0903` : ports et lanes SoundWire séparés pour les deux micros | `pkgbuilds/linux-diting/0903` |
 | `scripts/` | `ucm-diting.py`, hook pacman et script CallAudio de ce dépôt | `pkgbuilds/diting-device/` |
 | `scripts/diting-ubuntu/` | Démons d'appel, protection des haut-parleurs, audio PD, services et règles udev, **tels qu'installés** (avec les `sed` du PKGBUILD de `diting-device`) | `ubuntu-diting/packages/device-xiaomi-diting/` |
-| `scripts/pipewire/` | `50-diting-micros.conf` : sources « Micro du bas » et « Micro du haut » | `pkgbuilds/diting-device/diting-micros.conf` |
 | `scripts/ucm/` | Profil UCM : `HiFi.conf` **tel qu'installé** (après `ucm-diting.py`) et l'original `HiFi.conf.diting-ubuntu` | idem |
 | `scripts/topologie/` | Sources m4 de la topologie AudioReach des haut-parleurs (compilées en `XIAOMI-DITING-tplg.bin` par le PKGBUILD de `diting-device`) | `ubuntu-diting/packages/audio-topology/` |
 
@@ -49,8 +48,6 @@ flowchart LR
         PW["PipeWire + WirePlumber<br/>profil UCM HiFi"]
         SINK["Sortie<br/>HiFi__Speaker__sink"]
         SRC["Source stéréo<br/>HiFi__Mic__source<br/>FL = bas, FR = haut"]
-        MBAS["Micro du bas<br/>loopback FL"]
-        MHAUT["Micro du haut<br/>loopback FR"]
         VC["diting-voice-call<br/>+ diting-voice-pcm"]
         CA["diting-callaudio<br/>écouteur / haut-parleur, sourdine"]
         SP["diting-speaker-protection<br/>firmware CSPL + calibration"]
@@ -106,8 +103,6 @@ flowchart LR
     SWRTX --> DEC0 --> AIF
     SWRTX --> DEC1 --> AIF
     AIF --> TXDMA --> MM2 --> SRC
-    SRC --> MBAS --> PW
-    SRC --> MHAUT --> PW
     SRC --> PW
 
     MM -. "état des appels" .-> VC
@@ -125,7 +120,7 @@ flowchart LR
 | Chemin | Trajet |
 |---|---|
 | Lecture média | PipeWire → `MultiMedia1` (`hw:0,0`) → `TERTIARY_TDM_RX_0` → CS35L41 B (bas, canal droit) et T (haut, canal gauche) → haut-parleurs ; le « Top MUX » envoie l'ampli du haut vers le haut-parleur du haut. |
-| Capture média | AMIC1 → ADC1 → port 1 (lane 1) → `SWR_MIC0` → DEC0 → canal gauche ; AMIC5 → ADC4 → port 2 (lane 2) → `SWR_MIC5` → DEC1 → canal droit ; puis `TX_AIF1_CAP` → `TX_CODEC_DMA_TX_3` → `MultiMedia2` (`hw:0,1`) → source stéréo, et les sources « Micro du bas » et « Micro du haut ». |
+| Capture média | AMIC1 → ADC1 → port 1 (lane 1) → `SWR_MIC0` → DEC0 → canal gauche ; AMIC5 → ADC4 → port 2 (lane 2) → `SWR_MIC5` → DEC1 → canal droit ; puis `TX_AIF1_CAP` → `TX_CODEC_DMA_TX_3` → `MultiMedia2` (`hw:0,1`) → source stéréo. |
 | Appel | `diting-voice-call` route `MultiMedia3` vers les amplis et `TX_CODEC_DMA_TX_3` vers `MultiMedia4`, puis `diting-voice-pcm` ouvre les deux sessions hostless : la voix passe modem ↔ VCPM ↔ codecs dans l'ADSP, avec la réduction de bruit Fluence sur les deux micros. `diting-callaudio` bascule le « Top MUX » sur l'écouteur ou le haut-parleur. |
 
 ## 2. Patches du noyau, dans l'ordre d'application
@@ -165,13 +160,10 @@ Il corrige le `HiFi.conf` de diting-ubuntu à la construction de `diting-device`
 
 Les mêmes changements `SWR_MIC5` et `108` sont appliqués par `sed` aux scripts d'appel (PKGBUILD de `diting-device`).
 
-### Choix du micro — `scripts/pipewire/50-diting-micros.conf`
-La source stéréo porte le micro du bas à gauche (ADC1) et le micro du haut à droite (ADC4). Deux sources mono
-(`libpipewire-module-loopback`) en prennent chacune un canal : « Micro du bas » et « Micro du haut », à choisir
-dans Plasma. Le profil HiFi et le haut-parleur ne changent pas : des devices UCM séparés sur le même PCM de
-capture feraient des profils combinés (« Speaker + micro »). Les deux ADC restent allumés ensemble, car l'ADC4
-seul bloque la capture (cause non trouvée, testé le 2026-10-31). Après une modification de `HiFi.conf`,
-redémarrer PipeWire : il ne relit l'UCM qu'à son démarrage.
+La source stéréo porte le micro du bas à gauche (ADC1) et le micro du haut à droite (ADC4). Les deux ADC restent
+allumés ensemble : l'ADC4 seul bloque la capture (cause non trouvée, testé le 2026-10-31). Des devices UCM
+séparés par micro, sur le même PCM de capture, feraient des profils combinés (« Speaker + micro »). Après une
+modification de `HiFi.conf`, redémarrer PipeWire : il ne relit l'UCM qu'à son démarrage.
 
 ### Audio des appels (diting-ubuntu)
 L'audio des appels tourne entièrement dans l'ADSP (modem ↔ VCPM ↔ codecs), comme le PAL d'Android.
@@ -194,7 +186,7 @@ pour lancer `/usr/libexec/diting/diting-callaudio`.
 
 - **Haut-parleurs** : stéréo propre à travers le firmware de protection (calibration d'usine), au niveau d'Android.
 - **Micros** : les deux capturent sans souffle, à chaque démarrage, depuis les lanes d'Android dans `0903` ;
-  gain réglé (+24 dB) ; choix du micro du bas ou du haut dans Plasma.
+  gain réglé (+24 dB) ; capturés ensemble en stéréo (bas à gauche, haut à droite).
 - **Appels** (3G) : audio dans les deux sens, démarrage sur l'écouteur, haut-parleur et sourdine fonctionnels,
   annulation d'écho Fluence active.
 - Limites : pas de VoLTE ; TX des appels fixé à 16 kHz (appels bande étroite 8 kHz non testés) ; pas de prise casque.
