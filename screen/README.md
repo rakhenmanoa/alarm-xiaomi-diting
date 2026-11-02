@@ -15,7 +15,7 @@ problèmes encore ouverts.
 | `pilote/panel-xiaomi-l12-36-02-0b.c` | Pilote DRM de la dalle, **après** application de toute la série (Linux 7.2.10 + diting-ubuntu `c68ff47` + `0901`) | créé par les patches `0009`, `0012`, `0015`, `0901` |
 | `patches/diting-ubuntu/` | Patches affichage et tactile de royka1/diting-ubuntu (commit `c68ff47db947`) | `kernel/patches/` de diting-ubuntu |
 | `patches/alarm-diting/` | Patches propres à ce dépôt (dalle 42 02 0a, DSC, tactile Goodix) | `pkgbuilds/linux-diting/090[0-2]` |
-| `scripts/` | Réglages, services et outils installés par `diting-device` | `pkgbuilds/diting-device/` |
+| `scripts/` | Réglages, services et outils installés par `diting-device` (dont `diting-kwin.conf`) | `pkgbuilds/diting-device/` |
 | `scripts/diting-lever-reveil/` | Démon « lever pour réveiller » (source, service, PKGBUILD) | `pkgbuilds/diting-lever-reveil/` |
 
 ## 1. Matériel : deux écrans, deux tactiles
@@ -123,6 +123,25 @@ Le GPU (`simple_ondemand`) et les petits cœurs montaient trop tard en fréquenc
 saccadait. Minima testés le 2026-10-26 : GPU 439 MHz, policy0 1056 MHz, policy4 1113,6 MHz,
 `rate_limit_us` 500 de schedutil. À désactiver si la batterie compte plus :
 `systemctl disable diting-perf`.
+
+### KWin : pas d'overlays ni de direct scanout — `scripts/diting-kwin.conf`
+Installé dans `/usr/lib/environment.d/60-diting-kwin.conf` (lu par systemd utilisateur, donc par KWin) :
+
+```
+KWIN_USE_OVERLAYS=0
+KWIN_DRM_NO_DIRECT_SCANOUT=1
+```
+
+Constaté le 2026-11-02 : Plasma imbriqué dans sway (sway pilote la dalle, KWin en client Wayland)
+était nettement plus fluide que la session normale, **à résolution égale** (`kscreen-doctor` dans la
+session imbriquée : 1218×2712, échelle 1). Les vidéos y démarraient vite et sans l'image verte.
+La différence : le KWin imbriqué n'a pas accès aux plans du DPU. Dans la session normale, KWin tente
+de placer les fenêtres et les vidéos sur des plans matériels ; les tests atomiques du DPU coûtent cher
+et une vidéo YUV peut être affichée avant son premier décodage (vert). Les deux variables donnent à la
+session normale la fluidité de la session sway, avec rotation, extinction de l'écran et tactile natifs.
+
+Pistes écartées le même jour : rendu en basse résolution (session sway en 407×904, puis patch KWin des
+modes réduits, voir `kwin/`) — le nombre de pixels n'était pas le facteur limitant.
 
 ## 6. Compiler et installer le pilote de la dalle sans recompiler le noyau
 

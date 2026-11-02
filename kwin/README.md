@@ -1,5 +1,10 @@
 # KWin — modes basse résolution agrandis par le DPU
 
+> **Piste écartée (2026-11-02).** Le manque de fluidité ne venait pas du nombre de pixels mais des
+> overlays et du direct scanout de KWin sur le DPU : voir `screen/README.md`, section
+> « KWin : pas d'overlays ni de direct scanout », et `diting-device` (`60-diting-kwin.conf`).
+> Le patch reste ici pour référence ; KWin d'origine recommandé.
+
 Patch pour **KWin 6.8.2** qui ajoute à l'écran interne des modes « réduits »
 (par ex. 610×1356 et 407×904), à 60, 90 et 120 Hz.
 

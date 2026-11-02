@@ -5,7 +5,7 @@
 pkgname=diting-device
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 _artcommit=b4c1510fe6686ab8053715a02c34bec875ca5c6c
-pkgver=0.1.23
+pkgver=0.1.24
 pkgrel=1
 pkgdesc="Intégration du Xiaomi 12T Pro (diting) : images de démarrage, audio, appels, modem, capteurs, USB"
 arch=(any)
@@ -45,9 +45,10 @@ source=("diting-ubuntu::git+https://github.com/royka1/diting-ubuntu.git#commit=$
         diting-proximite-appel.service
         diting-capteurs.rules
         diting-udmabuf.conf
-        diting-pulse-latence.conf)
+        diting-pulse-latence.conf
+        diting-kwin.conf)
 sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
-            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+            'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 _ud() { echo "$srcdir/diting-ubuntu/ubuntu-diting"; }
 
@@ -126,6 +127,8 @@ package() {
   install -Dm644 "$srcdir/diting-udmabuf.conf" "$pkgdir/usr/lib/tmpfiles.d/diting-udmabuf.conf"
   # latence minimale des clients PulseAudio (capture par le DSP, test du micro de Plasma)
   install -Dm644 "$srcdir/diting-pulse-latence.conf" "$pkgdir/usr/share/pipewire/pipewire-pulse.conf.d/60-diting-latence.conf"
+  # KWin : ni overlays ni direct scanout (fluidité, vidéo sans image verte)
+  install -Dm644 "$srcdir/diting-kwin.conf" "$pkgdir/usr/lib/environment.d/60-diting-kwin.conf"
 
   # Réglages libcamera des quatre capteurs (remplace le s5khp1.yaml de
   # diting-ubuntu) : exposition, contraste, saturation, autofocus
