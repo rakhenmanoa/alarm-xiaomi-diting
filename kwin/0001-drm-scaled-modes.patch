@@ -1,0 +1,371 @@
+diff --git a/src/backends/drm/drm_connector.cpp b/src/backends/drm/drm_connector.cpp
+index 8cddae4..a0b7e97 100644
+--- a/src/backends/drm/drm_connector.cpp
++++ b/src/backends/drm/drm_connector.cpp
+@@ -17,6 +17,7 @@
+ #include "drm_pointer.h"
+ 
+ #include <cerrno>
++#include <cmath>
+ #include <cstring>
+ 
+ namespace KWin
+@@ -72,6 +73,26 @@ DrmConnectorMode::DrmConnectorMode(DrmConnector *connector, const OutputModeline
+     sprintf(m_nativeMode.name, "%dx%d@%d", size.width(), size.height(), m_nativeMode.vrefresh);
+ }
+ 
++DrmConnectorMode::DrmConnectorMode(DrmConnector *connector, drmModeModeInfo nativeMode, const QSize &scaledSize, uint32_t refreshRate)
++    : OutputMode(OutputModeline(scaledSize, refreshRate, OutputModeline::Flag::Generated))
++    , m_connector(connector)
++    , m_nativeMode(nativeMode)
++    , m_scaled(true)
++{
++    // don't let the kernel or anyone else treat this as the preferred mode
++    m_nativeMode.type &= ~DRM_MODE_TYPE_PREFERRED;
++}
++
++bool DrmConnectorMode::isScaled() const
++{
++    return m_scaled;
++}
++
++QSize DrmConnectorMode::scanoutSize() const
++{
++    return QSize(m_nativeMode.hdisplay, m_nativeMode.vdisplay);
++}
++
+ std::shared_ptr<DrmBlob> DrmConnectorMode::blob()
+ {
+     if (!m_blob) {
+@@ -112,12 +133,15 @@ static inline bool checkIfEqual(const drmModeModeInfo *one, const drmModeModeInf
+ 
+ bool DrmConnectorMode::operator==(const DrmConnectorMode &otherMode) const
+ {
+-    return checkIfEqual(&m_nativeMode, &otherMode.m_nativeMode);
++    return m_scaled == otherMode.m_scaled
++        && size() == otherMode.size()
++        && checkIfEqual(&m_nativeMode, &otherMode.m_nativeMode);
+ }
+ 
+ bool DrmConnectorMode::operator==(const drmModeModeInfo &otherMode) const
+ {
+-    return checkIfEqual(&m_nativeMode, &otherMode);
++    // a raw kernel mode always describes the unscaled mode
++    return !m_scaled && checkIfEqual(&m_nativeMode, &otherMode);
+ }
+ 
+ DrmConnector::DrmConnector(DrmGpu *gpu, uint32_t connectorId)
+@@ -348,6 +372,9 @@ bool DrmConnector::updateProperties()
+         if (scalingMode.isValid() && scalingMode.hasEnum(ScalingMode::Full_Aspect) && isInternal()) {
+             m_modes.append(generateCommonModes());
+         }
++        if (isInternal()) {
++            m_modes.append(generateScaledModes());
++        }
+     }
+ 
+     m_mstPath.clear();
+@@ -447,6 +474,43 @@ QList<std::shared_ptr<DrmConnectorMode>> DrmConnector::generateCommonModes()
+     return ret;
+ }
+ 
++// KWIN_DRM_SCALED_MODES="2,3" -> for every native mode, also offer modes at
++// 1/2 and 1/3 of the native resolution, upscaled by the primary plane.
++static const QList<double> s_scaledModeFactors = []() {
++    QList<double> ret;
++    const QString env = qEnvironmentVariable("KWIN_DRM_SCALED_MODES");
++    for (const QString &part : env.split(QLatin1Char(','), Qt::SkipEmptyParts)) {
++        bool ok = false;
++        const double factor = part.trimmed().toDouble(&ok);
++        if (ok && factor > 1.0 && factor <= 4.0) {
++            ret.push_back(factor);
++        }
++    }
++    return ret;
++}();
++
++QList<std::shared_ptr<DrmConnectorMode>> DrmConnector::generateScaledModes()
++{
++    QList<std::shared_ptr<DrmConnectorMode>> ret;
++    for (const auto &mode : std::as_const(m_driverModes)) {
++        const QSize native = mode->size();
++        for (const double factor : s_scaledModeFactors) {
++            const QSize scaled(std::lround(native.width() / factor), std::lround(native.height() / factor));
++            if (scaled.width() < 320 || scaled.height() < 320) {
++                continue;
++            }
++            const bool alreadyExists = std::ranges::any_of(ret, [&](const auto &other) {
++                return other->size() == scaled && other->refreshRate() == mode->refreshRate();
++            });
++            if (alreadyExists) {
++                continue;
++            }
++            ret.push_back(std::make_shared<DrmConnectorMode>(this, *mode->nativeMode(), scaled, mode->refreshRate()));
++        }
++    }
++    return ret;
++}
++
+ std::shared_ptr<DrmConnectorMode> DrmConnector::generateMode(const OutputModeline &modeline)
+ {
+     return std::make_shared<DrmConnectorMode>(this, modeline);
+diff --git a/src/backends/drm/drm_connector.h b/src/backends/drm/drm_connector.h
+index 3d1bda3..2d0c847 100644
+--- a/src/backends/drm/drm_connector.h
++++ b/src/backends/drm/drm_connector.h
+@@ -34,6 +34,15 @@ class DrmConnectorMode : public OutputMode
+ public:
+     DrmConnectorMode(DrmConnector *connector, drmModeModeInfo nativeMode);
+     DrmConnectorMode(DrmConnector *connector, const OutputModeline &modeline);
++    /*
++     * A "scaled" mode: the CRTC is driven with the panel's native timings, but
++     * KWin renders at @p scaledSize and the primary plane upscales the image
++     * to the native resolution in hardware.
++     */
++    DrmConnectorMode(DrmConnector *connector, drmModeModeInfo nativeMode, const QSize &scaledSize, uint32_t refreshRate);
++
++    bool isScaled() const;
++    QSize scanoutSize() const;
+ 
+     drmModeModeInfo *nativeMode();
+     std::shared_ptr<DrmBlob> blob();
+@@ -46,6 +55,7 @@ private:
+     DrmConnector *m_connector;
+     drmModeModeInfo m_nativeMode;
+     std::shared_ptr<DrmBlob> m_blob;
++    bool m_scaled = false;
+ };
+ 
+ class KWIN_EXPORT DrmConnector : public DrmObject
+@@ -153,6 +163,7 @@ public:
+ 
+ private:
+     QList<std::shared_ptr<DrmConnectorMode>> generateCommonModes();
++    QList<std::shared_ptr<DrmConnectorMode>> generateScaledModes();
+ 
+     DrmUniquePtr<drmModeConnector> m_conn;
+     Edid m_edid;
+diff --git a/src/backends/drm/drm_egl_layer.cpp b/src/backends/drm/drm_egl_layer.cpp
+index eb2b99f..ef5c243 100644
+--- a/src/backends/drm/drm_egl_layer.cpp
++++ b/src/backends/drm/drm_egl_layer.cpp
+@@ -12,6 +12,7 @@
+ #include "core/renderdevice.h"
+ #include "drm_backend.h"
+ #include "drm_buffer.h"
++#include "drm_connector.h"
+ #include "drm_crtc.h"
+ #include "drm_egl_backend.h"
+ #include "drm_gpu.h"
+@@ -21,6 +22,8 @@
+ #include "utils/envvar.h"
+ #include "wayland/surface.h"
+ 
++#include <cmath>
++#include <cstdlib>
+ #include <drm_fourcc.h>
+ #include <errno.h>
+ #include <gbm.h>
+@@ -50,12 +53,41 @@ EglGbmLayer::EglGbmLayer(EglGbmBackend *eglBackend, DrmGpu *gpu, DrmPlane::TypeI
+ {
+ }
+ 
++// KWIN_DRM_SCALED_NEAREST=0 -> let the display controller upscale scaled modes (bilinear)
++static const bool s_scaledModesNearest = environmentVariableBoolValue("KWIN_DRM_SCALED_NEAREST").value_or(true);
++
++/*
++ * For a scaled mode with a (nearly) integer factor, KWin itself upscales the primary
++ * layer with nearest-neighbor filtering: the scene is rendered at the small size and
++ * then drawn into a buffer of the native size. Returns the size of that native buffer,
++ * or an invalid size if the display controller should do the scaling instead.
++ */
++static QSize nearestUpscaleBufferSize(DrmPipeline *pipeline, OutputLayerType type, const QSize &renderSize)
++{
++    if (!s_scaledModesNearest || type != OutputLayerType::Primary || !pipeline || renderSize.isEmpty()) {
++        return QSize();
++    }
++    const auto mode = pipeline->mode();
++    if (!mode || !mode->isScaled()) {
++        return QSize();
++    }
++    const QSize native = mode->scanoutSize();
++    const int factor = std::lround(double(native.width()) / renderSize.width());
++    if (factor < 2
++        || std::abs(native.width() - renderSize.width() * factor) > factor
++        || std::abs(native.height() - renderSize.height() * factor) > factor) {
++        return QSize();
++    }
++    return native;
++}
++
+ std::optional<OutputLayerBeginFrameInfo> EglGbmLayer::beginFrame(OutputFrame *frame)
+ {
+     m_scanoutBuffer.reset();
+     const bool tearing = frame && (frame->presentationMode() == PresentationMode::Async || frame->presentationMode() == PresentationMode::AdaptiveAsync);
+     const auto formats = tearing && !supportedAsyncDrmFormats().isEmpty() ? supportedAsyncDrmFormats() : supportedDrmFormats();
+-    return m_surface.startRendering(targetRect().size(),
++    const QSize upscaledBufferSize = nearestUpscaleBufferSize(pipeline(), m_type, targetRect().size());
++    return m_surface.startRendering(upscaledBufferSize.isValid() ? upscaledBufferSize : targetRect().size(),
+                                     drmOutput()->transform().combine(OutputTransform::FlipY),
+                                     formats,
+                                     drmOutput()->blendingColor(),
+@@ -66,7 +98,8 @@ std::optional<OutputLayerBeginFrameInfo> EglGbmLayer::beginFrame(OutputFrame *fr
+                                     drmOutput()->scale(),
+                                     drmOutput()->colorPowerTradeoff(),
+                                     drmOutput()->needsShadowBuffer(),
+-                                    m_requiredAlphaBits);
++                                    m_requiredAlphaBits,
++                                    upscaledBufferSize.isValid() ? targetRect().size() : QSize());
+ }
+ 
+ bool EglGbmLayer::endFrame(const Region &renderedDeviceRegion, const Region &damagedDeviceRegion, OutputFrame *frame)
+@@ -80,7 +113,8 @@ bool EglGbmLayer::preparePresentationTest()
+         return false;
+     }
+     m_scanoutBuffer.reset();
+-    return m_surface.renderTestBuffer(targetRect().size(), supportedDrmFormats(), drmOutput()->nextState().colorPowerTradeoff, m_requiredAlphaBits) != nullptr;
++    const QSize upscaledBufferSize = nearestUpscaleBufferSize(pipeline(), m_type, targetRect().size());
++    return m_surface.renderTestBuffer(upscaledBufferSize.isValid() ? upscaledBufferSize : targetRect().size(), supportedDrmFormats(), drmOutput()->nextState().colorPowerTradeoff, m_requiredAlphaBits) != nullptr;
+ }
+ 
+ static const auto s_allowHardwareRotation = environmentVariableBoolValue("KWIN_ENABLE_HW_ROTATION");
+diff --git a/src/backends/drm/drm_egl_layer_surface.cpp b/src/backends/drm/drm_egl_layer_surface.cpp
+index f9eecb9..f6b6fe0 100644
+--- a/src/backends/drm/drm_egl_layer_surface.cpp
++++ b/src/backends/drm/drm_egl_layer_surface.cpp
+@@ -81,7 +81,8 @@ std::optional<OutputLayerBeginFrameInfo> EglGbmLayerSurface::startRendering(cons
+                                                                             const std::shared_ptr<IccProfile> &iccProfile,
+                                                                             const Colorimetry &wireColor, const TransferFunction::Type &wireTransfer,
+                                                                             double scale, BackendOutput::ColorPowerTradeoff tradeoff,
+-                                                                            bool useShadowBuffer, uint32_t requiredAlphaBits)
++                                                                            bool useShadowBuffer, uint32_t requiredAlphaBits,
++                                                                            const QSize &renderSize)
+ {
+     if (!checkSurface(bufferSize, formats, tradeoff, requiredAlphaBits)) {
+         return std::nullopt;
+@@ -129,14 +130,22 @@ std::optional<OutputLayerBeginFrameInfo> EglGbmLayerSurface::startRendering(cons
+         }
+     }
+ 
++    const QSize upscaledRenderSize = (renderSize.isValid() && renderSize != m_surface->gbmSwapchain->size()) ? renderSize : QSize();
++    if (m_surface->renderSize != upscaledRenderSize) {
++        m_surface->renderSize = upscaledRenderSize;
++        m_surface->damageJournal.clear();
++        m_surface->shadowDamageJournal.clear();
++    }
++    const QSize shadowSize = m_surface->renderSize.isValid() ? m_surface->renderSize : m_surface->gbmSwapchain->size();
++
+     m_surface->compositingTimeQuery = GLRenderTimeQuery::begin(m_surface->context);
+-    if (m_surface->needsShadowBuffer) {
+-        if (!m_surface->shadowSwapchain || m_surface->shadowSwapchain->size() != m_surface->gbmSwapchain->size()) {
++    if (m_surface->needsShadowBuffer || m_surface->renderSize.isValid()) {
++        if (!m_surface->shadowSwapchain || m_surface->shadowSwapchain->size() != shadowSize) {
+             const auto formats = m_eglBackend->eglDisplayObject()->nonExternalOnlySupportedDrmFormats();
+             const QList<FormatInfo> sortedFormats = OutputLayer::filterAndSortFormats(formats, requiredAlphaBits, tradeoff);
+             for (const auto format : sortedFormats) {
+                 GraphicsBufferOptions options{
+-                    .size = m_surface->gbmSwapchain->size(),
++                    .size = shadowSize,
+                     .format = format.drmFormat,
+                     .modifiers = formats[format.drmFormat],
+                     .software = false,
+@@ -157,6 +166,10 @@ std::optional<OutputLayerBeginFrameInfo> EglGbmLayerSurface::startRendering(cons
+             return std::nullopt;
+         }
+         m_surface->currentShadowSlot->texture()->setContentTransform(m_surface->currentSlot->framebuffer()->colorAttachment()->contentTransform());
++        if (m_surface->renderSize.isValid()) {
++            // integer-ish upscale: keep the pixels sharp, like sway's "scale_filter smart"
++            m_surface->currentShadowSlot->texture()->setFilter(GL_NEAREST);
++        }
+         return OutputLayerBeginFrameInfo{
+             .renderTarget = RenderTarget(m_surface->currentShadowSlot->framebuffer(), m_surface->blendingColor),
+             .repaint = bufferAgeEnabled ? m_surface->shadowDamageJournal.accumulate(m_surface->currentShadowSlot->age(), Region::infinite()) : Region::infinite(),
+@@ -228,12 +241,18 @@ static GLVertexBuffer *uploadGeometry(const Region &devicePixels, const QSize &f
+ 
+ bool EglGbmLayerSurface::endRendering(const Region &damagedDeviceRegion, OutputFrame *frame)
+ {
+-    if (m_surface->needsShadowBuffer) {
+-        const Region deviceRepaint = damagedDeviceRegion | m_surface->damageJournal.accumulate(m_surface->currentSlot->age(), Region::infinite());
+-        m_surface->damageJournal.add(damagedDeviceRegion);
+-        m_surface->shadowDamageJournal.add(damagedDeviceRegion);
++    Region outputDamage = damagedDeviceRegion;
++    if (m_surface->needsShadowBuffer || m_surface->renderSize.isValid()) {
+         const auto mapping = m_surface->currentShadowSlot->framebuffer()->colorAttachment()->contentTransform().combine(OutputTransform::FlipY);
+         const QSize rotatedSize = mapping.map(m_surface->gbmSwapchain->size());
++        if (m_surface->renderSize.isValid()) {
++            // the damage is in the coordinates of the small render buffer;
++            // the upscaled gbm buffer is simply redrawn completely
++            outputDamage = Region(Rect(QPoint(), rotatedSize));
++        }
++        const Region deviceRepaint = outputDamage | m_surface->damageJournal.accumulate(m_surface->currentSlot->age(), Region::infinite());
++        m_surface->damageJournal.add(outputDamage);
++        m_surface->shadowDamageJournal.add(damagedDeviceRegion);
+         const Region repaint = mapping.map(deviceRepaint & Rect(QPoint(), rotatedSize), rotatedSize);
+ 
+         GLFramebuffer *fbo = m_surface->currentSlot->framebuffer();
+@@ -275,7 +294,7 @@ bool EglGbmLayerSurface::endRendering(const Region &damagedDeviceRegion, OutputF
+         glFinish();
+     }
+     m_surface->gbmSwapchain->release(m_surface->currentSlot, sourceFence.fileDescriptor().duplicate());
+-    const auto buffer = importBuffer(m_surface.get(), m_surface->currentSlot.get(), sourceFence.takeFileDescriptor(), frame, damagedDeviceRegion);
++    const auto buffer = importBuffer(m_surface.get(), m_surface->currentSlot.get(), sourceFence.takeFileDescriptor(), frame, outputDamage);
+     if (buffer) {
+         m_surface->currentFramebuffer = buffer;
+         return true;
+diff --git a/src/backends/drm/drm_egl_layer_surface.h b/src/backends/drm/drm_egl_layer_surface.h
+index b091a2f..1f34e42 100644
+--- a/src/backends/drm/drm_egl_layer_surface.h
++++ b/src/backends/drm/drm_egl_layer_surface.h
+@@ -58,7 +58,8 @@ public:
+                                                             const std::shared_ptr<IccProfile> &iccProfile,
+                                                             const Colorimetry &wireColor, const TransferFunction::Type &wireTransfer,
+                                                             double scale, BackendOutput::ColorPowerTradeoff tradeoff,
+-                                                            bool useShadowBuffer, uint32_t requiredAlphaBits);
++                                                            bool useShadowBuffer, uint32_t requiredAlphaBits,
++                                                            const QSize &renderSize = QSize());
+     bool endRendering(const Region &damagedDeviceRegion, OutputFrame *frame);
+ 
+     void destroyResources();
+@@ -106,6 +107,9 @@ private:
+         Colorimetry wireColor = Colorimetry::BT709;
+         TransferFunction::Type wireTransfer = TransferFunction::Type::gamma22;
+         DamageJournal shadowDamageJournal;
++        // when valid, the scene is rendered at this (smaller) size into the shadow
++        // buffer, then upscaled with nearest-neighbor filtering into the gbm buffer
++        QSize renderSize;
+         BackendOutput::ColorPowerTradeoff tradeoff = BackendOutput::ColorPowerTradeoff::PreferEfficiency;
+ 
+         std::unique_ptr<GLRenderTimeQuery> compositingTimeQuery;
+diff --git a/src/backends/drm/drm_pipeline.cpp b/src/backends/drm/drm_pipeline.cpp
+index 3a69f8d..0f39d13 100644
+--- a/src/backends/drm/drm_pipeline.cpp
++++ b/src/backends/drm/drm_pipeline.cpp
+@@ -276,7 +276,27 @@ std::expected<void, OutputError> DrmPipeline::prepareAtomicPlane(DrmAtomicCommit
+     }
+     commit->addProperty(plane->crtcId, m_pending.crtc->id());
+     commit->addBuffer(plane, fb, frame);
+-    plane->set(commit, layer->sourceRect().toRect(), layer->targetRect());
++    Rect targetRect = layer->targetRect();
++    if (m_pending.mode && m_pending.mode->isScaled()) {
++        // the layer is positioned in the coordinates of the (small) scaled mode,
++        // let the plane upscale it to the native resolution of the CRTC
++        const QSize from = m_pending.mode->size();
++        const QSize to = m_pending.mode->scanoutSize();
++        const double sx = double(to.width()) / from.width();
++        const double sy = double(to.height()) / from.height();
++        const int x1 = std::lround(targetRect.left() * sx);
++        const int y1 = std::lround(targetRect.top() * sy);
++        const int x2 = std::lround((targetRect.left() + targetRect.width()) * sx);
++        const int y2 = std::lround((targetRect.top() + targetRect.height()) * sy);
++        targetRect = Rect(x1, y1, x2 - x1, y2 - y1);
++    }
++    Rect sourceRect = layer->sourceRect().toRect();
++    if (m_pending.mode && m_pending.mode->isScaled() && fb->buffer() && fb->buffer()->size() == m_pending.mode->scanoutSize()
++        && sourceRect.size() != fb->buffer()->size() && targetRect.size() == m_pending.mode->scanoutSize()) {
++        // KWin already upscaled this layer itself (nearest-neighbor), scan out the whole buffer 1:1
++        sourceRect = Rect(QPoint(0, 0), fb->buffer()->size());
++    }
++    plane->set(commit, sourceRect, targetRect);
+     if (plane->vmHotspotX.isValid() && plane->vmHotspotY.isValid()) {
+         commit->addProperty(plane->vmHotspotX, std::round(layer->hotspot().x()));
+         commit->addProperty(plane->vmHotspotY, std::round(layer->hotspot().y()));
