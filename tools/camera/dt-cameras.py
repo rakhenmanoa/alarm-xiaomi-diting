@@ -3,7 +3,11 @@
 nœuds qcom,cam-sensor / eeprom / actuator / flash / cam-res-mgr, CSIPHY,
 CCI, MCLK, GPIO, régulateurs, avec les références résolues.
 
-  dt-cameras.py device-data/partitions/dtbo_a.img [vendor_boot_a.img ...]
+  dt-cameras.py [-m MOTIF] device-data/partitions/dtbo_a.img [vendor_boot_a.img ...]
+
+-m MOTIF : ne garde que les blocs dont le modèle correspond (ex. -m diting, sans casse).
+Les sources flash/torche (flash-source, torch-source…) sont résolues et les
+nœuds LED visés sont affichés (qcom,flash_led / qcom,torch / qcom,switch).
 
 Lit tous les blocs FDT (magic d00dfeed) des fichiers donnés, sans dtc.
 Dans un overlay (dtbo), les références vers la base (&tlmm, &L5B...)
@@ -17,11 +21,11 @@ import sys
 FDT_MAGIC = 0xd00dfeed
 BEGIN, END, PROP, NOP, FIN = 1, 2, 3, 4, 9
 
-INTERESSANTS = re.compile(r'cam-sensor|eeprom|actuator|cam-res-mgr|camera-flash|'
+INTERESSANTS = re.compile(r'cam-sensor|eeprom|actuator|cam-res-mgr|camera-flash|flash|torch|'
                           r'qcom,csiphy|qcom,cci|cam_|wl2866|camera|ois', re.I)
 # propriétés dont le premier mot de chaque groupe est un phandle
 PHANDLE_PROPS = re.compile(r'(-supply|^gpios$|-gpios?$|^clocks$|^pinctrl-\d+$|'
-                           r'^cam_|^interconnects|^power-domains|^gpio-|^regulator$)')
+                           r'^cam_|^interconnects|^power-domains|^gpio-|^regulator$|-source$|-src$)')
 
 
 def blocs(data):
@@ -92,7 +96,12 @@ def chaine(v):
 
 def main():
     vus = {}
-    for fichier in sys.argv[1:]:
+    args = sys.argv[1:]
+    motif = None
+    if args[:1] == ['-m']:
+        motif = re.compile(args[1], re.I)
+        args = args[2:]
+    for fichier in args:
         data = open(fichier, 'rb').read()
         for n_bloc, (pos, fdt) in enumerate(blocs(data)):
             try:
@@ -114,6 +123,8 @@ def main():
                         for ref in val.rstrip(b'\0').split(b'\0'):
                             fixups[ref.decode(errors='replace')] = etiquette
             modele = par_chemin.get('/', {}).get('model', b'')
+            if motif and not motif.search(chaine(modele) or ''):
+                continue
             choisis = []
             for c, p in noeuds:
                 compat = p.get('compatible', b'').decode(errors='replace')

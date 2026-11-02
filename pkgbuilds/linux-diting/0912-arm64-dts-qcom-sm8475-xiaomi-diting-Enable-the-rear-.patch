@@ -1,0 +1,56 @@
+From a3ba0d6b369c7a01903bc90295e7f191781a2d63 Mon Sep 17 00:00:00 2001
+From: Fanasina RANDRIATSARAFARA <m.randriatsarafara.f@gmail.com>
+Date: Mon, 2 Nov 2026 22:53:46 +0300
+Subject: [PATCH] arm64: dts: qcom: sm8475-xiaomi-diting: Enable the rear flash
+ LED
+
+The rear camera flash is a single white LED on channel 0 of the PM8350C
+flash LED controller (vendor overlay: qcom,flash_0 and qcom,torch_0,
+1500 mA flash for 1280 ms, 500 mA torch). Enable the controller and
+describe the LED so leds-qcom-flash exposes white:flash, used as a
+flashlight by Plasma Mobile. The torch current is limited to 250 mA.
+---
+ .../boot/dts/qcom/sm8475-xiaomi-diting.dts    | 20 +++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+index 878022c..b4013ac 100644
+--- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
++++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+@@ -15,6 +15,7 @@
+ #include <dt-bindings/input/input.h>
+ #include <dt-bindings/clock/qcom,sm8450-camcc.h>
+ #include <dt-bindings/interrupt-controller/irq.h>
++#include <dt-bindings/leds/common.h>
+ #include <dt-bindings/media/video-interfaces.h>
+ #include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
+ #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+@@ -1079,6 +1080,25 @@
+ 	};
+ };
+ 
++&pm8350c_flash {
++	status = "okay";
++
++	/*
++	 * Single rear LED on channel 0, as in the vendor overlay
++	 * (qcom,flash_0 / qcom,torch_0): flash 1.5 A for 1.28 s at most,
++	 * torch limited to 250 mA (vendor maximum 500 mA) so that a
++	 * flashlight left on does not overheat the LED.
++	 */
++	led-0 {
++		function = LED_FUNCTION_FLASH;
++		color = <LED_COLOR_ID_WHITE>;
++		led-sources = <1>;
++		led-max-microamp = <250000>;
++		flash-max-microamp = <1500000>;
++		flash-max-timeout-us = <1280000>;
++	};
++};
++
+ &pm8350c_gpios {
+ 	eusb2_reset_n: eusb2-reset-n-state {
+ 		pins = "gpio7";
+-- 
+2.43.0
+
