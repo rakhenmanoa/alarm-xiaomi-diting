@@ -21,6 +21,59 @@ Il n'y a donc pas d'extraction au premier démarrage.
 > Les scripts tout-en-un (étapes 2 à 4 du conteneur) n'ont pas été exécutés de bout en bout :
 > la méthode réellement suivie est décrite dans « Méthode testée » ci-dessous.
 
+## État du matériel
+
+✅ fonctionne · 🟡 partiel ou à améliorer · ❌ ne fonctionne pas · ⬜ pas encore testé
+
+Testé sur le téléphone sous ALARM, sauf mention « diting-ubuntu » : ces lignes reprennent le
+[suivi de diting-ubuntu](https://github.com/royka1/diting-ubuntu/blob/main/docs/BRINGUP_STATUS.md),
+même noyau, pas encore revérifiées ici.
+
+| Matériel | État | Détails / reste à faire |
+|---|:---:|---|
+| **Système** | | |
+| Démarrage, slots A/B | ✅ | `diting-boot-successful` obligatoire, sinon le slot tombe après 7 démarrages |
+| Redémarrage vers fastboot | ✅ | `diting-reboot-bootloader` (diting-ubuntu) |
+| Veille | 🟡 | s2idle et deep fonctionnent, mais pas d'effondrement complet du SoC (CX/AOSD/DDR) : consommation en veille à réduire |
+| Gestion thermique | 🟡 | seules les zones thermiques du PMIC (alerte à 95 °C) ; pas de régulation fine |
+| **Affichage** | | |
+| Écran (dalles 36 02 0b et 42 02 0a) | ✅ | 60, 90 et 120 Hz, DSC |
+| Luminosité, HBM, écran toujours allumé | 🟡 | luminosité réglable ; courbe, HBM et AOD pas faits |
+| Tactile (ST FTM5 et Goodix GT9916) | ✅ | coins du bas corrigés (`diting-touch-cmd grip off`) ; SPI à 1 MHz au lieu de 12 |
+| GPU Adreno 730 | 🟡 | freedreno + Turnip ; blocages GMU rares (écran noir), à corriger |
+| Fluidité de Plasma Mobile | 🟡 | moins fluide qu'Android ; à faire : rendu KWin en basse résolution, agrandi par le contrôleur d'affichage |
+| **Connectivité** | | |
+| Wi-Fi | ✅ | jusqu'à HE 160 MHz ; économie d'énergie désactivée |
+| Bluetooth | 🟡 | interface active et scan LE (diting-ubuntu) ; appairage et audio Bluetooth à tester |
+| USB périphérique (SSH par USB) | ✅ | réseau NCM, `172.16.42.1` |
+| USB hôte (OTG) | ⬜ | |
+| GPS / GNSS | ⬜ | |
+| NFC | ❌ | |
+| Émetteur infrarouge | ❌ | |
+| **Téléphonie** | | |
+| Modem, 4G, SMS, USSD | ✅ | avec les correctifs ModemManager (`pkgbuilds/modemmanager-fix/`) |
+| Données mobiles | ✅ | idem |
+| Appels | 🟡 | en 3G uniquement : pas de VoLTE |
+| **Audio** | | |
+| Haut-parleurs stéréo | ✅ | protection CS35L41 avec la calibration d'usine |
+| Écouteur, micros | ✅ | |
+| Audio des appels | ✅ | écouteur, haut-parleur, sourdine |
+| **Capteurs** | | |
+| Rotation, proximité, lumière, boussole, gyroscope | ✅ | via le SLPI (`libssc`, `iio-sensor-proxy-diting`) |
+| Écran éteint contre l'oreille, lever pour réveiller | ✅ | `diting-proximite-appel`, `diting-lever-reveil` |
+| Lecteur d'empreintes | ❌ | |
+| **Caméras** | | |
+| Principale (S5KHP1, 200 Mpx) | ✅ | autofocus, photo dans plasma-camera ; ❌ sur les unités à capteur Samsung HM6 |
+| Ultra grand-angle (S5K4H7) | ✅ | diting-ubuntu |
+| Frontale (IMX596), macro (GC02M1) | ✅ | 30 im/s |
+| Flash arrière / lampe torche | ✅ | patch `0912`, LED `white:flash` |
+| **Vidéo** | | |
+| Décodage matériel (H.264, HEVC, VP9) | ✅ | VA-API |
+| Encodage matériel | ❌ | le firmware se bloque au démarrage du flux |
+| **Divers** | | |
+| Vibreur | ✅ | patch `0904` |
+| Batterie, charge | 🟡 | niveau, courant, état de charge dans UPower ; pas de limite de charge |
+
 ## Variantes matérielles du diting
 
 Xiaomi monte deux écrans et deux contrôleurs tactiles différents selon les lots. Le bootloader
@@ -212,7 +265,7 @@ scripts/restaurer-android.sh --donnees  # + userdata/metadata d'origine (si sauv
 Les mêmes que diting-ubuntu :
 
 - pas de VoLTE (les appels passent en 3G) ;
-- ne fonctionnent pas : lecteur d'empreintes, NFC, IR, vibration, encodeur vidéo ;
+- ne fonctionnent pas : lecteur d'empreintes, NFC, IR, encodeur vidéo (le vibreur, lui, marche ici avec le patch `0904`) ;
 - la caméra principale ne marche pas si votre unité a le capteur Samsung HM6 au lieu du HP1.
 
 Spécifique à cette version Arch :
