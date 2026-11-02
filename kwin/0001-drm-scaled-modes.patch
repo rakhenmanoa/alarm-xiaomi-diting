@@ -1,0 +1,174 @@
+diff --git a/src/backends/drm/drm_connector.cpp b/src/backends/drm/drm_connector.cpp
+index 8cddae4..a0b7e97 100644
+--- a/src/backends/drm/drm_connector.cpp
++++ b/src/backends/drm/drm_connector.cpp
+@@ -17,6 +17,7 @@
+ #include "drm_pointer.h"
+ 
+ #include <cerrno>
++#include <cmath>
+ #include <cstring>
+ 
+ namespace KWin
+@@ -72,6 +73,26 @@ DrmConnectorMode::DrmConnectorMode(DrmConnector *connector, const OutputModeline
+     sprintf(m_nativeMode.name, "%dx%d@%d", size.width(), size.height(), m_nativeMode.vrefresh);
+ }
+ 
++DrmConnectorMode::DrmConnectorMode(DrmConnector *connector, drmModeModeInfo nativeMode, const QSize &scaledSize, uint32_t refreshRate)
++    : OutputMode(OutputModeline(scaledSize, refreshRate, OutputModeline::Flag::Generated))
++    , m_connector(connector)
++    , m_nativeMode(nativeMode)
++    , m_scaled(true)
++{
++    // don't let the kernel or anyone else treat this as the preferred mode
++    m_nativeMode.type &= ~DRM_MODE_TYPE_PREFERRED;
++}
++
++bool DrmConnectorMode::isScaled() const
++{
++    return m_scaled;
++}
++
++QSize DrmConnectorMode::scanoutSize() const
++{
++    return QSize(m_nativeMode.hdisplay, m_nativeMode.vdisplay);
++}
++
+ std::shared_ptr<DrmBlob> DrmConnectorMode::blob()
+ {
+     if (!m_blob) {
+@@ -112,12 +133,15 @@ static inline bool checkIfEqual(const drmModeModeInfo *one, const drmModeModeInf
+ 
+ bool DrmConnectorMode::operator==(const DrmConnectorMode &otherMode) const
+ {
+-    return checkIfEqual(&m_nativeMode, &otherMode.m_nativeMode);
++    return m_scaled == otherMode.m_scaled
++        && size() == otherMode.size()
++        && checkIfEqual(&m_nativeMode, &otherMode.m_nativeMode);
+ }
+ 
+ bool DrmConnectorMode::operator==(const drmModeModeInfo &otherMode) const
+ {
+-    return checkIfEqual(&m_nativeMode, &otherMode);
++    // a raw kernel mode always describes the unscaled mode
++    return !m_scaled && checkIfEqual(&m_nativeMode, &otherMode);
+ }
+ 
+ DrmConnector::DrmConnector(DrmGpu *gpu, uint32_t connectorId)
+@@ -348,6 +372,9 @@ bool DrmConnector::updateProperties()
+         if (scalingMode.isValid() && scalingMode.hasEnum(ScalingMode::Full_Aspect) && isInternal()) {
+             m_modes.append(generateCommonModes());
+         }
++        if (isInternal()) {
++            m_modes.append(generateScaledModes());
++        }
+     }
+ 
+     m_mstPath.clear();
+@@ -447,6 +474,43 @@ QList<std::shared_ptr<DrmConnectorMode>> DrmConnector::generateCommonModes()
+     return ret;
+ }
+ 
++// KWIN_DRM_SCALED_MODES="2,3" -> for every native mode, also offer modes at
++// 1/2 and 1/3 of the native resolution, upscaled by the primary plane.
++static const QList<double> s_scaledModeFactors = []() {
++    QList<double> ret;
++    const QString env = qEnvironmentVariable("KWIN_DRM_SCALED_MODES");
++    for (const QString &part : env.split(QLatin1Char(','), Qt::SkipEmptyParts)) {
++        bool ok = false;
++        const double factor = part.trimmed().toDouble(&ok);
++        if (ok && factor > 1.0 && factor <= 4.0) {
++            ret.push_back(factor);
++        }
++    }
++    return ret;
++}();
++
++QList<std::shared_ptr<DrmConnectorMode>> DrmConnector::generateScaledModes()
++{
++    QList<std::shared_ptr<DrmConnectorMode>> ret;
++    for (const auto &mode : std::as_const(m_driverModes)) {
++        const QSize native = mode->size();
++        for (const double factor : s_scaledModeFactors) {
++            const QSize scaled(std::lround(native.width() / factor), std::lround(native.height() / factor));
++            if (scaled.width() < 320 || scaled.height() < 320) {
++                continue;
++            }
++            const bool alreadyExists = std::ranges::any_of(ret, [&](const auto &other) {
++                return other->size() == scaled && other->refreshRate() == mode->refreshRate();
++            });
++            if (alreadyExists) {
++                continue;
++            }
++            ret.push_back(std::make_shared<DrmConnectorMode>(this, *mode->nativeMode(), scaled, mode->refreshRate()));
++        }
++    }
++    return ret;
++}
++
+ std::shared_ptr<DrmConnectorMode> DrmConnector::generateMode(const OutputModeline &modeline)
+ {
+     return std::make_shared<DrmConnectorMode>(this, modeline);
+diff --git a/src/backends/drm/drm_connector.h b/src/backends/drm/drm_connector.h
+index 3d1bda3..2d0c847 100644
+--- a/src/backends/drm/drm_connector.h
++++ b/src/backends/drm/drm_connector.h
+@@ -34,6 +34,15 @@ class DrmConnectorMode : public OutputMode
+ public:
+     DrmConnectorMode(DrmConnector *connector, drmModeModeInfo nativeMode);
+     DrmConnectorMode(DrmConnector *connector, const OutputModeline &modeline);
++    /*
++     * A "scaled" mode: the CRTC is driven with the panel's native timings, but
++     * KWin renders at @p scaledSize and the primary plane upscales the image
++     * to the native resolution in hardware.
++     */
++    DrmConnectorMode(DrmConnector *connector, drmModeModeInfo nativeMode, const QSize &scaledSize, uint32_t refreshRate);
++
++    bool isScaled() const;
++    QSize scanoutSize() const;
+ 
+     drmModeModeInfo *nativeMode();
+     std::shared_ptr<DrmBlob> blob();
+@@ -46,6 +55,7 @@ private:
+     DrmConnector *m_connector;
+     drmModeModeInfo m_nativeMode;
+     std::shared_ptr<DrmBlob> m_blob;
++    bool m_scaled = false;
+ };
+ 
+ class KWIN_EXPORT DrmConnector : public DrmObject
+@@ -153,6 +163,7 @@ public:
+ 
+ private:
+     QList<std::shared_ptr<DrmConnectorMode>> generateCommonModes();
++    QList<std::shared_ptr<DrmConnectorMode>> generateScaledModes();
+ 
+     DrmUniquePtr<drmModeConnector> m_conn;
+     Edid m_edid;
+diff --git a/src/backends/drm/drm_pipeline.cpp b/src/backends/drm/drm_pipeline.cpp
+index 3a69f8d..1309f31 100644
+--- a/src/backends/drm/drm_pipeline.cpp
++++ b/src/backends/drm/drm_pipeline.cpp
+@@ -276,7 +276,21 @@ std::expected<void, OutputError> DrmPipeline::prepareAtomicPlane(DrmAtomicCommit
+     }
+     commit->addProperty(plane->crtcId, m_pending.crtc->id());
+     commit->addBuffer(plane, fb, frame);
+-    plane->set(commit, layer->sourceRect().toRect(), layer->targetRect());
++    Rect targetRect = layer->targetRect();
++    if (m_pending.mode && m_pending.mode->isScaled()) {
++        // the layer is positioned in the coordinates of the (small) scaled mode,
++        // let the plane upscale it to the native resolution of the CRTC
++        const QSize from = m_pending.mode->size();
++        const QSize to = m_pending.mode->scanoutSize();
++        const double sx = double(to.width()) / from.width();
++        const double sy = double(to.height()) / from.height();
++        const int x1 = std::lround(targetRect.left() * sx);
++        const int y1 = std::lround(targetRect.top() * sy);
++        const int x2 = std::lround((targetRect.left() + targetRect.width()) * sx);
++        const int y2 = std::lround((targetRect.top() + targetRect.height()) * sy);
++        targetRect = Rect(x1, y1, x2 - x1, y2 - y1);
++    }
++    plane->set(commit, layer->sourceRect().toRect(), targetRect);
+     if (plane->vmHotspotX.isValid() && plane->vmHotspotY.isValid()) {
+         commit->addProperty(plane->vmHotspotX, std::round(layer->hotspot().x()));
+         commit->addProperty(plane->vmHotspotY, std::round(layer->hotspot().y()));
