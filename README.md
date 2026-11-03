@@ -46,7 +46,7 @@ même noyau, pas encore revérifiées ici.
 | Wi-Fi | ✅ | jusqu'à HE 160 MHz ; économie d'énergie désactivée |
 | Bluetooth | 🟡 | interface active et scan LE (diting-ubuntu) ; appairage et audio Bluetooth à tester. Android passe l'audio des appels Bluetooth par SLIMbus (`btfmslim`) : le kit mains libres en appel pourrait rester muet |
 | USB périphérique (SSH par USB) | ✅ | réseau NCM, `172.16.42.1` |
-| USB hôte (OTG) | 🟡 | patch `0915` : connecteur USB-C sous pmic-glink, rôle choisi par UCSI ; à valider avec un adaptateur OTG |
+| USB hôte (OTG) | ✅ | patch `0915` : connecteur USB-C sous pmic-glink, rôle choisi par UCSI ; testé avec un téléphone Android en câble C-C (énuméré en haute vitesse) |
 | USB 3, sortie vidéo par USB-C | ⚪ | absents : Xiaomi désactive le PHY combo USB3/DisplayPort, le port est en USB 2.0 |
 | Casque sur adaptateur USB-C (FSA4480) | ⬜ | pilote `fsa4480` disponible, nœud DT à écrire |
 | GPS / GNSS | ⬜ | |
