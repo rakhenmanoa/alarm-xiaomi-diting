@@ -49,7 +49,7 @@ même noyau, pas encore revérifiées ici.
 | USB hôte (OTG) | ✅ | patch `0915` : connecteur USB-C sous pmic-glink, rôle choisi par UCSI ; testé avec un téléphone Android en câble C-C (énuméré en haute vitesse) |
 | USB 3, sortie vidéo par USB-C | ⚪ | absents : Xiaomi désactive le PHY combo USB3/DisplayPort, le port est en USB 2.0 |
 | Casque sur adaptateur USB-C (FSA4480) | ⬜ | pilote `fsa4480` disponible, nœud DT à écrire |
-| GPS / GNSS | ⬜ | |
+| GPS / GNSS | 🟡 | service LOC du modem présent (`gps-raw`, `gps-nmea`, A-GPS) mais `LOC start` refusé (`GeneralError`), y compris par `qmicli` seul. Écarté : verrou du moteur (était `all`, mis à `none` avec `qmicli --loc-set-engine-lock=none`, gardé après redémarrage du modem), mode (`standalone`/`default`), heure, données d'assistance, déclaration `gps/gps_service` de pd-mapper. Suite : journal F3 du modem par DIAG |
 | NFC | ❌ | NXP SN1xx, non gérée par le pilote `nxp-nci` |
 | Émetteur infrarouge | ✅ | patch `0913` (`ir-spi`, `/dev/lirc0`) ; émission vérifiée (`ir-ctl -S nec:…`, LED vue par une autre caméra) |
 | **Téléphonie** | | |
