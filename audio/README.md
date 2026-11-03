@@ -318,7 +318,7 @@ Les commandes `fdtput` qui ont servi à mettre au point `0903` sont dans le READ
 | Pas de carte son au démarrage, batterie à 0 % | `diting-dsp.conf` absent (softdep `qcom_pd_mapper`). |
 | PipeWire n'offre pas le profil HiFi | Profil UCM non corrigé : vérifier que `HiFi.conf` contient `MultiMedia2 Mixer TX_CODEC_DMA_TX_3`. |
 | Bruit blanc au micro | Patch `0903` absent du DTB, ou UCM encore sur `SWR_MIC1`. |
-| Souffle continu à certains démarrages, sans xrun | `0903` ancien (les deux ports sur la lane 1) : vérifier `xxd /proc/device-tree/soc@0/soundwire@33b0000/qcom,ports-lane-control` → `0102 0000`. |
+| Souffle continu à certains démarrages, sans xrun | `0903` ancien (les deux ports sur la lane 1) : vérifier `xxd /proc/device-tree/soc@0/soundwire@33b0000/qcom,ports-lane-control` → `0102 0000`. Cause habituelle : `linux-diting` antérieur au pkgrel 14, ou DTB recompilé dans un arbre noyau sans le nouveau `0903` puis copié dans `/boot/dtbs/` (écrase aussi une correction faite avec `fdtput`). Depuis `diting-device` 0.1.24, le hook de mkinitcpio détecte ce DTB et applique les lanes d'Android à la copie mise dans `vendor_boot.img` : `sudo mkinitcpio -P`, `sudo diting-install-bootimg`, redémarrer. |
 | Plantage de plasma-settings au test du micro | `60-diting-latence.conf` absent de `/usr/share/pipewire/pipewire-pulse.conf.d/` : `pw-top` montre QUANT sous 1024 pendant le test. Le niveau et les hachures du test restent peu fiables : vérifier le micro avec l'enregistreur de Plasma Mobile ou `pw-record`. |
 | Haut-parleur du bas muet | Patch `0086` absent (RX2 sur son propre canal avec le firmware de protection). |
 | Souffle fort, signal faible | Horloge de bit TDM non inversée (patch `0048`). |

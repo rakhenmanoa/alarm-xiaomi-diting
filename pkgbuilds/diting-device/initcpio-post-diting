@@ -6,6 +6,28 @@ kernel="$1" image="$2"
 [ "$image" = /boot/initramfs-linux-diting.img ] || exit 0
 [ -s "$kernel" ] || kernel=/boot/vmlinuz-linux-diting
 . /etc/diting/bootimg.conf
-exec /usr/bin/diting-mkbootimg --kernel "$kernel" --initrd "$image" \
-	--dtb "/boot/dtbs/$KERNEL_DTB" --out /boot/diting \
-	--cmdline "$(cat /etc/diting/cmdline 2>/dev/null)"
+dtb="/boot/dtbs/$KERNEL_DTB"
+
+# Micros : un DTB construit avec l'ancien patch 0903 (linux-diting antérieur
+# au pkgrel 14, ou DTB recompilé dans un arbre noyau pas à jour) met les deux
+# micros sur la lane SoundWire 1 : souffle sur les deux canaux à certains
+# démarrages. On corrige une copie avec les lanes d'Android (port 1 sur la
+# lane 1, port 2 sur la lane 2, décalage 0) ; le DTB du paquet n'est pas touché.
+swr=/soc@0/soundwire@33b0000
+tmp=
+if [ "$(fdtget -t u "$dtb" "$swr/codec@0,3" qcom,tx-port-mapping 2>/dev/null)" = "1 2 3 4" ] &&
+   [ "$(fdtget -t bu "$dtb" "$swr" qcom,ports-lane-control 2>/dev/null)" = "1 1 0 0" ]; then
+	tmp="$(mktemp /tmp/diting-dtb.XXXXXX)"
+	cp "$dtb" "$tmp"
+	fdtput -t bu "$tmp" "$swr" qcom,ports-offset1 0 0 1 1
+	fdtput -t bu "$tmp" "$swr" qcom,ports-lane-control 1 2 0 0
+	echo "==> diting : $dtb a l'ancien 0903 (micros sur la même lane) ; lanes d'Android appliquées à la copie utilisée" >&2
+	dtb="$tmp"
+fi
+
+rc=0
+/usr/bin/diting-mkbootimg --kernel "$kernel" --initrd "$image" \
+	--dtb "$dtb" --out /boot/diting \
+	--cmdline "$(cat /etc/diting/cmdline 2>/dev/null)" || rc=$?
+[ -z "$tmp" ] || rm -f "$tmp"
+exit $rc
