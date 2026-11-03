@@ -42,7 +42,8 @@ def main():
                 noeuds = dtcam.analyser(fdt)
             except (ValueError, struct.error):
                 continue
-            modele = dtcam.chaine(dict(noeuds).get('/', {}).get('model', b'')) or ''
+            # modèle brut, sans guillemets : -m 'Cape SoC$' doit fonctionner
+            modele = dict(noeuds).get('/', {}).get('model', b'').rstrip(b'\0').decode(errors='replace')
             if motif and not motif.search(modele):
                 continue
             fixups = {}
