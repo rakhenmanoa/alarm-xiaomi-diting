@@ -7,7 +7,7 @@ pkgname=linux-diting
 _kver=7.2.10
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=${_kver}
-pkgrel=18
+pkgrel=19
 pkgdesc="Linux ${_kver} pour le Xiaomi 12T Pro / Redmi K50 Ultra (diting, SM8475)"
 arch=(aarch64)
 url="https://github.com/royka1/diting-ubuntu"
@@ -31,8 +31,10 @@ source=("https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${_kver}.tar.xz"
         0910-remoteproc-qcom_q6v5-Disable-the-handover-IRQ-once-h.patch
         0911-media-i2c-s5khp1-Keep-the-exposure-across-mode-chang.patch
         0912-arm64-dts-qcom-sm8475-xiaomi-diting-Enable-the-rear-.patch
-        0913-arm64-dts-qcom-sm8475-xiaomi-diting-Add-the-IR-blast.patch)
+        0913-arm64-dts-qcom-sm8475-xiaomi-diting-Add-the-IR-blast.patch
+        0914-arm64-dts-qcom-sm8475-xiaomi-diting-Add-the-board-th.patch)
 sha256sums=('2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -91,6 +93,8 @@ prepare() {
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0912-arm64-dts-qcom-sm8475-xiaomi-diting-Enable-the-rear-.patch"
   # émetteur infrarouge : LED sur la ligne MOSI de SPI13 (ir-spi, /dev/lirc0)
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0913-arm64-dts-qcom-sm8475-xiaomi-diting-Add-the-IR-blast.patch"
+  # thermistances de la carte (ADC7 / ADC-TM du PMK8350) et zones thermiques
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0914-arm64-dts-qcom-sm8475-xiaomi-diting-Add-the-board-th.patch"
 
   _make defconfig
   scripts/kconfig/merge_config.sh -m .config "$srcdir/diting-ubuntu/kernel/config/diting.config"

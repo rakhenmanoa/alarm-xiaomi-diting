@@ -1,0 +1,313 @@
+From e324a723520701720b81201de7a042b7bf74cacd Mon Sep 17 00:00:00 2001
+From: Fanasina RANDRIATSARAFARA <m.randriatsarafara.f@gmail.com>
+Date: Tue, 3 Nov 2026 13:50:32 +0300
+Subject: [PATCH] arm64: dts: qcom: sm8475-xiaomi-diting: Add the board
+ thermistors
+
+Describe the eight 100 kOhm board thermistors of the vendor adc_tm@3400
+node (SoC skin, camera flash, pocket skin, USB connector, charger, the
+two PA and Wi-Fi) as PMK8350 ADC7 channels, monitor them with ADC_TM5
+and expose one thermal zone each, with a report-only hot trip. Also
+feed the PMIC die temperatures to the PM8350, PM8350B and PMR735A
+temperature alarms, as on the SM8450 HDK.
+---
+ .../boot/dts/qcom/sm8475-xiaomi-diting.dts    | 269 ++++++++++++++++++
+ 1 file changed, 269 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+index 922c686..016f7bd 100644
+--- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
++++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+@@ -13,6 +13,10 @@
+ #include <dt-bindings/firmware/qcom,scm.h>
+ #include <dt-bindings/gpio/gpio.h>
+ #include <dt-bindings/input/input.h>
++#include <dt-bindings/iio/qcom,spmi-adc7-pm8350.h>
++#include <dt-bindings/iio/qcom,spmi-adc7-pm8350b.h>
++#include <dt-bindings/iio/qcom,spmi-adc7-pmk8350.h>
++#include <dt-bindings/iio/qcom,spmi-adc7-pmr735a.h>
+ #include <dt-bindings/clock/qcom,sm8450-camcc.h>
+ #include <dt-bindings/interrupt-controller/irq.h>
+ #include <dt-bindings/leds/common.h>
+@@ -313,6 +317,112 @@
+ 		regulator-always-on;
+ 		regulator-boot-on;
+ 	};
++
++	thermal-zones {
++		skin-msm-thermal {
++			polling-delay-passive = <0>;
++			thermal-sensors = <&pmk8350_adc_tm 0>;
++
++			trips {
++				trip-hot {
++					temperature = <60000>;
++					hysteresis = <4000>;
++					type = "hot";
++				};
++			};
++		};
++
++		flash-thermal {
++			polling-delay-passive = <0>;
++			thermal-sensors = <&pmk8350_adc_tm 1>;
++
++			trips {
++				trip-hot {
++					temperature = <75000>;
++					hysteresis = <4000>;
++					type = "hot";
++				};
++			};
++		};
++
++		skin-pocket-thermal {
++			polling-delay-passive = <0>;
++			thermal-sensors = <&pmk8350_adc_tm 2>;
++
++			trips {
++				trip-hot {
++					temperature = <60000>;
++					hysteresis = <4000>;
++					type = "hot";
++				};
++			};
++		};
++
++		usb-conn-thermal {
++			polling-delay-passive = <0>;
++			thermal-sensors = <&pmk8350_adc_tm 3>;
++
++			trips {
++				trip-hot {
++					temperature = <60000>;
++					hysteresis = <4000>;
++					type = "hot";
++				};
++			};
++		};
++
++		charger-thermal {
++			polling-delay-passive = <0>;
++			thermal-sensors = <&pmk8350_adc_tm 4>;
++
++			trips {
++				trip-hot {
++					temperature = <75000>;
++					hysteresis = <4000>;
++					type = "hot";
++				};
++			};
++		};
++
++		pa0-thermal {
++			polling-delay-passive = <0>;
++			thermal-sensors = <&pmk8350_adc_tm 5>;
++
++			trips {
++				trip-hot {
++					temperature = <75000>;
++					hysteresis = <4000>;
++					type = "hot";
++				};
++			};
++		};
++
++		pa1-thermal {
++			polling-delay-passive = <0>;
++			thermal-sensors = <&pmk8350_adc_tm 6>;
++
++			trips {
++				trip-hot {
++					temperature = <75000>;
++					hysteresis = <4000>;
++					type = "hot";
++				};
++			};
++		};
++
++		wifi-thermal {
++			polling-delay-passive = <0>;
++			thermal-sensors = <&pmk8350_adc_tm 7>;
++
++			trips {
++				trip-hot {
++					temperature = <75000>;
++					hysteresis = <4000>;
++					type = "hot";
++				};
++			};
++		};
++	};
+ };
+ 
+ &apps_rsc {
+@@ -1070,6 +1180,165 @@
+ 	status = "okay";
+ };
+ 
++&pmk8350_adc_tm {
++	status = "okay";
++
++	/*
++	 * Board thermistors (100 kOhm pull-up), channels as in the vendor
++	 * adc_tm@3400 node. The trips only report; nothing throttles yet.
++	 */
++	skin-msm-therm@0 {
++		reg = <0>;
++		io-channels = <&pmk8350_vadc PM8350_ADC7_AMUX_THM1_100K_PU(1)>;
++		qcom,ratiometric;
++		qcom,hw-settle-time-us = <200>;
++	};
++
++	flash-therm@1 {
++		reg = <1>;
++		io-channels = <&pmk8350_vadc PM8350_ADC7_AMUX_THM2_100K_PU(1)>;
++		qcom,ratiometric;
++		qcom,hw-settle-time-us = <200>;
++	};
++
++	skin-pocket-therm@2 {
++		reg = <2>;
++		io-channels = <&pmk8350_vadc PM8350_ADC7_AMUX_THM3_100K_PU(1)>;
++		qcom,ratiometric;
++		qcom,hw-settle-time-us = <200>;
++	};
++
++	usb-conn-therm@3 {
++		reg = <3>;
++		io-channels = <&pmk8350_vadc PM8350B_ADC7_AMUX_THM4_100K_PU>;
++		qcom,ratiometric;
++		qcom,hw-settle-time-us = <200>;
++	};
++
++	charger-therm@4 {
++		reg = <4>;
++		io-channels = <&pmk8350_vadc PM8350B_ADC7_GPIO4_100K_PU>;
++		qcom,ratiometric;
++		qcom,hw-settle-time-us = <200>;
++	};
++
++	pa0-therm@5 {
++		reg = <5>;
++		io-channels = <&pmk8350_vadc PMR735A_ADC7_GPIO1_100K_PU>;
++		qcom,ratiometric;
++		qcom,hw-settle-time-us = <200>;
++	};
++
++	pa1-therm@6 {
++		reg = <6>;
++		io-channels = <&pmk8350_vadc PMR735A_ADC7_GPIO2_100K_PU>;
++		qcom,ratiometric;
++		qcom,hw-settle-time-us = <200>;
++	};
++
++	wifi-therm@7 {
++		reg = <7>;
++		io-channels = <&pmk8350_vadc PMR735A_ADC7_GPIO3_100K_PU>;
++		qcom,ratiometric;
++		qcom,hw-settle-time-us = <200>;
++	};
++};
++
++&pmk8350_vadc {
++	status = "okay";
++
++	channel@3 {
++		reg = <PMK8350_ADC7_DIE_TEMP>;
++		label = "pmk8350_die_temp";
++	};
++
++	channel@103 {
++		reg = <PM8350_ADC7_DIE_TEMP(1)>;
++		label = "pm8350_die_temp";
++	};
++
++	channel@303 {
++		reg = <PM8350B_ADC7_DIE_TEMP>;
++		label = "pm8350b_die_temp";
++	};
++
++	channel@403 {
++		reg = <PMR735A_ADC7_DIE_TEMP>;
++		label = "pmr735a_die_temp";
++	};
++
++	channel@144 {
++		reg = <PM8350_ADC7_AMUX_THM1_100K_PU(1)>;
++		qcom,ratiometric;
++		qcom,hw-settle-time = <200>;
++		label = "pm8350_msm_therm";
++	};
++
++	channel@145 {
++		reg = <PM8350_ADC7_AMUX_THM2_100K_PU(1)>;
++		qcom,ratiometric;
++		qcom,hw-settle-time = <200>;
++		label = "pm8350_flash_therm";
++	};
++
++	channel@146 {
++		reg = <PM8350_ADC7_AMUX_THM3_100K_PU(1)>;
++		qcom,ratiometric;
++		qcom,hw-settle-time = <200>;
++		label = "pm8350_hot_pocket_therm";
++	};
++
++	channel@347 {
++		reg = <PM8350B_ADC7_AMUX_THM4_100K_PU>;
++		qcom,ratiometric;
++		qcom,hw-settle-time = <200>;
++		label = "pm8350b_usb_conn_therm";
++	};
++
++	channel@34d {
++		reg = <PM8350B_ADC7_GPIO4_100K_PU>;
++		qcom,ratiometric;
++		qcom,hw-settle-time = <200>;
++		label = "pm8350_charger0_therm";
++	};
++
++	channel@44a {
++		reg = <PMR735A_ADC7_GPIO1_100K_PU>;
++		qcom,ratiometric;
++		qcom,hw-settle-time = <200>;
++		label = "pa_therm0";
++	};
++
++	channel@44b {
++		reg = <PMR735A_ADC7_GPIO2_100K_PU>;
++		qcom,ratiometric;
++		qcom,hw-settle-time = <200>;
++		label = "pa_therm1";
++	};
++
++	channel@44c {
++		reg = <PMR735A_ADC7_GPIO3_100K_PU>;
++		qcom,ratiometric;
++		qcom,hw-settle-time = <200>;
++		label = "wifi_therm";
++	};
++};
++
++&pm8350_temp_alarm {
++	io-channels = <&pmk8350_vadc PM8350_ADC7_DIE_TEMP(1)>;
++	io-channel-names = "thermal";
++};
++
++&pm8350b_temp_alarm {
++	io-channels = <&pmk8350_vadc PM8350B_ADC7_DIE_TEMP>;
++	io-channel-names = "thermal";
++};
++
++&pmr735a_temp_alarm {
++	io-channels = <&pmk8350_vadc PMR735A_ADC7_DIE_TEMP>;
++	io-channel-names = "thermal";
++};
++
+ &pm8350_gpios {
+ 	vol_up_n: vol-up-n-state {
+ 		pins = "gpio6";
+-- 
+2.43.0
+
