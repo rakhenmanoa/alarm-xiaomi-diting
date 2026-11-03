@@ -1,0 +1,86 @@
+From f13264c8b9723ff662974f6e1ca132eec459b9ae Mon Sep 17 00:00:00 2001
+From: Fanasina RANDRIATSARAFARA <m.randriatsarafara.f@gmail.com>
+Date: Tue, 3 Nov 2026 14:49:20 +0300
+Subject: [PATCH] power: supply: qcom_battmgr: Optional charge control on
+ SM8350-class firmware
+
+Charge limiting (BATTMGR_CHG_CTRL_LIMIT_EN) is only enabled for SM8550 and
+later. Add an opt-in module parameter, sm8350_charge_control, that exposes
+the start/end thresholds on SM8350-class firmware too, to find out whether
+a given firmware (Xiaomi 12T Pro, SM8475) implements the request. Without
+it the write times out after one second and nothing changes.
+---
+ drivers/power/supply/qcom_battmgr.c | 50 +++++++++++++++++++++++++++++
+ 1 file changed, 50 insertions(+)
+
+diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
+index 6d65ecc..8e36a24 100644
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -925,6 +925,54 @@ static const struct power_supply_desc sm8350_bat_psy_desc = {
+ 	.get_property = qcom_battmgr_bat_get_property,
+ };
+ 
++/*
++ * Charge limiting through BATTMGR_CHG_CTRL_LIMIT_EN is only known to work on
++ * SM8550 and later. Some SM8350/SM8450-class firmware (Xiaomi 12T Pro) may
++ * implement it too: this parameter exposes the thresholds on these devices
++ * to find out. A firmware without it answers nothing and the write fails
++ * with -ETIMEDOUT after one second.
++ */
++static bool sm8350_charge_control;
++module_param(sm8350_charge_control, bool, 0444);
++MODULE_PARM_DESC(sm8350_charge_control,
++		 "Expose charge control thresholds on SM8350-class firmware (experimental)");
++
++static const enum power_supply_property sm8350_cc_bat_props[] = {
++	POWER_SUPPLY_PROP_STATUS,
++	POWER_SUPPLY_PROP_HEALTH,
++	POWER_SUPPLY_PROP_PRESENT,
++	POWER_SUPPLY_PROP_CHARGE_TYPE,
++	POWER_SUPPLY_PROP_CAPACITY,
++	POWER_SUPPLY_PROP_VOLTAGE_OCV,
++	POWER_SUPPLY_PROP_VOLTAGE_NOW,
++	POWER_SUPPLY_PROP_VOLTAGE_MAX,
++	POWER_SUPPLY_PROP_CURRENT_NOW,
++	POWER_SUPPLY_PROP_TEMP,
++	POWER_SUPPLY_PROP_TECHNOLOGY,
++	POWER_SUPPLY_PROP_CHARGE_COUNTER,
++	POWER_SUPPLY_PROP_CYCLE_COUNT,
++	POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN,
++	POWER_SUPPLY_PROP_CHARGE_FULL,
++	POWER_SUPPLY_PROP_MODEL_NAME,
++	POWER_SUPPLY_PROP_TIME_TO_FULL_AVG,
++	POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG,
++	POWER_SUPPLY_PROP_INTERNAL_RESISTANCE,
++	POWER_SUPPLY_PROP_STATE_OF_HEALTH,
++	POWER_SUPPLY_PROP_POWER_NOW,
++	POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD,
++	POWER_SUPPLY_PROP_CHARGE_CONTROL_END_THRESHOLD,
++};
++
++static const struct power_supply_desc sm8350_cc_bat_psy_desc = {
++	.name = "qcom-battmgr-bat",
++	.type = POWER_SUPPLY_TYPE_BATTERY,
++	.properties = sm8350_cc_bat_props,
++	.num_properties = ARRAY_SIZE(sm8350_cc_bat_props),
++	.get_property = qcom_battmgr_bat_get_property,
++	.set_property = qcom_battmgr_bat_set_property,
++	.property_is_writeable = qcom_battmgr_bat_is_writeable,
++};
++
+ static const enum power_supply_property sm8550_bat_props[] = {
+ 	POWER_SUPPLY_PROP_STATUS,
+ 	POWER_SUPPLY_PROP_HEALTH,
+@@ -1742,6 +1790,8 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
+ 	} else {
+ 		if (battmgr->variant == QCOM_BATTMGR_SM8550)
+ 			psy_desc = &sm8550_bat_psy_desc;
++		else if (sm8350_charge_control)
++			psy_desc = &sm8350_cc_bat_psy_desc;
+ 		else
+ 			psy_desc = &sm8350_bat_psy_desc;
+ 
+-- 
+2.43.0
+
