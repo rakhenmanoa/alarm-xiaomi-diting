@@ -5,6 +5,8 @@
 
 -m MOTIF : ne garde que les blocs dont le modèle correspond (sans casse),
            ex. -m diting pour le dtbo, -m 'Cape SoC$' pour vendor_boot.
+-n MOTIF : détail complet (toutes les propriétés, sous-nœuds compris) des
+           nœuds dont le chemin correspond, ex. -n ir-spi.
 
 Une ligne par nœud qui porte un « compatible » :
   état  chemin  [dans &cible]  compatible  reg=…
@@ -29,9 +31,12 @@ def mots(v):
 
 def main():
     args = sys.argv[1:]
-    motif = None
-    if args[:1] == ['-m']:
-        motif = re.compile(args[1], re.I)
+    motif = noeud = None
+    while args[:1] in (['-m'], ['-n']):
+        if args[0] == '-m':
+            motif = re.compile(args[1], re.I)
+        else:
+            noeud = re.compile(args[1], re.I)
         args = args[2:]
     if not args:
         sys.exit(__doc__)
@@ -53,6 +58,18 @@ def main():
                         for ref in val.rstrip(b'\0').split(b'\0'):
                             fixups[ref.decode(errors='replace')] = etiquette
             print(f'##### {fichier} bloc {n_bloc} @0x{pos:x} {modele}')
+            if noeud:
+                choisis = [c for c, _ in noeuds if noeud.search(c)]
+                for c, p in noeuds:
+                    if any(c == x or c.startswith(x + '/') for x in choisis):
+                        print(c)
+                        for k, v in p.items():
+                            r = dtcam.chaine(v)
+                            if r is None:
+                                r = '<' + ' '.join(f'0x{m:x}' if m > 0xffff else str(m) for m in mots(v)) + '>' if v else ''
+                            print(f'    {k}' + (f' = {r}' if r else ''))
+                print()
+                continue
             for c, p in noeuds:
                 if c.startswith('/__') or '/__fixups__' in c or '/__local_fixups__' in c:
                     continue
