@@ -1,0 +1,74 @@
+From c207d66c8de29170c96a1a1618ae38db98cbfcc6 Mon Sep 17 00:00:00 2001
+From: Fanasina RANDRIATSARAFARA <m.randriatsarafara.f@gmail.com>
+Date: Tue, 3 Nov 2026 16:19:32 +0300
+Subject: [PATCH] drm/panel: xiaomi-l12: Map the backlight level through a
+ square curve
+
+The panel's light output is roughly proportional to the DBV, so with the
+level sent unchanged the top third of a brightness slider looks the same
+and the first step (about 1 %) is already DBV 20, too bright at night.
+Square the level instead, as the vendor UI-to-DBV curve does, with the
+vendor minimum DBV of 1 (qcom,mdss-dsi-bl-min-level). The range stays
+0..2047, the vendor normal range. The bl_linear module parameter
+restores the previous linear mapping.
+---
+ .../gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c | 32 ++++++++++++++++++-
+ 1 file changed, 31 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c
+index 912a4af..8ca3ea5 100644
+--- a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c
++++ b/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c
+@@ -19,6 +19,8 @@
+ #include <linux/backlight.h>
+ #include <linux/delay.h>
+ #include <linux/gpio/consumer.h>
++#include <linux/math.h>
++#include <linux/minmax.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/property.h>
+@@ -691,11 +693,39 @@ static const struct drm_panel_funcs xiaomi_l12_panel_funcs = {
+ 	.get_modes = xiaomi_l12_get_modes,
+ };
+ 
++/*
++ * The panel's light output is roughly proportional to the DBV, while the eye
++ * perceives it logarithmically: with a linear scale the top third of a
++ * brightness slider looks the same and the first step is already DBV ~20.
++ * Map the backlight level through a square curve instead (like the vendor
++ * UI-to-DBV curve), down to the vendor minimum DBV of 1
++ * (qcom,mdss-dsi-bl-min-level). bl_linear=1 restores the linear mapping.
++ */
++static bool bl_linear;
++module_param(bl_linear, bool, 0644);
++MODULE_PARM_DESC(bl_linear, "Send the backlight level to the panel unchanged (no curve)");
++
++#define XIAOMI_L12_MIN_DBV	1
++
++static u16 xiaomi_l12_level_to_dbv(u32 level)
++{
++	u32 dbv;
++
++	if (!level)
++		return 0;
++	if (bl_linear)
++		return level;
++
++	dbv = DIV_ROUND_CLOSEST(level * level, XIAOMI_L12_MAX_BRIGHTNESS);
++
++	return max_t(u32, dbv, XIAOMI_L12_MIN_DBV);
++}
++
+ /* 16-bit DBV, big-endian (vendor qcom,mdss-dsi-bl-inverted-dbv) */
+ static int xiaomi_l12_bl_update_status(struct backlight_device *bl)
+ {
+ 	struct mipi_dsi_device *dsi = bl_get_data(bl);
+-	u16 brightness = backlight_get_brightness(bl);
++	u16 brightness = xiaomi_l12_level_to_dbv(backlight_get_brightness(bl));
+ 	int ret;
+ 
+ 	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+-- 
+2.43.0
+
