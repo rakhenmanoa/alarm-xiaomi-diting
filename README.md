@@ -38,7 +38,8 @@ même noyau, pas encore revérifiées ici.
 | Gestion thermique | 🟡 | zones thermiques du PMIC (alerte à 95 °C) ; thermistances de la carte (patch `0914` : peau, flash, poche, connecteur USB, chargeur, PA, Wi-Fi) lues correctement (33 à 37 °C au repos) ; pas de régulation sur ces zones ni de limitation de courant BCL (pas de pilote) |
 | **Affichage** | | |
 | Écran (dalles 36 02 0b et 42 02 0a) | ✅ | 60, 90 et 120 Hz, DSC |
-| Luminosité, HBM, écran toujours allumé | 🟡 | courbe réglable à chaud (patch `0916` : paramètres `bl_min_dbv` et `bl_courbe` du module `panel_xiaomi_l12_36_02_0b`), réglage à valider ; HBM (DBV 2048-4095) et AOD pas faits |
+| Luminosité | ✅ | courbe réglable (patch `0916`), validée avec les valeurs par défaut (`bl_min_dbv=60`, `bl_courbe=70`, modifiables à chaud dans `/sys/module/panel_xiaomi_l12_36_02_0b/parameters/`) |
+| HBM, écran toujours allumé (AOD) | ⬜ | HBM = DBV 2048-4095 ; AOD : Xiaomi utilise DBV 20 / 252 en veille, demande un mode basse consommation de la dalle et sa prise en charge par Plasma |
 | Tactile (ST FTM5 et Goodix GT9916) | ✅ | coins du bas corrigés (`diting-touch-cmd grip off`) ; SPI à 1 MHz au lieu de 12 |
 | GPU Adreno 730 | 🟡 | freedreno + Turnip ; blocages GMU rares (écran noir), à corriger |
 | Fluidité de Plasma Mobile | 🟡 | moins fluide qu'Android ; à faire : rendu KWin en basse résolution, agrandi par le contrôleur d'affichage |
