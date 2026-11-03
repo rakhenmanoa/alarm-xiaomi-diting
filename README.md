@@ -51,7 +51,7 @@ même noyau, pas encore revérifiées ici.
 | Casque sur adaptateur USB-C (FSA4480) | ⬜ | pilote `fsa4480` disponible, nœud DT à écrire |
 | GPS / GNSS | ⬜ | |
 | NFC | ❌ | NXP SN1xx, non gérée par le pilote `nxp-nci` |
-| Émetteur infrarouge | 🟡 | patch `0913` (`ir-spi`, `/dev/lirc0`) ; émission à valider avec `ir-ctl` |
+| Émetteur infrarouge | ✅ | patch `0913` (`ir-spi`, `/dev/lirc0`) ; émission vérifiée (`ir-ctl -S nec:…`, LED vue par une autre caméra) |
 | **Téléphonie** | | |
 | Modem, 4G, SMS, USSD | ✅ | avec les correctifs ModemManager (`pkgbuilds/modemmanager-fix/`) |
 | Données mobiles | ✅ | idem |
