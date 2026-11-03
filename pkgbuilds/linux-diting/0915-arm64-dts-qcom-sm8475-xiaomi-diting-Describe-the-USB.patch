@@ -1,0 +1,81 @@
+From c64848630204e84e186b7d11c73771c911960aa4 Mon Sep 17 00:00:00 2001
+From: Fanasina RANDRIATSARAFARA <m.randriatsarafara.f@gmail.com>
+Date: Tue, 3 Nov 2026 14:09:42 +0300
+Subject: [PATCH] arm64: dts: qcom: sm8475-xiaomi-diting: Describe the USB-C
+ port for OTG
+
+Add the USB-C connector under pmic-glink, linked to the DWC3 high-speed
+port, and let the controller switch roles (dr_mode otg) instead of
+staying a peripheral. UCSI then selects host mode with an OTG adapter;
+the ADSP charger firmware supplies VBUS. The board is USB 2.0 only:
+the vendor DT leaves the USB3/DP combo PHY disabled.
+---
+ .../boot/dts/qcom/sm8475-xiaomi-diting.dts    | 38 ++++++++++++++++++-
+ 1 file changed, 36 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+index 016f7bd..e8b5907 100644
+--- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
++++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+@@ -1339,6 +1339,10 @@
+ 	io-channel-names = "thermal";
+ };
+ 
++&usb_1_dwc3_hs {
++	remote-endpoint = <&pmic_glink_hs_in>;
++};
++
+ &pm8350_gpios {
+ 	vol_up_n: vol-up-n-state {
+ 		pins = "gpio6";
+@@ -1975,8 +1979,13 @@
+ };
+ 
+ &usb_1 {
+-	/* Only the eUSB2 path is wired up so far; no USB3/DP, no role switch */
+-	dr_mode = "peripheral";
++	/*
++	 * eUSB2 only (no USB3/DP on this board). The role follows UCSI
++	 * through the connector: device towards a PC, host with an OTG
++	 * adapter; device until UCSI reports otherwise.
++	 */
++	dr_mode = "otg";
++	role-switch-default-mode = "peripheral";
+ 	maximum-speed = "high-speed";
+ 	qcom,select-utmi-as-pipe-clk;
+ 
+@@ -2005,6 +2014,31 @@
+ 		compatible = "qcom,sm8450-pmic-glink", "qcom,pmic-glink";
+ 		#address-cells = <1>;
+ 		#size-cells = <0>;
++
++		/*
++		 * USB-C port, managed by the ADSP charger firmware (UCSI):
++		 * USB 2.0 only, Xiaomi leaves the USB3/DP combo PHY unused.
++		 * The ADSP firmware supplies VBUS when a device is plugged in.
++		 */
++		connector@0 {
++			compatible = "usb-c-connector";
++			reg = <0>;
++			power-role = "dual";
++			data-role = "dual";
++
++			ports {
++				#address-cells = <1>;
++				#size-cells = <0>;
++
++				port@0 {
++					reg = <0>;
++
++					pmic_glink_hs_in: endpoint {
++						remote-endpoint = <&usb_1_dwc3_hs>;
++					};
++				};
++			};
++		};
+ 	};
+ 
+ 	aliases {
+-- 
+2.43.0
+
