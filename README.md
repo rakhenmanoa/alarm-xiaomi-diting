@@ -38,7 +38,7 @@ même noyau, pas encore revérifiées ici.
 | Gestion thermique | 🟡 | zones thermiques du PMIC (alerte à 95 °C) ; thermistances de la carte (patch `0914` : peau, flash, poche, connecteur USB, chargeur, PA, Wi-Fi) lues correctement (33 à 37 °C au repos) ; pas de régulation sur ces zones ni de limitation de courant BCL (pas de pilote) |
 | **Affichage** | | |
 | Écran (dalles 36 02 0b et 42 02 0a) | ✅ | 60, 90 et 120 Hz, DSC |
-| Luminosité, HBM, écran toujours allumé | 🟡 | courbe carrée (patch `0916` : curseur régulier, minimum DBV 1 comme Android ; `bl_linear=1` pour revenir au linéaire), à valider ; HBM (DBV 2048-4095) et AOD pas faits |
+| Luminosité, HBM, écran toujours allumé | 🟡 | courbe réglable à chaud (patch `0916` : paramètres `bl_min_dbv` et `bl_courbe` du module `panel_xiaomi_l12_36_02_0b`), réglage à valider ; HBM (DBV 2048-4095) et AOD pas faits |
 | Tactile (ST FTM5 et Goodix GT9916) | ✅ | coins du bas corrigés (`diting-touch-cmd grip off`) ; SPI à 1 MHz au lieu de 12 |
 | GPU Adreno 730 | 🟡 | freedreno + Turnip ; blocages GMU rares (écran noir), à corriger |
 | Fluidité de Plasma Mobile | 🟡 | moins fluide qu'Android ; à faire : rendu KWin en basse résolution, agrandi par le contrôleur d'affichage |
