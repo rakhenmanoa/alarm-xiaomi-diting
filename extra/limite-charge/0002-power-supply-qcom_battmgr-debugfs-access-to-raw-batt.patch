@@ -1,0 +1,168 @@
+From 21f05e21dddd3512160a7fab4e515f65504169a3 Mon Sep 17 00:00:00 2001
+From: Fanasina RANDRIATSARAFARA <m.randriatsarafara.f@gmail.com>
+Date: Tue, 3 Nov 2026 15:57:51 +0300
+Subject: [PATCH] power: supply: qcom_battmgr: debugfs access to raw battery
+ properties
+
+Add /sys/kernel/debug/qcom_battmgr/prop on SM8350-class firmware: writing
+"get N" or "set N V" sends a battery property request with the firmware
+index N (no remapping), and reading the file returns the value and result
+of the answer. Meant to explore vendor firmware, for example whether the
+charging enable property (BATT_CHG_CTRL_EN) can stop charging.
+---
+ drivers/power/supply/qcom_battmgr.c | 104 ++++++++++++++++++++++++++++
+ 1 file changed, 104 insertions(+)
+
+diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
+index 8e36a24..c14ab45 100644
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -5,6 +5,7 @@
+  * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+  */
+ #include <linux/auxiliary_bus.h>
++#include <linux/debugfs.h>
+ #include <linux/devm-helpers.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+@@ -16,6 +17,7 @@
+ #include <linux/soc/qcom/pdr.h>
+ #include <linux/soc/qcom/pmic_glink.h>
+ #include <linux/math.h>
++#include <linux/uaccess.h>
+ #include <linux/units.h>
+ 
+ #define BATTMGR_CHEMISTRY_LEN	4
+@@ -323,6 +325,15 @@ struct qcom_battmgr {
+ 	 */
+ 	bool bat_prop_constant_current;
+ 
++	/*
++	 * debugfs "prop": raw battery property access by firmware index, to
++	 * explore what a vendor firmware implements (experimental).
++	 */
++	bool dbg_pending;
++	u32 dbg_prop;
++	u32 dbg_value;
++	int dbg_result;
++
+ 	struct power_supply *ac_psy;
+ 	struct power_supply *bat_psy;
+ 	struct power_supply *usb_psy;
+@@ -1460,6 +1471,16 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+ 		return;
+ 	}
+ 
++	if (battmgr->dbg_pending &&
++	    (opcode == BATTMGR_BAT_PROPERTY_GET || opcode == BATTMGR_BAT_PROPERTY_SET) &&
++	    payload_len == sizeof(resp->intval) &&
++	    le32_to_cpu(resp->intval.property) == battmgr->dbg_prop) {
++		battmgr->dbg_value = le32_to_cpu(resp->intval.value);
++		battmgr->dbg_result = le32_to_cpu(resp->intval.result);
++		battmgr->error = 0;
++		goto out_complete;
++	}
++
+ 	switch (opcode) {
+ 	case BATTMGR_BAT_PROPERTY_GET:
+ 		property = qcom_battmgr_bat_prop_from_fw(battmgr,
+@@ -1719,6 +1740,80 @@ static const struct of_device_id qcom_battmgr_of_variants[] = {
+ 
+ static char *qcom_battmgr_battery[] = { "battery" };
+ 
++static int qcom_battmgr_dbg_raw(struct qcom_battmgr *battmgr, int opcode,
++				u32 property, u32 value)
++{
++	struct qcom_battmgr_property_request request = {
++		.hdr.owner = cpu_to_le32(PMIC_GLINK_OWNER_BATTMGR),
++		.hdr.type = cpu_to_le32(PMIC_GLINK_REQ_RESP),
++		.hdr.opcode = cpu_to_le32(opcode),
++		.battery = cpu_to_le32(0),
++		.property = cpu_to_le32(property),
++		.value = cpu_to_le32(value),
++	};
++	int ret;
++
++	mutex_lock(&battmgr->lock);
++	battmgr->dbg_prop = property;
++	battmgr->dbg_value = 0;
++	battmgr->dbg_result = -ENODATA;
++	battmgr->dbg_pending = true;
++	ret = qcom_battmgr_request(battmgr, &request, sizeof(request));
++	battmgr->dbg_pending = false;
++	mutex_unlock(&battmgr->lock);
++
++	return ret;
++}
++
++/* Write "get N" or "set N V" (firmware property index), read the answer. */
++static ssize_t qcom_battmgr_dbg_write(struct file *file, const char __user *ubuf,
++				      size_t count, loff_t *ppos)
++{
++	struct qcom_battmgr *battmgr = file->private_data;
++	char buf[48];
++	u32 prop, val = 0;
++	int ret;
++
++	if (count >= sizeof(buf))
++		return -EINVAL;
++	if (copy_from_user(buf, ubuf, count))
++		return -EFAULT;
++	buf[count] = '\0';
++
++	if (sscanf(buf, "set %u %u", &prop, &val) == 2)
++		ret = qcom_battmgr_dbg_raw(battmgr, BATTMGR_BAT_PROPERTY_SET, prop, val);
++	else if (sscanf(buf, "get %u", &prop) == 1)
++		ret = qcom_battmgr_dbg_raw(battmgr, BATTMGR_BAT_PROPERTY_GET, prop, 0);
++	else
++		return -EINVAL;
++
++	return ret ? ret : count;
++}
++
++static ssize_t qcom_battmgr_dbg_read(struct file *file, char __user *ubuf,
++				     size_t count, loff_t *ppos)
++{
++	struct qcom_battmgr *battmgr = file->private_data;
++	char buf[64];
++	int len;
++
++	len = scnprintf(buf, sizeof(buf), "prop=%u value=%u result=%d\n",
++			battmgr->dbg_prop, battmgr->dbg_value, battmgr->dbg_result);
++	return simple_read_from_buffer(ubuf, count, ppos, buf, len);
++}
++
++static const struct file_operations qcom_battmgr_dbg_fops = {
++	.open = simple_open,
++	.read = qcom_battmgr_dbg_read,
++	.write = qcom_battmgr_dbg_write,
++	.llseek = default_llseek,
++};
++
++static void qcom_battmgr_dbg_remove(void *data)
++{
++	debugfs_remove_recursive(data);
++}
++
+ static int qcom_battmgr_probe(struct auxiliary_device *adev,
+ 			      const struct auxiliary_device_id *id)
+ {
+@@ -1825,6 +1920,15 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
+ 
+ 	pmic_glink_client_register(battmgr->client);
+ 
++	if (battmgr->variant == QCOM_BATTMGR_SM8350) {
++		struct dentry *dir = debugfs_create_dir("qcom_battmgr", NULL);
++
++		debugfs_create_file("prop", 0600, dir, battmgr, &qcom_battmgr_dbg_fops);
++		ret = devm_add_action_or_reset(dev, qcom_battmgr_dbg_remove, dir);
++		if (ret)
++			return ret;
++	}
++
+ 	return 0;
+ }
+ 
+-- 
+2.43.0
+
