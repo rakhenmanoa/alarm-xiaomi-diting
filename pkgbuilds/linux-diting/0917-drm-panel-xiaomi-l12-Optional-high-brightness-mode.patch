@@ -1,0 +1,55 @@
+From 15036119416ac7a6af241613e5ae98155cf15230 Mon Sep 17 00:00:00 2001
+From: Fanasina RANDRIATSARAFARA <m.randriatsarafara.f@gmail.com>
+Date: Tue, 3 Nov 2026 16:30:55 +0300
+Subject: [PATCH] drm/panel: xiaomi-l12: Optional high brightness mode
+
+The panel takes DBVs up to 4095; 2048..4095 is its high brightness mode
+(vendor mi,max-brightness-clone 4095, normal range 2047), which the vendor
+uses only in sunlight. Add a bl_hbm module parameter, off by default, that
+stretches the top of the backlight curve to DBV 4095. It is writable at
+run time and applies from the next brightness change.
+---
+ .../gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c   | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c b/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c
+index b1bd589..361cbfc 100644
+--- a/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c
++++ b/drivers/gpu/drm/panel/panel-xiaomi-l12-36-02-0b.c
+@@ -712,9 +712,24 @@ static unsigned int bl_courbe = 70;
+ module_param(bl_courbe, uint, 0644);
+ MODULE_PARM_DESC(bl_courbe, "Curve: 0 = linear, 100 = square (default 70)");
+ 
++/*
++ * High brightness mode: DBV 2048..4095 (vendor mi,max-brightness-clone 4095,
++ * normal range up to 2047). The vendor only enters it from auto-brightness in
++ * sunlight and drops it when the panel heats up. Off by default; with
++ * bl_hbm=1 the top of the curve reaches DBV 4095 instead of 2047, from the
++ * next brightness change. Avoid leaving it on indoors (heat, battery, OLED
++ * wear).
++ */
++#define XIAOMI_L12_HBM_MAX_DBV	4095
++
++static bool bl_hbm;
++module_param(bl_hbm, bool, 0644);
++MODULE_PARM_DESC(bl_hbm, "Let the top of the brightness range reach high brightness mode (DBV up to 4095)");
++
+ static u16 xiaomi_l12_level_to_dbv(u32 level)
+ {
+ 	const u64 max = XIAOMI_L12_MAX_BRIGHTNESS;
++	u64 top = bl_hbm ? XIAOMI_L12_HBM_MAX_DBV : XIAOMI_L12_MAX_BRIGHTNESS;
+ 	u32 min_dbv = clamp_t(u32, bl_min_dbv, 1, XIAOMI_L12_MAX_BRIGHTNESS);
+ 	u32 k = min_t(u32, bl_courbe, 100);
+ 	u64 shape;
+@@ -726,7 +741,7 @@ static u16 xiaomi_l12_level_to_dbv(u32 level)
+ 	/* shape = ((100 - k) * x + k * x^2) * 100 * max^2, x = level / max */
+ 	shape = (u64)(100 - k) * level * max + (u64)k * level * level;
+ 
+-	return min_dbv + div64_u64((max - min_dbv) * shape, 100 * max * max);
++	return min_dbv + div64_u64((top - min_dbv) * shape, 100 * max * max);
+ }
+ 
+ /* 16-bit DBV, big-endian (vendor qcom,mdss-dsi-bl-inverted-dbv) */
+-- 
+2.43.0
+
