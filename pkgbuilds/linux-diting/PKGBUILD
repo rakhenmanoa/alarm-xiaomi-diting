@@ -7,7 +7,7 @@ pkgname=linux-diting
 _kver=7.2.10
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=${_kver}
-pkgrel=17
+pkgrel=18
 pkgdesc="Linux ${_kver} pour le Xiaomi 12T Pro / Redmi K50 Ultra (diting, SM8475)"
 arch=(aarch64)
 url="https://github.com/royka1/diting-ubuntu"
@@ -30,8 +30,10 @@ source=("https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${_kver}.tar.xz"
         0908-media-qcom-camss-Allow-16384-pixel-raw-frames-s5khp1.patch
         0910-remoteproc-qcom_q6v5-Disable-the-handover-IRQ-once-h.patch
         0911-media-i2c-s5khp1-Keep-the-exposure-across-mode-chang.patch
-        0912-arm64-dts-qcom-sm8475-xiaomi-diting-Enable-the-rear-.patch)
+        0912-arm64-dts-qcom-sm8475-xiaomi-diting-Enable-the-rear-.patch
+        0913-arm64-dts-qcom-sm8475-xiaomi-diting-Add-the-IR-blast.patch)
 sha256sums=('2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -87,6 +89,8 @@ prepare() {
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0911-media-i2c-s5khp1-Keep-the-exposure-across-mode-chang.patch"
   # flash arrière : LED unique sur le canal 0 du PM8350C (lampe torche Plasma)
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0912-arm64-dts-qcom-sm8475-xiaomi-diting-Enable-the-rear-.patch"
+  # émetteur infrarouge : LED sur la ligne MOSI de SPI13 (ir-spi, /dev/lirc0)
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0913-arm64-dts-qcom-sm8475-xiaomi-diting-Add-the-IR-blast.patch"
 
   _make defconfig
   scripts/kconfig/merge_config.sh -m .config "$srcdir/diting-ubuntu/kernel/config/diting.config"
@@ -101,6 +105,8 @@ prepare() {
   scripts/config --module VIDEO_IMX596 --module VIDEO_GC02M1
   # flash arrière (patch 0912)
   scripts/config --module LEDS_QCOM_FLASH
+  # infrarouge (patch 0913) : interface LIRC dans rc-core, pilote ir-spi
+  scripts/config --enable LIRC --module IR_SPI
   # zram (swap compressé en mémoire, zram-generator dans diting-device)
   scripts/config --module ZRAM --enable ZRAM_BACKEND_LZ4 --enable ZRAM_BACKEND_ZSTD \
     --enable ZRAM_DEF_COMP_ZSTD

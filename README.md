@@ -35,7 +35,7 @@ même noyau, pas encore revérifiées ici.
 | Démarrage, slots A/B | ✅ | `diting-boot-successful` obligatoire, sinon le slot tombe après 7 démarrages |
 | Redémarrage vers fastboot | ✅ | `diting-reboot-bootloader` (diting-ubuntu) |
 | Veille | 🟡 | s2idle et deep fonctionnent, mais pas d'effondrement complet du SoC (CX/AOSD/DDR) : consommation en veille à réduire |
-| Gestion thermique | 🟡 | seules les zones thermiques du PMIC (alerte à 95 °C) ; pas de régulation fine |
+| Gestion thermique | 🟡 | zones thermiques du PMIC (alerte à 95 °C) ; manquent les thermistances de la carte (ADC7 / ADC-TM du PMK8350 : XO, peau, flash), pilotes disponibles, et la limitation de courant BCL (pas de pilote) |
 | **Affichage** | | |
 | Écran (dalles 36 02 0b et 42 02 0a) | ✅ | 60, 90 et 120 Hz, DSC |
 | Luminosité, HBM, écran toujours allumé | 🟡 | luminosité réglable ; courbe, HBM et AOD pas faits |
@@ -44,12 +44,14 @@ même noyau, pas encore revérifiées ici.
 | Fluidité de Plasma Mobile | 🟡 | moins fluide qu'Android ; à faire : rendu KWin en basse résolution, agrandi par le contrôleur d'affichage |
 | **Connectivité** | | |
 | Wi-Fi | ✅ | jusqu'à HE 160 MHz ; économie d'énergie désactivée |
-| Bluetooth | 🟡 | interface active et scan LE (diting-ubuntu) ; appairage et audio Bluetooth à tester |
+| Bluetooth | 🟡 | interface active et scan LE (diting-ubuntu) ; appairage et audio Bluetooth à tester. Android passe l'audio des appels Bluetooth par SLIMbus (`btfmslim`) : le kit mains libres en appel pourrait rester muet |
 | USB périphérique (SSH par USB) | ✅ | réseau NCM, `172.16.42.1` |
 | USB hôte (OTG) | ⬜ | |
+| USB 3, sortie vidéo par USB-C | ⚪ | absents : Xiaomi désactive le PHY combo USB3/DisplayPort, le port est en USB 2.0 |
+| Casque sur adaptateur USB-C (FSA4480) | ⬜ | pilote `fsa4480` disponible, nœud DT à écrire |
 | GPS / GNSS | ⬜ | |
-| NFC | ❌ | |
-| Émetteur infrarouge | ❌ | |
+| NFC | ❌ | NXP SN1xx, non gérée par le pilote `nxp-nci` |
+| Émetteur infrarouge | 🟡 | patch `0913` (`ir-spi`, `/dev/lirc0`) ; émission à valider avec `ir-ctl` |
 | **Téléphonie** | | |
 | Modem, 4G, SMS, USSD | ✅ | avec les correctifs ModemManager (`pkgbuilds/modemmanager-fix/`) |
 | Données mobiles | ✅ | idem |
@@ -61,11 +63,12 @@ même noyau, pas encore revérifiées ici.
 | **Capteurs** | | |
 | Rotation, proximité, lumière, boussole, gyroscope | ✅ | via le SLPI (`libssc`, `iio-sensor-proxy-diting`) |
 | Écran éteint contre l'oreille, lever pour réveiller | ✅ | `diting-proximite-appel`, `diting-lever-reveil` |
-| Lecteur d'empreintes | ❌ | |
+| Lecteur d'empreintes | ❌ | Goodix sous l'écran, passe par le TEE de Qualcomm |
 | **Caméras** | | |
 | Principale (S5KHP1, 200 Mpx) | ✅ | autofocus, photo dans plasma-camera ; ❌ sur les unités à capteur Samsung HM6 |
 | Ultra grand-angle (S5K4H7) | ✅ | diting-ubuntu |
 | Frontale (IMX596), macro (GC02M1) | ✅ | 30 im/s |
+| ISP matériel (IPE/BPS), JPEG matériel | ❌ | aucun pilote Linux : libcamera traite les images sur le CPU (ISP logiciel) |
 | Flash arrière / lampe torche | ✅ | patch `0912`, LED `white:flash` |
 | **Vidéo** | | |
 | Décodage matériel (H.264, HEVC, VP9) | ✅ | VA-API |

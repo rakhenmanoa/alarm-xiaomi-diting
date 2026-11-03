@@ -1,0 +1,42 @@
+From 889a6756b162b2eba910021407024c29b827e7bb Mon Sep 17 00:00:00 2001
+From: Fanasina RANDRIATSARAFARA <m.randriatsarafara.f@gmail.com>
+Date: Tue, 3 Nov 2026 13:29:09 +0300
+Subject: [PATCH] arm64: dts: qcom: sm8475-xiaomi-diting: Add the IR blaster
+
+The infrared LED is driven by the MOSI line of QUP SE13 (spi13), as the
+vendor overlay's "ir-spi" node on qupv3_se13_spi (chip select 0,
+19.2 MHz maximum). Describe it for the ir-spi driver, which exposes a
+LIRC transmitter (/dev/lirc0).
+---
+ arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+index b4013ac..922c686 100644
+--- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
++++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+@@ -1165,6 +1165,21 @@
+  * vendor driver's default: loading the protection firmware writes 20 KB
+  * blocks, which at 100 kHz exceed the GENI I2C 1 s transfer timeout.
+  */
++&spi13 {
++	status = "okay";
++
++	/*
++	 * IR blaster: an LED driven by the SPI MOSI line (vendor overlay:
++	 * "ir-spi" on qupv3_se13_spi, chip select 0, 19.2 MHz maximum).
++	 * ir-spi clocks the bus at 16 times the carrier frequency.
++	 */
++	irled@0 {
++		compatible = "ir-spi-led";
++		reg = <0>;
++		spi-max-frequency = <19200000>;
++	};
++};
++
+ &i2c15 {
+ 	clock-frequency = <400000>;
+ 	status = "okay";
+-- 
+2.43.0
+
