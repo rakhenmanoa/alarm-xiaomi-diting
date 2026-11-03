@@ -39,7 +39,7 @@ même noyau, pas encore revérifiées ici.
 | **Affichage** | | |
 | Écran (dalles 36 02 0b et 42 02 0a) | ✅ | 60, 90 et 120 Hz, DSC |
 | Luminosité | ✅ | courbe réglable (patch `0916`), validée avec les valeurs par défaut (`bl_min_dbv=60`, `bl_courbe=70`, modifiables à chaud dans `/sys/module/panel_xiaomi_l12_36_02_0b/parameters/`) |
-| HBM (plein soleil) | 🟡 | patch `0917` : option `bl_hbm` (désactivée par défaut) qui étire le haut du curseur jusqu'à DBV 4095 ; à valider ; pas encore d'activation automatique par le capteur de lumière ni de coupure thermique |
+| HBM (plein soleil) | 🟡 | patch `0917` (option `bl_hbm`, désactivée par défaut) : aucune différence visible en écrivant DBV 4095 sur 2 octets. Piste : la séquence Xiaomi écrit `0x51` sur 4 octets (`00 00 0f fe`, second champ = plafond HBM ?) et utilise `0x87`/`0x88`. Impression aussi que 100 % est moins lumineux qu'avant `0916`, non vérifiée (comparer avec le module d'origine) |
 | Écran toujours allumé (AOD) | ⬜ | Xiaomi utilise DBV 20 / 252 en veille ; demande un mode basse consommation de la dalle et sa prise en charge par Plasma |
 | Tactile (ST FTM5 et Goodix GT9916) | ✅ | coins du bas corrigés (`diting-touch-cmd grip off`) ; SPI à 1 MHz au lieu de 12 |
 | GPU Adreno 730 | 🟡 | freedreno + Turnip ; blocages GMU rares (écran noir), à corriger |
