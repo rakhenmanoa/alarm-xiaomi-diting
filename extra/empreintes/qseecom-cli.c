@@ -187,12 +187,20 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 	struct shm hdr, data;
 	uint32_t *h, *d;
 
-	if (size < 12 || shm_alloc(fd, 128, &hdr) || shm_alloc(fd, size, &data))
+	/*
+	 * Comme le HAL avec un niveau de journal non nul : 32 Ko de plus après
+	 * les données, où l'appli écrit son propre journal, et [24] = 1.
+	 */
+	size_t log_size = 0x8000;
+
+	if (size < 12 || shm_alloc(fd, 128, &hdr) ||
+	    shm_alloc(fd, size + log_size, &data))
 		return -ENOMEM;
 	h = (uint32_t *)hdr.va;
 	d = (uint32_t *)data.va;
 	h[2] = size;		/* [8] */
 	h[3] = ++seq;		/* [12] */
+	h[6] = 1;		/* [24] niveau de journal */
 	d[1] = target;
 	d[2] = cmd;
 
@@ -210,7 +218,7 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 	b.p[2].a = 0;		/* offset dans la requête */
 	b.p[2].b = 4;		/* largeur de l'adresse */
 	b.p[3].attr = TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INOUT;
-	b.p[3].b = size;
+	b.p[3].b = size + log_size;
 	b.p[3].c = data.id;
 	if (ioctl(fd, TEE_IOC_INVOKE, &bd)) {
 		fprintf(stderr, "  invoke : %s\n", strerror(errno));
@@ -232,6 +240,15 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 			putchar(c);
 		else if (c == 0 && i + 1 < size && data.va[i + 1] >= 32 && data.va[i + 1] < 127)
 			printf(" | ");
+	}
+	printf("\n  journal de l'appli :\n");
+	for (size_t i = size; i < size + log_size; i++) {
+		uint8_t c = data.va[i];
+
+		if (c >= 32 && c < 127)
+			putchar(c);
+		else if (c == '\n' || (c == 0 && i > size && data.va[i - 1] >= 32))
+			putchar('\n');
 	}
 	printf("\n");
 	return 0;
