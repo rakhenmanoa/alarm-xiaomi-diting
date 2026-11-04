@@ -1,0 +1,198 @@
+From d692d9852363cee13cdaa280a657fbde93b055f4 Mon Sep 17 00:00:00 2001
+From: Fanasina RANDRIATSARAFARA <m.randriatsarafara.f@gmail.com>
+Date: Wed, 4 Nov 2026 07:17:31 +0300
+Subject: [PATCH] tee: qcomtee: Allocate large shared buffers from CMA
+
+tee_dyn_shm_alloc_helper() gets shared memory from the page allocator,
+which cannot hand out more than PAGE_SIZE << MAX_PAGE_ORDER (4 MiB with
+4 KiB pages) in one contiguous piece. Loading a larger trusted
+application through a memory object (IAppLoader loadFromRegion), such
+as the 15 MB Goodix fingerprint application of the Xiaomi 12T Pro,
+fails with -ENOMEM.
+
+Above that size, allocate the buffer with dma_alloc_pages() on the
+qcomtee platform device, which takes it from the CMA area, and keep its
+DMA handle to free it. Smaller buffers keep the existing path.
+---
+ drivers/tee/qcomtee/call.c    |   8 +++
+ drivers/tee/qcomtee/qcomtee.h |   1 +
+ drivers/tee/qcomtee/shm.c     | 101 ++++++++++++++++++++++++++++++++++
+ 3 files changed, 110 insertions(+)
+
+diff --git a/drivers/tee/qcomtee/call.c b/drivers/tee/qcomtee/call.c
+index 0efc564..8885989 100644
+--- a/drivers/tee/qcomtee/call.c
++++ b/drivers/tee/qcomtee/call.c
+@@ -5,6 +5,7 @@
+ 
+ #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+ 
++#include <linux/dma-mapping.h>
+ #include <linux/slab.h>
+ #include <linux/tee.h>
+ #include <linux/platform_device.h>
+@@ -709,6 +710,12 @@ static int qcomtee_probe(struct platform_device *pdev)
+ 	if (!qcomtee)
+ 		return -ENOMEM;
+ 
++	/* Large shared buffers come from CMA, see qcomtee_shm_alloc_large(). */
++	err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
++	if (err)
++		dev_warn(&pdev->dev, "no 64-bit DMA mask: %d\n", err);
++	qcomtee_shm_set_dma_dev(&pdev->dev);
++
+ 	pool = qcomtee_shm_pool_alloc();
+ 	if (IS_ERR(pool)) {
+ 		err = PTR_ERR(pool);
+@@ -795,6 +802,7 @@ static void qcomtee_remove(struct platform_device *pdev)
+ 	tee_device_unregister(qcomtee->teedev);
+ 	destroy_workqueue(qcomtee->wq);
+ 	tee_shm_pool_free(qcomtee->pool);
++	qcomtee_shm_set_dma_dev(NULL);
+ 	kfree(qcomtee);
+ }
+ 
+diff --git a/drivers/tee/qcomtee/qcomtee.h b/drivers/tee/qcomtee/qcomtee.h
+index f39bf63..7f8a621 100644
+--- a/drivers/tee/qcomtee/qcomtee.h
++++ b/drivers/tee/qcomtee/qcomtee.h
+@@ -44,6 +44,7 @@ struct qcomtee_object *qcomtee_idx_erase(struct qcomtee_object_invoke_ctx *oic,
+ 					 u32 idx);
+ 
+ struct tee_shm_pool *qcomtee_shm_pool_alloc(void);
++void qcomtee_shm_set_dma_dev(struct device *dev);
+ void qcomtee_msg_buffers_free(struct qcomtee_object_invoke_ctx *oic);
+ int qcomtee_msg_buffers_alloc(struct qcomtee_object_invoke_ctx *oic,
+ 			      struct qcomtee_arg *u);
+diff --git a/drivers/tee/qcomtee/shm.c b/drivers/tee/qcomtee/shm.c
+index b67909e..12f4a16 100644
+--- a/drivers/tee/qcomtee/shm.c
++++ b/drivers/tee/qcomtee/shm.c
+@@ -5,8 +5,11 @@
+ 
+ #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+ 
++#include <linux/dma-mapping.h>
+ #include <linux/firmware/qcom/qcom_tzmem.h>
+ #include <linux/mm.h>
++#include <linux/slab.h>
++#include <linux/xarray.h>
+ 
+ #include "qcomtee.h"
+ 
+@@ -114,14 +117,112 @@ static int qcomtee_shm_unregister(struct tee_context *ctx, struct tee_shm *shm)
+ 	return 0;
+ }
+ 
++/*
++ * Large buffers. tee_dyn_shm_alloc_helper() uses the page allocator, which
++ * cannot return more than PAGE_SIZE << MAX_PAGE_ORDER (4 MiB with 4 KiB pages)
++ * in one piece, so loading a bigger trusted application from a memory object
++ * (IAppLoader loadFromRegion) failed with -ENOMEM. Above that size, take the
++ * memory from the CMA area through the DMA API of the qcomtee device.
++ */
++#define QCOMTEE_BUDDY_MAX_SIZE	(PAGE_SIZE << MAX_PAGE_ORDER)
++
++static struct device *qcomtee_dma_dev;
++/* kaddr -> DMA handle (in pages) of the large buffers. */
++static DEFINE_XARRAY(qcomtee_large_bufs);
++
++void qcomtee_shm_set_dma_dev(struct device *dev)
++{
++	qcomtee_dma_dev = dev;
++}
++
++static int qcomtee_shm_alloc_large(struct tee_shm *shm, size_t size)
++{
++	size_t nr_pages = DIV_ROUND_UP(size, PAGE_SIZE);
++	struct page **pages;
++	struct page *page;
++	dma_addr_t dma;
++	unsigned int i;
++	int rc;
++
++	if (!qcomtee_dma_dev)
++		return -ENOMEM;
++
++	page = dma_alloc_pages(qcomtee_dma_dev, nr_pages * PAGE_SIZE, &dma,
++			       DMA_BIDIRECTIONAL, GFP_KERNEL);
++	if (!page)
++		return -ENOMEM;
++
++	shm->kaddr = page_address(page);
++	shm->paddr = page_to_phys(page);
++	shm->size = nr_pages * PAGE_SIZE;
++	memset(shm->kaddr, 0, shm->size);
++
++	pages = kcalloc(nr_pages, sizeof(*pages), GFP_KERNEL);
++	if (!pages) {
++		rc = -ENOMEM;
++		goto err_free;
++	}
++	for (i = 0; i < nr_pages; i++)
++		pages[i] = page + i;
++	shm->pages = pages;
++	shm->num_pages = nr_pages;
++
++	rc = xa_err(xa_store(&qcomtee_large_bufs, (unsigned long)shm->kaddr,
++			     xa_mk_value(dma >> PAGE_SHIFT), GFP_KERNEL));
++	if (rc)
++		goto err_kfree;
++
++	rc = qcomtee_shm_register(shm->ctx, shm, pages, nr_pages,
++				  (unsigned long)shm->kaddr);
++	if (rc)
++		goto err_erase;
++
++	return 0;
++
++err_erase:
++	xa_erase(&qcomtee_large_bufs, (unsigned long)shm->kaddr);
++err_kfree:
++	kfree(pages);
++	shm->pages = NULL;
++err_free:
++	dma_free_pages(qcomtee_dma_dev, shm->size, page, dma, DMA_BIDIRECTIONAL);
++	shm->kaddr = NULL;
++	return rc;
++}
++
++static bool qcomtee_shm_free_large(struct tee_shm *shm)
++{
++	void *entry = xa_erase(&qcomtee_large_bufs, (unsigned long)shm->kaddr);
++	dma_addr_t dma;
++
++	if (!entry)
++		return false;
++
++	dma = (dma_addr_t)xa_to_value(entry) << PAGE_SHIFT;
++	qcomtee_shm_unregister(shm->ctx, shm);
++	dma_free_pages(qcomtee_dma_dev, shm->size, virt_to_page(shm->kaddr),
++		       dma, DMA_BIDIRECTIONAL);
++	shm->kaddr = NULL;
++	kfree(shm->pages);
++	shm->pages = NULL;
++
++	return true;
++}
++
+ static int pool_op_alloc(struct tee_shm_pool *pool, struct tee_shm *shm,
+ 			 size_t size, size_t align)
+ {
++	if (size > QCOMTEE_BUDDY_MAX_SIZE)
++		return qcomtee_shm_alloc_large(shm, size);
++
+ 	return tee_dyn_shm_alloc_helper(shm, size, align, qcomtee_shm_register);
+ }
+ 
+ static void pool_op_free(struct tee_shm_pool *pool, struct tee_shm *shm)
+ {
++	if (qcomtee_shm_free_large(shm))
++		return;
++
+ 	tee_dyn_shm_free_helper(shm, qcomtee_shm_unregister);
+ }
+ 
+-- 
+2.43.0
+
