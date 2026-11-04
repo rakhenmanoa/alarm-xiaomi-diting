@@ -335,3 +335,20 @@ haut, mode 0. Seule la lecture rapide échoue : piste d'un transfert à 25 MHz
 Android donne à Linux les canaux GPI **0 à 5** de `qcom,gpi-dma@a00000`
 (`qcom,gpii-mask = <63>`), notre DT les canaux 1 à 6 (`dma-channel-mask =
 <0x7e>`). Essai avec `0x3f` (`fdtput`) : **toujours 1028**.
+
+### Première image brute (2026-11-04)
+
+Les captures d'usine passent : `1003/19` (mode usine, 252 octets à zéro, comme
+`SZProductTest::factoryInit`) puis `1003/21` (**921 640 octets**, taille réelle
+du HAL : `0xe1028`).
+
+```sh
+sudo GF_DUMP=$HOME/usine ./qseecom-cli gfdit --goodix-carveout 1002 9 32 1002 0 28 1002 1 44 1002 2 744 1002 6 480 1001 0 180 1003 19 252 1003 21 921640
+./gf-image.py ~/usine-1003-21-*.bin trame
+```
+
+Réponse : `[28]` = 192 lignes, `[32]` = 224 colonnes, puis **5 trames** de
+192 × 224 pixels 16 bits. Sans éclairage : valeurs 1150-1167 (moyenne ≈ 1159),
+seulement un bruit de lignes ; aucune trace de corruption. **Le capteur et le
+bus à 25 MHz fonctionnent** : le CRC faux de `1002/3` vient d'autre chose que
+du transfert lui-même (mode « deux trames » de la capture normale ?).
