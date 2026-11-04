@@ -65,7 +65,7 @@ même noyau, pas encore revérifiées ici.
 | **Capteurs** | | |
 | Rotation, proximité, lumière, boussole, gyroscope | ✅ | via le SLPI (`libssc`, `iio-sensor-proxy-diting`) |
 | Écran éteint contre l'oreille, lever pour réveiller | ✅ | `diting-proximite-appel`, `diting-lever-reveil` |
-| Lecteur d'empreintes | ❌ | Goodix sous l'écran, passe par le TEE de Qualcomm |
+| Lecteur d'empreintes | 🟡 | Goodix sous l'écran, tout passe par l'appli sécurisée `gfdit` : chargée dans la TrustZone depuis Linux (qcomtee + patch CMA) ; reste à lui parler. Voir [extra/empreintes](extra/empreintes/README.md) |
 | **Caméras** | | |
 | Principale (S5KHP1, 200 Mpx) | ✅ | autofocus, photo dans plasma-camera ; ❌ sur les unités à capteur Samsung HM6 |
 | Ultra grand-angle (S5K4H7) | ✅ | diting-ubuntu |

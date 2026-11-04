@@ -16,7 +16,7 @@ capture, l'enregistrement et la comparaison. Android lui parle depuis son HAL
 | Test [quic-teec](https://github.com/qualcomm/quic-teec) `-d` | OK : la TrustZone répond (service 143) |
 | Chargement de `soter64` (85 Ko, appli de production) | **chargée** (contrôleur obtenu) ; `getAppObject` refusé : normal pour une appli QSEECOM |
 | Chargement de `smplap64` (appli d'exemple) | refusé (`result 1`) |
-| Chargement de `gfdit` | impossible : plus de 4 Mo par tampon (`MAX_INBOUND_BUFFER_SIZE`) et mémoire partagée limitée à 4 Mo d'un bloc (`alloc_pages_exact`) |
+| Chargement de `gfdit` | sans patch : impossible (plus de 4 Mo par tampon, `MAX_INBOUND_BUFFER_SIZE`, et mémoire partagée limitée à 4 Mo d'un bloc, `alloc_pages_exact`) ; **avec le patch 0001 (2026-11-04) : chargée** en mode 1, comme `soter64` |
 
 Les applis se rassemblent en un `.mbn` avec `tools/mdt-squash.py` de
 diting-ubuntu. Le test de quic-teec (`build/tests/qcomteetest -l DOSSIER 1 99`)
@@ -39,7 +39,7 @@ sudo reboot
 
 ## Suite
 
-1. Charger `gfdit` (mode 1, mémoire partagée).
+1. ~~Charger `gfdit`~~ : fait.
 2. Envoyer une commande « à l'ancienne » (tampon requête/réponse) à une appli
    chargée par IAppLoader, comme le fait QSEECom sur les plateformes récentes.
 3. Retrouver le protocole Goodix dans `libgf_hal.so`.
