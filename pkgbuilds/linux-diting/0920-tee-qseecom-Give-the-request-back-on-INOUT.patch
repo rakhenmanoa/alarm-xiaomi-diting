@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Fanasina RANDRIATSARAFARA <m.randriatsarafara.f@gmail.com>
+Date: Wed, 4 Nov 2026 09:30:00 +0300
+Subject: [PATCH] tee: qseecom: Give the request back when it is INOUT
+
+The request is staged in kernel TZ memory and never copied back. The
+Goodix fingerprint application (gfdit) writes its command status into
+the request, at offset 28, not into the response: with the downstream
+driver the caller sees it because the application works on the caller's
+own buffer. Here the status is lost and every command looks like a
+silent success.
+
+When the caller passes the request as MEMREF_INOUT, copy the staged
+request back after the command, with the patched physical addresses
+cleared first so they do not leak to user space.
+---
+ drivers/tee/qseecom/core.c | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+--- a/drivers/tee/qseecom/core.c
++++ b/drivers/tee/qseecom/core.c
+@@ -974,6 +974,24 @@
+ 					memcpy(pv, b + off, plen);
+ 				off += plen;
+ 			}
++
++			/*
++			 * Some applications write their status back into the
++			 * request rather than the response -- the fingerprint
++			 * application puts it at offset 28 -- relying on the
++			 * downstream driver handing them the caller's own
++			 * buffer. Give that back when the caller asked for it
++			 * with an INOUT request, but scrub the patched
++			 * addresses first: user space has no business with
++			 * physical addresses.
++			 */
++			if ((param[0].attr & TEE_IOCTL_PARAM_ATTR_TYPE_MASK) ==
++			    TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INOUT) {
++				for (k = 2; k < arg->num_params; k += 2)
++					memset(b + param[k].u.value.a, 0,
++					       param[k].u.value.b == 4 ? 4 : 8);
++				memcpy(req, b, req_size);
++			}
+ 		}
+ 
+ out_free:
+-- 
+2.43.0

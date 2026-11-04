@@ -141,3 +141,27 @@ sudo ./qseecom-cli gfdit --goodix 1003 7 664
 - Tailles relevées : `FingerprintCore::enumerate` envoie 1000/7 sur 112
   octets ; `CustomizedAlgo::init` 1001/0 sur 180 octets ; `getVersion`
   1003/7 sur 664 octets.
+- Clé HMAC factice (1000/10), puis 1001/0, 1000/7, 1003/7 avec le tampon de
+  4 Mo : tout répond 0, mais rien n'est écrit nulle part (données, tampon,
+  réponse, journal).
+
+### Lecture de l'appli `gfdit` (2026-11-04)
+
+Le binaire garde sa table de symboles (≈ 3 600 noms), ce qui permet de lire
+`tz_app_cmd_handler` (0xc970) sans deviner :
+
+- La requête est bien `[0]` adresse des données, `[8]` taille, `[16]` horodatage,
+  `[24]` niveau de journal, `[32]`/`[40]` tampon de 4 Mo (facultatif).
+- **Le statut est écrit dans la requête**, à `[28]`, pas dans la réponse.
+  Notre pilote recopie la requête dans de la mémoire TZ et ne la rendait pas :
+  le statut était perdu, d'où les « 0 » muets. → patch noyau **0920** : la
+  requête est rendue quand l'appelant la passe en `MEMREF_INOUT` (adresses
+  physiques effacées avant). `qseecom-cli` la passe ainsi et affiche
+  `[28]`, préréglé à `0xffffffff`.
+- Avant toute commande, l'appli teste un drapeau posé par `tz_app_init` quand
+  `gf_modules_start` réussit (démarrage des modules auth, algo, capteur,
+  test usine, dump, heartbeat). **Si ce démarrage a échoué, chaque commande
+  revient sans rien écrire.** Le témoin `0xffffffff` intact à `[28]` le dira.
+- Sinon : enregistrement du tampon de données (`qsee_register_shared_buffer`),
+  échec → statut 1012 ; puis aiguillage par module (`[4]`), résultat en
+  `données[12]` et journal recopié après les données.

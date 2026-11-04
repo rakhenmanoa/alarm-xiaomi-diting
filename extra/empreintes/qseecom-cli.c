@@ -210,6 +210,13 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 	h[2] = size;		/* [8] */
 	h[3] = ++seq;		/* [12] */
 	h[6] = 1;		/* [24] niveau de journal */
+	/*
+	 * [28] : l'appli y écrit son statut, dans la requête et non dans la
+	 * réponse. Le noyau (patch 0920) rend la requête quand elle est INOUT.
+	 * Témoin 0xffffffff : s'il reste, l'appli n'a pas traité la commande
+	 * (pas démarrée, ou paramètres refusés avant même de les lire).
+	 */
+	h[7] = 0xffffffff;
 
 	/*
 	 * GF_CMD_AUTH_SET_HMAC_KEY (1000/10) : Android y recopie, à partir de
@@ -228,7 +235,7 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 	memset(&b, 0, sizeof(b));
 	b.arg.session = session;
 	b.arg.num_params = 4;
-	b.p[0].attr = TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INPUT;
+	b.p[0].attr = TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INOUT;
 	b.p[0].b = 64;
 	b.p[0].c = hdr.id;
 	b.p[1].attr = TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_OUTPUT;
@@ -259,8 +266,12 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 		fprintf(stderr, "  invoke : %s\n", strerror(errno));
 		return -errno;
 	}
-	printf("  goodix %u/%u (%zu octets) -> ret=0x%x, statut TA=0x%x, résultat=0x%x\n",
-	       target, cmd, size, b.arg.ret, ((uint32_t *)(hdr.va + 64))[7], d[0]);
+	printf("  goodix %u/%u (%zu octets) -> ret=0x%x, statut TA (requête[28])=0x%x (%d), "
+	       "erreur module=%u, résultat=0x%x\n",
+	       target, cmd, size, b.arg.ret, h[7], (int)h[7], d[3], d[0]);
+	if (h[7] == 0xffffffff)
+		printf("  témoin intact : commande non traitée (appli pas démarrée ?) "
+		       "ou noyau sans le patch 0920\n");
 	printf("  réponse (64 octets) :");
 	for (int i = 0; i < 64; i++)
 		printf("%s%02x", i % 16 ? " " : "\n    ", hdr.va[64 + i]);
