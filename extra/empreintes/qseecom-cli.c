@@ -175,13 +175,22 @@ static int send_cmd(int fd, uint32_t session, const char *hex, size_t rsp_len)
  * Données : [0] résultat, [4] module (1000 auth, 1001 algo, 1002 capteur,
  * 1003 test, 1004 dump), [8] commande.
  */
+/*
+ * Avec --goodix-carveout, un tampon ordinaire de 4 Mo tient lieu du tampon
+ * sécurisé d'Android (tas qcom,secure-cdsp) : adresse en [32], taille en
+ * [40]. L'appli peut l'exiger dans de la mémoire réservée au CDSP.
+ */
+static bool carveout;
+#define GF_CARVEOUT_SIZE 0x400000
+
 static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 		  size_t size)
 {
 	struct {
 		struct tee_ioctl_invoke_arg arg;
-		struct tee_ioctl_param p[4];
+		struct tee_ioctl_param p[6];
 	} b;
+	struct shm cv;
 	struct tee_ioctl_buf_data bd = { .buf_ptr = (uintptr_t)&b, .buf_len = sizeof(b) };
 	static uint32_t seq;
 	struct shm hdr, data;
@@ -220,6 +229,18 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 	b.p[3].attr = TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INOUT;
 	b.p[3].b = size + log_size;
 	b.p[3].c = data.id;
+	if (carveout) {
+		if (shm_alloc(fd, GF_CARVEOUT_SIZE, &cv))
+			return -ENOMEM;
+		h[10] = GF_CARVEOUT_SIZE;	/* [40] */
+		b.arg.num_params = 6;
+		b.p[4].attr = TEE_IOCTL_PARAM_ATTR_TYPE_VALUE_INPUT;
+		b.p[4].a = 32;
+		b.p[4].b = 4;
+		b.p[5].attr = TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INOUT;
+		b.p[5].b = GF_CARVEOUT_SIZE;
+		b.p[5].c = cv.id;
+	}
 	if (ioctl(fd, TEE_IOC_INVOKE, &bd)) {
 		fprintf(stderr, "  invoke : %s\n", strerror(errno));
 		return -errno;
@@ -259,11 +280,14 @@ int main(int argc, char **argv)
 	char priv_path[32], cli_path[32];
 	uint32_t load_sess, sess;
 	int priv, cli, ret;
-	bool goodix = argc >= 3 && !strcmp(argv[2], "--goodix");
+	bool goodix = argc >= 3 && (!strcmp(argv[2], "--goodix") ||
+				    !strcmp(argv[2], "--goodix-carveout"));
+
+	carveout = goodix && !strcmp(argv[2], "--goodix-carveout");
 
 	if (argc < 2 || (!goodix && (argc - 2) % 2) || (goodix && (argc - 3) % 3)) {
 		fprintf(stderr, "usage : %s NOM [HEXREQ RSPLEN]...\n"
-			"        %s NOM --goodix MODULE COMMANDE TAILLE [...]\n",
+			"        %s NOM --goodix[-carveout] MODULE COMMANDE TAILLE [...]\n",
 			argv[0], argv[0]);
 		return 2;
 	}
