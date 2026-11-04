@@ -169,3 +169,21 @@ Le binaire garde sa table de symboles (≈ 3 600 noms), ce qui permet de lire
 - Sinon : enregistrement du tampon de données (`qsee_register_shared_buffer`),
   échec → statut 1012 ; puis aiguillage par module (`[4]`), résultat en
   `données[12]` et journal recopié après les données.
+
+### Journal de QSEE (patch 0921)
+
+Le statut est maintenant **1006** (`GF_ERROR_MEMORY_COPY_FAILED`) avec le
+tampon de 4 Mo aligné : la commande s'exécute, mais l'erreur peut venir d'une
+centaine d'endroits. Le binaire est une version « release » : son journal ne
+revient jamais dans le tampon de données (`gf_acquire_log_data` est vide) ; il
+passe uniquement par `qsee_log()`, que QSEE jette tant qu'aucun tampon de
+journal n'est enregistré (Android le fait au démarrage).
+
+Patch **0921** : `qcom_scm_qseecom_register_log_buf()` (commande 6 de
+QSEE_OS/APP_MGR) et 64 Kio de mémoire TZ enregistrés au chargement du pilote,
+lisibles dans `/sys/kernel/debug/qseecom_tee/qsee_log`. Touche `qcom_scm`,
+intégré au noyau : **paquet complet à recompiler**.
+
+```sh
+sudo strings /sys/kernel/debug/qseecom_tee/qsee_log | tail -50
+```

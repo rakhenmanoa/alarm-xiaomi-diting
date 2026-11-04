@@ -7,7 +7,7 @@ pkgname=linux-diting
 _kver=7.2.10
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=${_kver}
-pkgrel=24
+pkgrel=25
 pkgdesc="Linux ${_kver} pour le Xiaomi 12T Pro / Redmi K50 Ultra (diting, SM8475)"
 arch=(aarch64)
 url="https://github.com/royka1/diting-ubuntu"
@@ -38,8 +38,10 @@ source=("https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${_kver}.tar.xz"
         0917-drm-panel-xiaomi-l12-Optional-high-brightness-mode.patch
         0918-tee-Add-the-Qualcomm-QSEECOM-TEE-driver-backport.patch
         0919-tee-qcomtee-Allocate-large-shared-buffers-from-CMA.patch
-        0920-tee-qseecom-Give-the-request-back-on-INOUT.patch)
+        0920-tee-qseecom-Give-the-request-back-on-INOUT.patch
+        0921-tee-qseecom-Register-a-QSEE-log-buffer.patch)
 sha256sums=('2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -120,6 +122,8 @@ prepare() {
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0919-tee-qcomtee-Allocate-large-shared-buffers-from-CMA.patch"
   # qseecom : rendre la requête (statut de gfdit à l'octet 28)
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0920-tee-qseecom-Give-the-request-back-on-INOUT.patch"
+  # qseecom : journal de QSEE (qsee_log des applis) dans debugfs
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0921-tee-qseecom-Register-a-QSEE-log-buffer.patch"
 
   _make defconfig
   scripts/kconfig/merge_config.sh -m .config "$srcdir/diting-ubuntu/kernel/config/diting.config"
