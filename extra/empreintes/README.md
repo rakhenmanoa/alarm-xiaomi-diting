@@ -179,11 +179,18 @@ revient jamais dans le tampon de données (`gf_acquire_log_data` est vide) ; il
 passe uniquement par `qsee_log()`, que QSEE jette tant qu'aucun tampon de
 journal n'est enregistré (Android le fait au démarrage).
 
-Patch **0921** : `qcom_scm_qseecom_register_log_buf()` (commande 6 de
-QSEE_OS/APP_MGR) et 64 Kio de mémoire TZ enregistrés au chargement du pilote,
-lisibles dans `/sys/kernel/debug/qseecom_tee/qsee_log`. Touche `qcom_scm`,
-intégré au noyau : **paquet complet à recompiler**.
+Patch 0921 (retiré au pkgrel 26) : enregistrer un tampon de journal auprès
+de QSEE (commande 6 de QSEE_OS/APP_MGR). TZ l'accepte, mais la mémoire devient
+illisible pour Linux : toute lecture donne une « synchronous external abort ».
+Les noyaux Android récents font de même quand le journal est **chiffré**
+(`is_encrypted_log_enabled`) : le tampon en clair n'est plus pour nous, et le
+journal chiffré ne se lit qu'avec la clé de Qualcomm. Voie abandonnée.
 
-```sh
-sudo strings /sys/kernel/debug/qseecom_tee/qsee_log | tail -50
-```
+### Origine du 1006 de 1003/7 (lecture du code)
+
+`1003/7` → `sz_product_test_get_version` (taille ≥ 0x298 = 664) →
+`algo_factory_get_algo_version`, qui recopie des chaînes de version de l'objet
+algo. L'une est copiée avec `strlen()` : **vide tant que l'algo n'est pas
+initialisé**, d'où une copie de longueur 0 que `gf_memcpy` refuse → 1006.
+Il faut donc envoyer `1001/0` (initialisation de l'algo) d'abord, dans la
+même session.
