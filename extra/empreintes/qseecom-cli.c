@@ -210,6 +210,18 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 	h[2] = size;		/* [8] */
 	h[3] = ++seq;		/* [12] */
 	h[6] = 1;		/* [24] niveau de journal */
+
+	/*
+	 * GF_CMD_AUTH_SET_HMAC_KEY (1000/10) : Android y recopie, à partir de
+	 * [28], la réponse de keymaster64 à la commande 0x205 (statut, offset de
+	 * la clé, longueur, puis la clé). On y met une clé de test de 32 octets.
+	 */
+	if (target == 1000 && cmd == 10 && size >= 28 + 12 + 32) {
+		d[7] = 0;	/* [28] statut keymaster */
+		d[8] = 12;	/* [32] offset de la clé, depuis [28] */
+		d[9] = 32;	/* [36] longueur */
+		memset(data.va + 40, 0x5a, 32);
+	}
 	d[1] = target;
 	d[2] = cmd;
 
@@ -325,10 +337,9 @@ int main(int argc, char **argv)
 
 	printf("chargement de %s\n", argv[1]);
 	ret = open_by_name(priv, argv[1], &load_sess);
-	if (ret) {
-		fprintf(stderr, "chargement refusé : %s (voir dmesg)\n", strerror(-ret));
-		return 1;
-	}
+	if (ret)
+		fprintf(stderr, "chargement refusé : %s ; essai d'une session sur une "
+			"appli déjà chargée\n", strerror(-ret));
 
 	printf("session client sur %s\n", argv[1]);
 	ret = open_by_name(cli, argv[1], &sess);
