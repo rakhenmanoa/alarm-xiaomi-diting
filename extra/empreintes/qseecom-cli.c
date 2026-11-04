@@ -19,6 +19,7 @@
  * Compilation : cc -O2 -Wall -o qseecom-cli qseecom-cli.c
  */
 #include <errno.h>
+#include <stdbool.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -164,14 +165,89 @@ static int send_cmd(int fd, uint32_t session, const char *hex, size_t rsp_len)
 	return 0;
 }
 
+/*
+ * Commande Goodix (protocole de libgf_hal.so, CaEntry::sendCommand) :
+ * requête de 64 octets, réponse de 64 octets, et un tampon de données
+ * séparé dont l'adresse physique est écrite par le noyau à l'offset 0 de la
+ * requête (4 octets). Requête : [8] taille des données, [12] compteur,
+ * [16] horodatage, [24] niveau de journal, [32] adresse du tampon sécurisé
+ * de 4 Mo (laissée à 0 ici), [40] taille associée. Réponse : [28] statut.
+ * Données : [0] résultat, [4] module (1000 auth, 1001 algo, 1002 capteur,
+ * 1003 test, 1004 dump), [8] commande.
+ */
+static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
+		  size_t size)
+{
+	struct {
+		struct tee_ioctl_invoke_arg arg;
+		struct tee_ioctl_param p[4];
+	} b;
+	struct tee_ioctl_buf_data bd = { .buf_ptr = (uintptr_t)&b, .buf_len = sizeof(b) };
+	static uint32_t seq;
+	struct shm hdr, data;
+	uint32_t *h, *d;
+
+	if (size < 12 || shm_alloc(fd, 128, &hdr) || shm_alloc(fd, size, &data))
+		return -ENOMEM;
+	h = (uint32_t *)hdr.va;
+	d = (uint32_t *)data.va;
+	h[2] = size;		/* [8] */
+	h[3] = ++seq;		/* [12] */
+	d[1] = target;
+	d[2] = cmd;
+
+	memset(&b, 0, sizeof(b));
+	b.arg.session = session;
+	b.arg.num_params = 4;
+	b.p[0].attr = TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INPUT;
+	b.p[0].b = 64;
+	b.p[0].c = hdr.id;
+	b.p[1].attr = TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_OUTPUT;
+	b.p[1].a = 64;
+	b.p[1].b = 64;
+	b.p[1].c = hdr.id;
+	b.p[2].attr = TEE_IOCTL_PARAM_ATTR_TYPE_VALUE_INPUT;
+	b.p[2].a = 0;		/* offset dans la requête */
+	b.p[2].b = 4;		/* largeur de l'adresse */
+	b.p[3].attr = TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INOUT;
+	b.p[3].b = size;
+	b.p[3].c = data.id;
+	if (ioctl(fd, TEE_IOC_INVOKE, &bd)) {
+		fprintf(stderr, "  invoke : %s\n", strerror(errno));
+		return -errno;
+	}
+	printf("  goodix %u/%u (%zu octets) -> ret=0x%x, statut TA=0x%x, résultat=0x%x\n",
+	       target, cmd, size, b.arg.ret, ((uint32_t *)(hdr.va + 64))[7], d[0]);
+	printf("  réponse (64 octets) :");
+	for (int i = 0; i < 64; i++)
+		printf("%s%02x", i % 16 ? " " : "\n    ", hdr.va[64 + i]);
+	printf("\n  données :");
+	for (size_t i = 0; i < size && i < 256; i++)
+		printf("%s%02x", i % 16 ? " " : "\n    ", data.va[i]);
+	printf("\n  texte :");
+	for (size_t i = 12; i < size; i++) {
+		uint8_t c = data.va[i];
+
+		if (c >= 32 && c < 127)
+			putchar(c);
+		else if (c == 0 && i + 1 < size && data.va[i + 1] >= 32 && data.va[i + 1] < 127)
+			printf(" | ");
+	}
+	printf("\n");
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	char priv_path[32], cli_path[32];
 	uint32_t load_sess, sess;
 	int priv, cli, ret;
+	bool goodix = argc >= 3 && !strcmp(argv[2], "--goodix");
 
-	if (argc < 2 || (argc - 2) % 2) {
-		fprintf(stderr, "usage : %s NOM [HEXREQ RSPLEN]...\n", argv[0]);
+	if (argc < 2 || (!goodix && (argc - 2) % 2) || (goodix && (argc - 3) % 3)) {
+		fprintf(stderr, "usage : %s NOM [HEXREQ RSPLEN]...\n"
+			"        %s NOM --goodix MODULE COMMANDE TAILLE [...]\n",
+			argv[0], argv[0]);
 		return 2;
 	}
 
@@ -198,8 +274,14 @@ int main(int argc, char **argv)
 	}
 	printf("appli chargée et session ouverte\n");
 
-	for (int i = 2; i + 1 < argc; i += 2)
-		send_cmd(cli, sess, argv[i], strtoul(argv[i + 1], NULL, 0));
+	if (goodix)
+		for (int i = 3; i + 2 < argc; i += 3)
+			gf_cmd(cli, sess, strtoul(argv[i], NULL, 0),
+			       strtoul(argv[i + 1], NULL, 0),
+			       strtoul(argv[i + 2], NULL, 0));
+	else
+		for (int i = 2; i + 1 < argc; i += 2)
+			send_cmd(cli, sess, argv[i], strtoul(argv[i + 1], NULL, 0));
 
 	printf("Entrée pour décharger l'appli et quitter.\n");
 	getchar();

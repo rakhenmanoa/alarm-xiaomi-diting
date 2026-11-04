@@ -91,3 +91,41 @@ appli chargée et session ouverte
 `/dev/tee0` est `qcomtee`. L'appli Goodix démarre dans la TrustZone depuis
 Linux, sans blocage. Suite : le protocole de `libgf_hal.so`
 (`goodix::CaEntry::sendCommand`).
+
+## Protocole Goodix (lu dans `libgf_hal.so`, 2026-11-04)
+
+`goodix::CaEntry` (HAL d'Android) :
+
+- `startTap` : `QSEECom_start_app("/vendor/firmware_mnt/image", "gfdit",
+  4096)`, puis charge `keymaster64` pour en tirer une clé HMAC envoyée à
+  `gfdit` (auth 1000 / commande 10, `GF_CMD_AUTH_SET_HMAC_KEY`) : sert aux
+  jetons d'authentification d'Android, peut-être pas indispensable ici.
+- `sendCommand(données, taille)` : `QSEECom_send_modified_cmd`, requête et
+  réponse de 64 octets dans le même tampon, plus deux tampons ION dont le
+  noyau écrit l'adresse physique (4 octets) dans la requête :
+  - offset 0 : tampon de données (tas `qcom,qseecom`), taille en [8] ;
+  - offset 32 : tampon sécurisé de 4 Mo (tas `qcom,secure-cdsp`,
+    `secure_carveout`), valeur associée en [40].
+  Autres champs : [12] compteur, [16] horodatage en ms, [24] niveau de
+  journal. Statut de l'appli en [28] de la réponse.
+- Données : `[0]` résultat, `[4]` module, `[8]` commande, puis la charge
+  propre à la commande.
+
+| Module | Rôle | Commandes (tables `goodix::*CmdIdTable`) |
+|---|---|---|
+| 1000 | auth (bio) | 0 SETACTIVITY_GROUP, 1 AUTHENTICATE, 2 PRE_ENROLL, 3 ENROLL, 4 POST_ENROLL, 5 GET_ID, 6 REMOVE, 7 ENUMERATE, 8 CANCEL, 9 SAVE_TEMPLATES, 10 SET_HMAC_KEY, 12 POST_AUTHENTICATE, 13 INIT_FINISHED |
+| 1001 | algo | 0 INIT (180 octets), 1 ENROLL, 2 AUTHENTICATE, 3 POST_AUTHENTICATE, … |
+| 1002 | capteur | 0 PRE_DETECT, 1 DETECT_SENSOR, 2 INIT, 3 CAPTURE_IMG, 4 DATA, 5 GET_IRQ_TYPE, 6 SET_CONFIG, 8 SLEEP, 9 WAKEUP, 11 STOP_CAPTURE, 13 RESET, 14 SET_EXPO |
+| 1003 | test/usine | 7 GET_VERSION (664 octets, versions à partir de [28]), 5 FIND_SENSOR, 16 GET_SENSOR_INFO, … |
+| 1004 | dump | 0 DUMP_DATA |
+
+Côté matériel, le HAL passe par `/dev/goodix_fp` (pilote noyau Goodix
+classique, ioctl `'g'`) : 0x6702 reset, 0x6707/0x6708 alimentation,
+0x40046705/0x6706 horloge SPI, interruptions par netlink. Sous Linux il faudra
+l'équivalent : alimentations L1C et L3C, reset GPIO 41, interruption GPIO 40.
+
+Premier essai proposé, sans toucher au capteur :
+
+```sh
+sudo ./qseecom-cli gfdit --goodix 1003 7 664
+```
