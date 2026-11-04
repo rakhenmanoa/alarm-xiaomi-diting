@@ -266,6 +266,27 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 		memcpy(data.va + 32, sensor_cfg, sizeof(sensor_cfg));
 		memcpy(data.va + 32 + 388, &type, 4);
 	}
+	/*
+	 * GF_SET="1003/18@28=2000,1003/18@32=1" : mots de 32 bits à écrire dans
+	 * les données de la commande MODULE/CMD, à l'octet indiqué, avant envoi.
+	 */
+	if (getenv("GF_SET")) {
+		char *list = strdup(getenv("GF_SET")), *save, *tok;
+
+		for (tok = strtok_r(list, ",", &save); tok; tok = strtok_r(NULL, ",", &save)) {
+			unsigned int m, c, off;
+			unsigned long v;
+
+			if (sscanf(tok, "%u/%u@%u=%li", &m, &c, &off, (long *)&v) == 4 &&
+			    m == target && c == cmd && off + 4 <= size && off >= 12) {
+				uint32_t w = v;
+
+				memcpy(data.va + off, &w, 4);
+				printf("  GF_SET : %u/%u [%u] = 0x%x\n", m, c, off, w);
+			}
+		}
+		free(list);
+	}
 	d[1] = target;
 	d[2] = cmd;
 
