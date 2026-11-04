@@ -231,6 +231,14 @@ Tout répond 0 :
 - `1003/7` : `Shenzhen_v_2.00.41.08.57`, `Preprocess_v_1.01.02`,
   `CDFake_v_2.53.20.26`, `V03.02.07.13`, `Shenzhen_MP_OLED_INNER_1.0.3.27.17`.
 
-Reste à savoir si L1C et le GPIO 41 étaient nécessaires (essai sans, à faire),
-puis : `1002/6` (type d'écran, 480 octets), la capture (point lumineux sous le
+Contre-épreuve, GPIO 41 remis à 0 : `1002/0` → **1043**, `1002/1` → **1064**,
+`1002/2` et `1001/0` → 1001. Le reset du capteur est donc indispensable, et
+les réponses viennent bien du capteur. Le patch **0922** garde L1C allumée ;
+le reset reste à l'espace utilisateur (le HAL le manipule) :
+
+```sh
+sudo gpioset -z -c gpiochip6 41=1
+```
+
+Suite : `1002/6` (type d'écran, 480 octets), la capture (point lumineux sous le
 doigt, interruption sur GPIO 40), l'enrôlement et l'identification.
