@@ -208,3 +208,29 @@ Après `startTap` (chargement + clé HMAC) :
 
 `1001/0` seul fait planter l'appli (TrustZone répond -22 ensuite, même capteur
 alimenté : L1C forcée, GPIO 41 à 1) : l'algo dépend de la détection du capteur.
+
+### Premier dialogue complet (2026-11-04)
+
+Conditions : L1C (1,8 V) forcée allumée (`regulator-always-on` ajouté par
+`fdtput` sur `/soc@0/rsc@17a00000/regulators-1/ldo1`), GPIO 41 (reset) à 1
+(`gpioset -z -c gpiochip6 41=1`), tampon de 4 Mo aligné, patch 0920.
+
+```sh
+sudo ./qseecom-cli gfdit --goodix-carveout 1002 9 32 1002 0 28 1002 1 44 1002 2 744 1001 0 180 1003 7 664
+```
+
+Tout répond 0 :
+
+- `1002/9` (réveil) : `[28] = 1`.
+- `1002/1` (détection) : `[32] = 8`, `[36] = 224`, `[40] = 192` (taille d'image
+  probable 224 × 192).
+- `1002/2` (init capteur) : configuration (seuils, drapeaux), avec une
+  chaîne `GCFS18…` qui semble venir du capteur lui-même.
+- `1001/0` (init algo) : passe, alors qu'il plantait l'appli (SCM -22) sans
+  les commandes `1002` avant.
+- `1003/7` : `Shenzhen_v_2.00.41.08.57`, `Preprocess_v_1.01.02`,
+  `CDFake_v_2.53.20.26`, `V03.02.07.13`, `Shenzhen_MP_OLED_INNER_1.0.3.27.17`.
+
+Reste à savoir si L1C et le GPIO 41 étaient nécessaires (essai sans, à faire),
+puis : `1002/6` (type d'écran, 480 octets), la capture (point lumineux sous le
+doigt, interruption sur GPIO 40), l'enrôlement et l'identification.
