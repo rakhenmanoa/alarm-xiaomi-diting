@@ -235,6 +235,12 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 		d[9] = 32;	/* [36] longueur */
 		memset(data.va + 40, 0x5a, 32);
 	}
+	/*
+	 * GF_CMD_ALGO_INIT (1001/0) : SZAlgo::init() envoie 180 octets nuls
+	 * sauf [36] = 1. L'appli lit ce champ : ne pas le laisser à 0.
+	 */
+	if (target == 1001 && cmd == 0 && size >= 40)
+		d[9] = 1;
 	d[1] = target;
 	d[2] = cmd;
 
