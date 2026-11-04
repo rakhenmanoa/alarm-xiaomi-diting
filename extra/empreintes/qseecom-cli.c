@@ -393,10 +393,21 @@ int main(int argc, char **argv)
 	printf("appli chargée et session ouverte\n");
 
 	if (goodix)
-		for (int i = 3; i + 2 < argc; i += 3)
-			gf_cmd(cli, sess, strtoul(argv[i], NULL, 0),
-			       strtoul(argv[i + 1], NULL, 0),
+		for (int i = 3; i + 2 < argc; i += 3) {
+			unsigned long m = strtoul(argv[i], NULL, 0);
+
+			/* « 0 0 MS » : pause de MS millisecondes (attendre l'IRQ). */
+			if (m == 0) {
+				unsigned long ms = strtoul(argv[i + 2], NULL, 0);
+
+				printf("  pause de %lu ms\n", ms);
+				fflush(stdout);
+				usleep(ms * 1000);
+				continue;
+			}
+			gf_cmd(cli, sess, m, strtoul(argv[i + 1], NULL, 0),
 			       strtoul(argv[i + 2], NULL, 0));
+		}
 	else
 		for (int i = 2; i + 1 < argc; i += 2)
 			send_cmd(cli, sess, argv[i], strtoul(argv[i + 1], NULL, 0));
