@@ -71,3 +71,23 @@ cc -O2 -Wall -o qseecom-cli qseecom-cli.c
 sudo modprobe qseecomtee
 sudo ./qseecom-cli gfdit
 ```
+
+### Premier essai (2026-11-04) : réussi
+
+Paquet `linux-diting` pkgrel 23 (patches 0918 et 0919), `gfdit.mdt` + `.b0x`
+dans `/usr/lib/firmware/` :
+
+```
+$ sudo modprobe qseecomtee
+$ sudo ./qseecom-cli gfdit
+qseecom : /dev/teepriv0 (privilégié), /dev/tee1 (client)
+chargement de gfdit
+  open_session : ret=0x0 origine=0 session=1
+session client sur gfdit
+  open_session : ret=0x0 origine=0 session=1
+appli chargée et session ouverte
+```
+
+`/dev/tee0` est `qcomtee`. L'appli Goodix démarre dans la TrustZone depuis
+Linux, sans blocage. Suite : le protocole de `libgf_hal.so`
+(`goodix::CaEntry::sendCommand`).
