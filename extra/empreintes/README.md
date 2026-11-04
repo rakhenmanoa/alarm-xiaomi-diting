@@ -307,6 +307,11 @@ peut-être pas obtenu sa vitesse haute (horloge, parent ou vote de bande
 passante du QUP côté Linux ?). DT Android : `fingerprint_goodix` n'a que
 `l1c_vdd`, `l3c_vdd`, reset 41 et irq 40.
 
-Pistes restantes : vote d'interconnexion « qup-core » du groupe QUP n°1 à un
-débit suffisant pour 25 MHz ; vérifier si l'appli renonce à la vitesse haute
+DT Android (`vendor_boot`) : `spi@a88000` (SE10) déclaré mais `disabled`
+(propriété de TrustZone), `spi-max-frequency` = 50 MHz ; le groupe
+`qupv3_1_geni_se@ac0000` vote lui-même `qup-core`. Essai avec le module
+`qup1-vote/` (vote `qup-core` 200 Mo/s et `qup-config` 100 Mo/s tant qu'il est
+chargé) : **toujours 1028**.
+
+Pistes restantes : vérifier si l'appli renonce à la vitesse haute
 (`gf_spi_set_high_speed`) ; observer le GPIO 40 pendant la capture.
