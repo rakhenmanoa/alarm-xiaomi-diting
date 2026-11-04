@@ -194,3 +194,17 @@ algo. L'une est copiée avec `strlen()` : **vide tant que l'algo n'est pas
 initialisé**, d'où une copie de longueur 0 que `gf_memcpy` refuse → 1006.
 Il faut donc envoyer `1001/0` (initialisation de l'algo) d'abord, dans la
 même session.
+
+### Ordre d'initialisation d'Android (`HalContext::init`)
+
+Après `startTap` (chargement + clé HMAC) :
+
+| Étape HAL | Commande | Taille |
+|---|---|---|
+| `Sensor::doWakeup` | 1002/9 | 32 |
+| `SensorDetector::init` (avec reprises) | 1002/0 | 28 |
+| `SensorDetector::detectSensor` | 1002/1 | 44 |
+| `Sensor::init`, puis `SZAlgo::init` | …, 1001/0 | 180 |
+
+`1001/0` seul fait planter l'appli (TrustZone répond -22 ensuite, même capteur
+alimenté : L1C forcée, GPIO 41 à 1) : l'algo dépend de la détection du capteur.
