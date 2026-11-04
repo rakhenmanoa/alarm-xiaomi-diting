@@ -284,3 +284,29 @@ Capture `1002/3` avec `[32] = 1` (comme `onEnrollDownEvt`) : **1028**, CRC
 des données brutes faux. La lecture SPI de l'image a donc lieu ; reste à
 savoir pourquoi les données sont abîmées (tampon de 4 Mo ordinaire au lieu du
 tas sécurisé du CDSP ? pose non terminée ? écran ?).
+
+### Où en est la capture (2026-11-04, fin de matinée)
+
+`1002/3` renvoie toujours **1028** (CRC des données brutes faux), quels que
+soient :
+
+- le tampon de 4 Mo (avec ou sans) ;
+- `1002/6` (type d'écran 5) envoyé avant ;
+- le gouverneur CPU (`performance`) ;
+- les horloges AHB du groupe QUP n°1 forcées allumées
+  (`power/control = on` sur `ac0000.geniqup` et `a94000.spi`) ;
+- `clk_ignore_unused pd_ignore_unused`.
+
+L'image est lue en 21 morceaux, chacun suivi d'un CRC 15 bits du capteur
+(`gf_sz_dc_capture_logo_img` → `gf_crc_rawdata`) : c'est l'intégrité du
+transfert qui pèche. Paramètres SPI par défaut de l'appli
+(`gf_init_qsee_params`) : bus **10** (SE10, broches 36-39), **25 MHz** en
+lecture d'image, 4,8 MHz et 960 kHz pour les petites commandes. Linux lit
+`gcc_qupv3_wrap1_s2_clk_src` à **6,4 MHz** après une capture : l'appli n'a
+peut-être pas obtenu sa vitesse haute (horloge, parent ou vote de bande
+passante du QUP côté Linux ?). DT Android : `fingerprint_goodix` n'a que
+`l1c_vdd`, `l3c_vdd`, reset 41 et irq 40.
+
+Pistes restantes : vote d'interconnexion « qup-core » du groupe QUP n°1 à un
+débit suffisant pour 25 MHz ; vérifier si l'appli renonce à la vitesse haute
+(`gf_spi_set_high_speed`) ; observer le GPIO 40 pendant la capture.
