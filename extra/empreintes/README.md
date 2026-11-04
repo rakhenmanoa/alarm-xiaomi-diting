@@ -370,3 +370,10 @@ Géométrie réelle : **192 de large × 224 de haut** (`[28]` = largeur,
 de petits groupes de points (structure du capteur ou de la dalle). Les crêtes
 restent à faire ressortir : soustraire une image de référence sans doigt,
 même pose, et utiliser le vrai éclairage local.
+
+Image avec doigt (pose 100) divisée par la référence sans doigt (même pose,
+noir ≈ 1158 retranché), puis filtre passe-bande (périodes 6-22 px) : des
+**crêtes orientées** apparaissent au centre, mais faibles et noyées dans le
+moiré de la dalle (pics haute fréquence dans le spectre). Avec un écran blanc
+ordinaire, la lumière ne suffit pas : il faudra le HBM local (disque très
+lumineux sous le capteur, commandes DSI propres à Xiaomi).
