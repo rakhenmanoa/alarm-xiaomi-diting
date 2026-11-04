@@ -330,6 +330,26 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 			putchar('\n');
 	}
 	printf("\n");
+
+	/*
+	 * GF_DUMP=préfixe : données complètes de chaque commande dans
+	 * préfixe-MODULE-CMD-SEQ.bin (images de test, configuration...).
+	 */
+	if (getenv("GF_DUMP")) {
+		char name[256];
+		FILE *f;
+
+		snprintf(name, sizeof(name), "%s-%u-%u-%u.bin", getenv("GF_DUMP"),
+			 target, cmd, seq);
+		f = fopen(name, "wb");
+		if (f) {
+			fwrite(data.va, 1, size, f);
+			fclose(f);
+			printf("  données complètes : %s (%zu octets)\n", name, size);
+		} else {
+			perror(name);
+		}
+	}
 	return 0;
 }
 
