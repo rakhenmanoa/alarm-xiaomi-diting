@@ -7,7 +7,7 @@
  * le chemin « qup-core » du groupe : l'horloge du cœur QUP peut rester au
  * minimum et la lecture de l'image à 25 MHz échouer (CRC faux, 1028).
  *
- *   insmod qup1-vote.ko [core_mbps=200] [config_mbps=100]
+ *   insmod qup1-vote.ko [core_mbps=200] [config_mbps=100] [memory_mbps=1000]
  *
  * Le vote tient tant que le module est chargé.
  */
@@ -25,8 +25,12 @@ static unsigned int config_mbps = 100;
 module_param(config_mbps, uint, 0444);
 MODULE_PARM_DESC(config_mbps, "vote qup-config, Mo/s");
 
+static unsigned int memory_mbps = 1000;
+module_param(memory_mbps, uint, 0444);
+MODULE_PARM_DESC(memory_mbps, "vote qup-memory (QUP1 -> DDR, DMA), Mo/s");
+
 static struct platform_device *pdev;
-static struct icc_path *core, *config;
+static struct icc_path *core, *config, *memory;
 
 static int __init qup1_vote_init(void)
 {
@@ -55,17 +59,28 @@ static int __init qup1_vote_init(void)
 		goto err_core;
 	}
 
+	memory = of_icc_get(&pdev->dev, "qup-memory");
+	if (IS_ERR(memory)) {
+		ret = PTR_ERR(memory);
+		goto err_config;
+	}
+
 	ret = icc_set_bw(core, MBps_to_icc(core_mbps), MBps_to_icc(core_mbps));
 	if (!ret)
 		ret = icc_set_bw(config, MBps_to_icc(config_mbps),
 				 MBps_to_icc(config_mbps));
+	if (!ret)
+		ret = icc_set_bw(memory, MBps_to_icc(memory_mbps),
+				 MBps_to_icc(memory_mbps));
 	if (ret)
-		goto err_config;
+		goto err_memory;
 
-	pr_info("qup1-vote: qup-core %u Mo/s, qup-config %u Mo/s\n",
-		core_mbps, config_mbps);
+	pr_info("qup1-vote: qup-core %u, qup-config %u, qup-memory %u Mo/s\n",
+		core_mbps, config_mbps, memory_mbps);
 	return 0;
 
+err_memory:
+	icc_put(memory);
 err_config:
 	icc_put(config);
 err_core:
@@ -82,6 +97,7 @@ static void __exit qup1_vote_exit(void)
 {
 	struct device_node *np = pdev->dev.of_node;
 
+	icc_put(memory);
 	icc_put(config);
 	icc_put(core);
 	pdev->dev.of_node = NULL;

@@ -315,3 +315,17 @@ chargé) : **toujours 1028**.
 
 Pistes restantes : vérifier si l'appli renonce à la vitesse haute
 (`gf_spi_set_high_speed`) ; observer le GPIO 40 pendant la capture.
+
+### Lecture de `gf_sz_dc` (capture)
+
+`gf_sz_dc_capture_image` → `sz_dc_capture_image_by_twoframe_mode` :
+commande de départ au capteur (`sz_dc_capture_image_start_cmd`), puis
+**attente calculée** (`frame_time`, `gf_sleep`) — pas d'interruption — puis
+`gf_bus_dc_read_rawdata` → `gf_spi_read_ext(mode 8)` → `qsee_spi_full_duplex`
+à la **vitesse haute (25 MHz)** ; les commandes de détection et d'init passent
+en vitesse basse (4,8 MHz / 960 kHz). Taille des paquets et blancs de ligne
+calculés pour 24,8 MHz « réels » (`gf_spi_get_actual_high_speed`), valeur
+fixe, aucun appel ne la change. Configuration SPI : bits par mot 8, CS actif
+haut, mode 0. Seule la lecture rapide échoue : piste d'un transfert à 25 MHz
+(DMA du QUP vers la DDR ?) moins bien servi que sous Android. Le module
+`qup1-vote` vote aussi `qup-memory` (QUP1 → DDR).
