@@ -129,3 +129,15 @@ Premier essai proposé, sans toucher au capteur :
 ```sh
 sudo ./qseecom-cli gfdit --goodix 1003 7 664
 ```
+
+### Essais du 2026-11-04
+
+- `--goodix 1003 7 664` sans tampon sécurisé : l'appli répond, données
+  `[12] = 1006` (`GF_ERROR_MEMORY_COPY_FAILED`) ; son journal reste vide.
+- `--goodix-carveout 1003 7 664` (tampon **ordinaire** de 4 Mo en [32],
+  taille en [40]) : `[12] = 0`, plus d'erreur ; champs de version vides
+  (probablement remplis après l'initialisation). L'appli accepte donc de la
+  mémoire non sécurisée à la place du tas `qcom,secure-cdsp`.
+- Tailles relevées : `FingerprintCore::enumerate` envoie 1000/7 sur 112
+  octets ; `CustomizedAlgo::init` 1001/0 sur 180 octets ; `getVersion`
+  1003/7 sur 664 octets.

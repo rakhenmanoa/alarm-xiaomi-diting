@@ -241,6 +241,8 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 		b.p[5].b = GF_CARVEOUT_SIZE;
 		b.p[5].c = cv.id;
 	}
+	/* Le noyau exige la taille exacte : en-tête + paramètres utilisés. */
+	bd.buf_len = sizeof(b.arg) + b.arg.num_params * sizeof(b.p[0]);
 	if (ioctl(fd, TEE_IOC_INVOKE, &bd)) {
 		fprintf(stderr, "  invoke : %s\n", strerror(errno));
 		return -errno;
