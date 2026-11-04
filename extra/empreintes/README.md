@@ -352,3 +352,21 @@ Réponse : `[28]` = 192 lignes, `[32]` = 224 colonnes, puis **5 trames** de
 seulement un bruit de lignes ; aucune trace de corruption. **Le capteur et le
 bus à 25 MHz fonctionnent** : le CRC faux de `1002/3` vient d'autre chose que
 du transfert lui-même (mode « deux trames » de la capture normale ?).
+
+### Temps de pose et images éclairées
+
+`1003/18` (44 octets) règle la pose : `[28]` = temps de pose (16 bits, non nul
+et ≤ un maximum du capteur — 500 refusé, 200 accepté), `[40]` = flottant non
+nul (1,0 convient). Écran blanc à luminosité maximale, doigt posé :
+
+| Pose | Moyenne | Max |
+|---|---|---|
+| défaut | ≈ 1160 | ≈ 1170 |
+| 50 | ≈ 2085 | ≈ 3540 |
+| 200 | ≈ 4110 | 5553 (saturé) |
+
+Géométrie réelle : **192 de large × 224 de haut** (`[28]` = largeur,
+`[32]` = hauteur). On voit la tache lumineuse du doigt et une grille régulière
+de petits groupes de points (structure du capteur ou de la dalle). Les crêtes
+restent à faire ressortir : soustraire une image de référence sans doigt,
+même pose, et utiliser le vrai éclairage local.

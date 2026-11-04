@@ -4,8 +4,8 @@
   gf-image.py usine-1003-21-N.bin [préfixe]
 
 Le fichier est celui qu'écrit « GF_DUMP=préfixe qseecom-cli ... 1003 21 921640 » :
-en-tête de 28 octets, lignes et colonnes en [28] et [32], puis des trames de
-lignes × colonnes pixels de 16 bits (petit-boutiste) à la suite. Chaque trame
+en-tête de 28 octets, largeur en [28] et hauteur en [32] (192 × 224), puis des
+trames de largeur × hauteur pixels de 16 bits (petit-boutiste) à la suite. Chaque trame
 non vide est écrite en PGM 8 bits (contraste étiré) : préfixe-0.pgm, ...
 Affiche aussi min / max / moyenne de chaque trame.
 """
@@ -18,9 +18,9 @@ def main():
         sys.exit(__doc__)
     data = open(sys.argv[1], 'rb').read()
     prefix = sys.argv[2] if len(sys.argv) > 2 else 'trame'
-    rows, cols = struct.unpack_from('<II', data, 28)
+    cols, rows = struct.unpack_from('<II', data, 28)
     n = rows * cols
-    print(f'{rows} lignes × {cols} colonnes')
+    print(f'{cols} × {rows} pixels')
     off, k = 36, 0
     while off + 2 * n <= len(data):
         px = struct.unpack_from(f'<{n}H', data, off)
