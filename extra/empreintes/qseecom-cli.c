@@ -193,6 +193,9 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 	struct shm cv;
 	struct tee_ioctl_buf_data bd = { .buf_ptr = (uintptr_t)&b, .buf_len = sizeof(b) };
 	static uint32_t seq;
+	/* Configuration du capteur rendue par 1002/2 (octets 32 à 480). */
+	static uint8_t sensor_cfg[448];
+	static bool have_cfg;
 	struct shm hdr, data;
 	uint32_t *h, *d;
 
@@ -248,6 +251,21 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 	 */
 	if (target == 1002 && cmd == 3 && size >= 36)
 		d[8] = getenv("GF_CAP_OP") ? strtoul(getenv("GF_CAP_OP"), NULL, 0) : 1;
+	/*
+	 * GF_CMD_SENSOR_SET_DISPLAY (1002/6), comme
+	 * CustomizedSensor::getDisplayType() : la configuration rendue par
+	 * 1002/2 recopiée en [32], avec le type d'écran à cfg[388]
+	 * (propriété vendor.panel.display, 5 par défaut ; GF_DISPLAY_TYPE).
+	 */
+	if (target == 1002 && cmd == 6 && size >= 32 + sizeof(sensor_cfg)) {
+		uint32_t type = getenv("GF_DISPLAY_TYPE") ?
+				strtoul(getenv("GF_DISPLAY_TYPE"), NULL, 0) : 5;
+
+		if (!have_cfg)
+			printf("  attention : pas de 1002/2 avant, configuration vide\n");
+		memcpy(data.va + 32, sensor_cfg, sizeof(sensor_cfg));
+		memcpy(data.va + 32 + 388, &type, 4);
+	}
 	d[1] = target;
 	d[2] = cmd;
 
@@ -284,6 +302,10 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 	if (ioctl(fd, TEE_IOC_INVOKE, &bd)) {
 		fprintf(stderr, "  invoke : %s\n", strerror(errno));
 		return -errno;
+	}
+	if (target == 1002 && cmd == 2 && size >= 32 + sizeof(sensor_cfg) && !h[7]) {
+		memcpy(sensor_cfg, data.va + 32, sizeof(sensor_cfg));
+		have_cfg = true;
 	}
 	printf("  goodix %u/%u (%zu octets) -> ret=0x%x, statut TA (requête[28])=0x%x (%d), "
 	       "erreur module=%u, résultat=0x%x\n",
