@@ -162,6 +162,10 @@ Le binaire garde sa table de symboles (≈ 3 600 noms), ce qui permet de lire
   `gf_modules_start` réussit (démarrage des modules auth, algo, capteur,
   test usine, dump, heartbeat). **Si ce démarrage a échoué, chaque commande
   revient sans rien écrire.** Le témoin `0xffffffff` intact à `[28]` le dira.
+- Essai : statut **1012** avec le tampon de 4 Mo, alors que sans lui la commande
+  s'exécute (erreur 1006). Le tampon de 4 Mo tombait à une adresse non alignée
+  sur une page (il suit les données dans la mémoire du noyau) ; `qseecom-cli`
+  arrondit maintenant les données à la page.
 - Sinon : enregistrement du tampon de données (`qsee_register_shared_buffer`),
   échec → statut 1012 ; puis aiguillage par module (`[4]`), résultat en
   `données[12]` et journal recopié après les données.

@@ -201,9 +201,15 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 	 * les données, où l'appli écrit son propre journal, et [24] = 1.
 	 */
 	size_t log_size = 0x8000;
+	/*
+	 * Le noyau range les tampons à la suite dans sa mémoire TZ : arrondir
+	 * les données à la page pour que le tampon de 4 Mo qui suit commence
+	 * sur une page (l'appli refuse sinon de l'enregistrer : statut 1012).
+	 */
+	size_t data_len = (size + log_size + 4095) & ~(size_t)4095;
 
 	if (size < 12 || shm_alloc(fd, 128, &hdr) ||
-	    shm_alloc(fd, size + log_size, &data))
+	    shm_alloc(fd, data_len, &data))
 		return -ENOMEM;
 	h = (uint32_t *)hdr.va;
 	d = (uint32_t *)data.va;
@@ -246,7 +252,7 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 	b.p[2].a = 0;		/* offset dans la requête */
 	b.p[2].b = 4;		/* largeur de l'adresse */
 	b.p[3].attr = TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INOUT;
-	b.p[3].b = size + log_size;
+	b.p[3].b = data_len;
 	b.p[3].c = data.id;
 	if (carveout) {
 		if (shm_alloc(fd, GF_CARVEOUT_SIZE, &cv))
