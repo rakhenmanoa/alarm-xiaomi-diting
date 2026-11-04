@@ -329,3 +329,9 @@ fixe, aucun appel ne la change. Configuration SPI : bits par mot 8, CS actif
 haut, mode 0. Seule la lecture rapide échoue : piste d'un transfert à 25 MHz
 (DMA du QUP vers la DDR ?) moins bien servi que sous Android. Le module
 `qup1-vote` vote aussi `qup-memory` (QUP1 → DDR).
+
+### DMA du groupe QUP n°1
+
+Android donne à Linux les canaux GPI **0 à 5** de `qcom,gpi-dma@a00000`
+(`qcom,gpii-mask = <63>`), notre DT les canaux 1 à 6 (`dma-channel-mask =
+<0x7e>`). Essai avec `0x3f` (`fdtput`) : **toujours 1028**.
