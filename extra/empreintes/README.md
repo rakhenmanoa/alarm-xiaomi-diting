@@ -265,3 +265,22 @@ du DT Android).
 
 `GF_DUMP=préfixe` fait écrire à `qseecom-cli` les données complètes de chaque
 commande dans `préfixe-MODULE-CMD-SEQ.bin`.
+
+### Codes d'erreur de `gfdit` (table de `gf_strerror`)
+
+| Code | Nom |
+|---|---|
+| 1001 | GF_ERROR_OUT_OF_MEMORY |
+| 1004 | GF_ERROR_BAD_PARAMS |
+| 1006 | GF_ERROR_MEMORY_COPY_FAILED |
+| 1012 | GF_ERROR_GENERIC |
+| 1028 | GF_ERROR_SPI_RAW_DATA_CRC_FAILED |
+| 1043 | GF_ERROR_CHIP_ID_NOT_CORRECT |
+| 1064 | GF_ERROR_SENSOR_NOT_AVAILABLE |
+| 1096 | GF_ERROR_TOO_FAST |
+| 1155 | GF_ERROR_UI_DISAPPEAR |
+
+Capture `1002/3` avec `[32] = 1` (comme `onEnrollDownEvt`) : **1028**, CRC
+des données brutes faux. La lecture SPI de l'image a donc lieu ; reste à
+savoir pourquoi les données sont abîmées (tampon de 4 Mo ordinaire au lieu du
+tas sécurisé du CDSP ? pose non terminée ? écran ?).
