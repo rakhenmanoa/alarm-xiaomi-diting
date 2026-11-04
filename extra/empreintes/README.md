@@ -44,3 +44,30 @@ sudo reboot
    chargée par IAppLoader, comme le fait QSEECom sur les plateformes récentes.
 3. Retrouver le protocole Goodix dans `libgf_hal.so`.
 4. Allumer la zone du doigt (local HBM, commandes de la dalle) pendant la capture.
+
+## Route QSEECOM (2026-11-04)
+
+`gfdit` est une appli QSEECOM : elle répond à des commandes (tampon requête +
+réponse), pas à des objets. Elle n'est donc pas joignable par `qcomtee`. Le
+pilote QSEECOM de Dawid Wróbel et Sam Day ([samcday/linux, branche
+`wip/sargo-fingerprint`](https://github.com/samcday/linux/pull/14)), rétroporté
+dans le paquet `linux-diting` (patch `0918`, option `TEE_QSEECOM`), charge une
+appli par son nom et lui transmet des commandes. Le patch CMA ci-dessus est
+dans le paquet sous le n° `0919`.
+
+Comme `QCOM_SCM` est intégré au noyau, il faut **reconstruire et installer le
+paquet `linux-diting`** (pas seulement un module).
+
+Le pilote cherche l'appli dans le dossier des firmwares : copier
+`gfdit.mdt` et `gfdit.b00` à `gfdit.b08` (de `NON-HLOS.bin`, dossier
+`image/`) dans `/usr/lib/firmware/`. Ces fichiers sont signés Xiaomi : ne pas
+les publier.
+
+`qseecom-cli.c` charge l'appli, ouvre une session et envoie des requêtes
+brutes :
+
+```sh
+cc -O2 -Wall -o qseecom-cli qseecom-cli.c
+sudo modprobe qseecomtee
+sudo ./qseecom-cli gfdit
+```
