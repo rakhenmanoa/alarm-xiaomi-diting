@@ -242,3 +242,26 @@ sudo gpioset -z -c gpiochip6 41=1
 
 Suite : `1002/6` (type d'écran, 480 octets), la capture (point lumineux sous le
 doigt, interruption sur GPIO 40), l'enrôlement et l'identification.
+
+### Capture : ce que fait Android (lecture de `libgf_hal.so`)
+
+Commandes utiles (module/commande, taille) :
+
+| HAL | Commande | Taille |
+|---|---|---|
+| `Sensor::captureImage(op, arg)` | 1002/3, `[28]` = arg, `[32]` = op | 40 |
+| `Sensor::getIrqEventType` | 1002/5 | 32 |
+| `Sensor::sleepSensor` | 1002/8 | 28 |
+| `CustomizedSensor::getDisplayType` | 1002/6 | 480 |
+| `SZAlgo::enrollImage` | 1001/1 | 48 |
+| `SZAlgo::authImage` | 1001/2 | 160 |
+| `FingerprintCore::enroll` / `authenticate` | 1000/3 (108), 1000/1 (48) |  |
+| `SZProductTest::localAreaSample` (usine) | 1003/38 | 20544 |
+
+L'éclairage sous le doigt passe par `/sys/class/mi_display/disp-DSI-0/disp_param`
+du noyau Xiaomi : `9 1` / `9 0` (HBM local), `5 1024` / `5 -1` (HBM global).
+Il faudra l'équivalent dans notre pilote de dalle (commandes DSI « local HBM »
+du DT Android).
+
+`GF_DUMP=préfixe` fait écrire à `qseecom-cli` les données complètes de chaque
+commande dans `préfixe-MODULE-CMD-SEQ.bin`.
