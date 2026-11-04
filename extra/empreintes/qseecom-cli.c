@@ -264,6 +264,27 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 		else if (c == 0 && i + 1 < size && data.va[i + 1] >= 32 && data.va[i + 1] < 127)
 			printf(" | ");
 	}
+	if (carveout) {
+		/* Zones non nulles du tampon de 4 Mo, par blocs de 16 octets. */
+		size_t shown = 0, last = (size_t)-32;
+
+		printf("\n  tampon de 4 Mo (zones non nulles) :");
+		for (size_t i = 0; i + 16 <= GF_CARVEOUT_SIZE && shown < 64; i += 16) {
+			static const uint8_t zero[16];
+
+			if (!memcmp(cv.va + i, zero, 16))
+				continue;
+			if (i != last + 16)
+				printf("\n    ...");
+			printf("\n    %06zx:", i);
+			for (int j = 0; j < 16; j++)
+				printf(" %02x", cv.va[i + j]);
+			last = i;
+			shown++;
+		}
+		if (!shown)
+			printf(" aucune");
+	}
 	printf("\n  journal de l'appli :\n");
 	for (size_t i = size; i < size + log_size; i++) {
 		uint8_t c = data.va[i];
