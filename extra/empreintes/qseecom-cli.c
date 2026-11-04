@@ -241,6 +241,13 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 	 */
 	if (target == 1001 && cmd == 0 && size >= 40)
 		d[9] = 1;
+	/*
+	 * GF_CMD_SENSOR_CAPTURE_IMAGE (1002/3) : captureImage(op, n) met n en
+	 * [28] et op en [32]. onEnrollDownEvt() appelle captureImage(1, 0).
+	 * GF_CAP_OP permet d'essayer une autre valeur.
+	 */
+	if (target == 1002 && cmd == 3 && size >= 36)
+		d[8] = getenv("GF_CAP_OP") ? strtoul(getenv("GF_CAP_OP"), NULL, 0) : 1;
 	d[1] = target;
 	d[2] = cmd;
 
