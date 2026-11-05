@@ -390,3 +390,9 @@ DT Android de la dalle 42 02 0a (`mi,mdss-dsi-local-hbm-*`), décodé : allumage
 
 Le patch 0923 ajoute à la dalle un fichier `local_hbm` (0 éteint, 1 blanc
 1000 nits, 2 blanc 110 nits, 3 vert 500 nits).
+
+Premier essai avec le HBM local (blanc 1000 nits), capture d'usine : pose 20
+→ moyenne ≈ 1690 avec doigt, 1560 sans ; pose 50 → 2510 / 2160, sans
+saturation. Image avec doigt ÷ référence sans doigt, puis passe-bande : des
+**crêtes parallèles** nettement plus visibles qu'avec l'écran blanc. (Les
+images ne sont pas publiées : ce sont des empreintes réelles.)
