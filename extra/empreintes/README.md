@@ -421,3 +421,29 @@ d'enrôlement ouverte. Côté HAL (`FingerprintCore`) :
 `qseecom-cli` fabrique le jeton (version 0, challenge, user_id `GF_UID`,
 type mot de passe, horodatage, HMAC-SHA256 avec la clé de test donnée par
 1000/10).
+
+### Limite : la clé HMAC passe par keymaster
+
+`1000/10` (installer la clé HMAC) renvoie **1012**, et `1000/3` (ouvrir la
+session d'enrôlement) aussi. En cause : `gf_set_hmac_key` ne reçoit pas une
+clé en clair mais un bloc chiffré, qu'elle déchiffre par
+`gf_decapsulate_key` → `qsee_decapsulate_inter_app_message`. La clé HMAC
+vient donc de **keymaster** (bloc inter-applications signé), produit sous
+Android après déverrouillage. Une clé de test (32 × 0x5a) est rejetée.
+
+L'enrôlement et la reconnaissance sont ainsi liés par conception à la chaîne
+keymaster + gatekeeper d'Android (le jeton `hw_auth_token_t` est validé via
+keymaster, pas sur confiance). Les franchir demanderait un keymaster
+fonctionnel côté Linux — un portage à part entière.
+
+### Récapitulatif (2026-11-05)
+
+Fonctionne, piloté depuis Linux : chargement de `gfdit` dans la TrustZone
+(QSEECOM, patch 0918) avec vrais statuts (patch 0920) ; alimentation du
+capteur (L1C, patch 0922) et reset (GPIO 41) ; détection, initialisation,
+algo, temps de pose ; HBM local sous le capteur (patch 0923, fichier
+`local_hbm`) ; capture d'usine (images brutes) et **capture normale**
+(`1002/3` mode 7) — crêtes du doigt visibles après mise à plat.
+
+Bloqué : enrôlement/reconnaissance, qui exigent la chaîne keymaster/gatekeeper
+(ci-dessus). L'imagerie du capteur, elle, est entièrement accessible.
