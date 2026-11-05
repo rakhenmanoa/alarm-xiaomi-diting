@@ -377,3 +377,16 @@ noir ≈ 1158 retranché), puis filtre passe-bande (périodes 6-22 px) : des
 moiré de la dalle (pics haute fréquence dans le spectre). Avec un écran blanc
 ordinaire, la lumière ne suffit pas : il faudra le HBM local (disque très
 lumineux sous le capteur, commandes DSI propres à Xiaomi).
+
+### HBM local (patch 0923)
+
+DT Android de la dalle 42 02 0a (`mi,mdss-dsi-local-hbm-*`), décodé : allumage
+= page 0 `6f 17 / b2 07 ff`, `6f 1f / b2 00 50` ; page 2 `d1 01`, `6f 08`,
+`d0 <gamma RGB>` (blanc 1000 nits `09 6a 08 3d 0a 18`, blanc 110 nits
+`06 13 05 60 06 8f`, vert 500 nits `00 00 07 f1 00 00`) ; page 7 `d9 40`,
+`c0 01` ; `51 07 ff` ; `6f 01 / 88 02 62 09 8c` (centre x = 610, y = 2444) ;
+`87 11 11` ; `88 01` ; `85 01`. Extinction : `53 20`, `51 <DBV>`, `87 0f ff`,
+`88 01`, `86 01`.
+
+Le patch 0923 ajoute à la dalle un fichier `local_hbm` (0 éteint, 1 blanc
+1000 nits, 2 blanc 110 nits, 3 vert 500 nits).
