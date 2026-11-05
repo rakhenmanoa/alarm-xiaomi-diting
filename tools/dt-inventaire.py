@@ -6,7 +6,8 @@
 -m MOTIF : ne garde que les blocs dont le modèle correspond (sans casse),
            ex. -m diting pour le dtbo, -m 'Cape SoC$' pour vendor_boot.
 -n MOTIF : détail complet (toutes les propriétés, sous-nœuds compris) des
-           nœuds dont le chemin correspond, ex. -n ir-spi.
+           nœuds dont le chemin correspond, ex. -n ir-spi. Les tableaux dont
+           la taille n'est pas multiple de 4 sont écrits octet par octet [..].
 
 Une ligne par nœud qui porte un « compatible » :
   état  chemin  [dans &cible]  compatible  reg=…
@@ -65,7 +66,10 @@ def main():
                         print(c)
                         for k, v in p.items():
                             r = dtcam.chaine(v)
-                            if r is None:
+                            if r is None and v and len(v) % 4:
+                                # tableau d'octets (commandes DSI...) : tout en hexadécimal
+                                r = '[' + ' '.join(f'{b:02x}' for b in v) + ']'
+                            elif r is None:
                                 r = '<' + ' '.join(f'0x{m:x}' if m > 0xffff else str(m) for m in mots(v)) + '>' if v else ''
                             print(f'    {k}' + (f' = {r}' if r else ''))
                 print()
