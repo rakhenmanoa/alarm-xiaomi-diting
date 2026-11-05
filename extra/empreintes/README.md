@@ -396,3 +396,9 @@ Premier essai avec le HBM local (blanc 1000 nits), capture d'usine : pose 20
 saturation. Image avec doigt ÷ référence sans doigt, puis passe-bande : des
 **crêtes parallèles** nettement plus visibles qu'avec l'écran blanc. (Les
 images ne sont pas publiées : ce sont des empreintes réelles.)
+
+### Capture normale débloquée
+
+`1002/3` avec **`[32]` = 7** (valeur de la capture d'usine) au lieu de 1 :
+statut **0**. Le CRC faux (1028) venait du mode demandé, pas du matériel.
+`qseecom-cli` met maintenant 7 par défaut.

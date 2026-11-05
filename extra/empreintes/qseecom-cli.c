@@ -246,11 +246,12 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 		d[9] = 1;
 	/*
 	 * GF_CMD_SENSOR_CAPTURE_IMAGE (1002/3) : captureImage(op, n) met n en
-	 * [28] et op en [32]. onEnrollDownEvt() appelle captureImage(1, 0).
-	 * GF_CAP_OP permet d'essayer une autre valeur.
+	 * [28] et op en [32]. La capture d'usine (sz_factory_capture_multiple_frames)
+	 * passe op = 7 : avec 1, le CRC des données brutes est faux (1028) ; avec 7,
+	 * la capture réussit. GF_CAP_OP permet d'essayer une autre valeur.
 	 */
 	if (target == 1002 && cmd == 3 && size >= 36)
-		d[8] = getenv("GF_CAP_OP") ? strtoul(getenv("GF_CAP_OP"), NULL, 0) : 1;
+		d[8] = getenv("GF_CAP_OP") ? strtoul(getenv("GF_CAP_OP"), NULL, 0) : 7;
 	/*
 	 * GF_CMD_SENSOR_SET_DISPLAY (1002/6), comme
 	 * CustomizedSensor::getDisplayType() : la configuration rendue par
