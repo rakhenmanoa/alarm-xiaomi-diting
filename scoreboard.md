@@ -31,7 +31,7 @@ même noyau, pas encore revérifiées ici.
 | Bluetooth | 🟡 | appairage et musique (A2DP) vérifiés avec un casque, via PipeWire ; reste l'audio des appels (HFP), non testé : Android le fait passer par SLIMbus (`btfmslim`), le kit mains libres en appel pourrait rester muet |
 | USB périphérique (SSH par USB) | ✅ | réseau NCM, `172.16.42.1` |
 | USB hôte (OTG) | ✅ | patch `0915` : connecteur USB-C sous pmic-glink, rôle choisi par UCSI ; testé avec un téléphone Android en câble C-C (énuméré en haute vitesse) |
-| USB 3, sortie vidéo par USB-C | ⚪ | absents : Xiaomi désactive le PHY combo USB3/DisplayPort, le port est en USB 2.0 |
+| USB 3, sortie vidéo par USB-C | ⚪ | absents (limite matérielle) : le PHY combo USB3/DisplayPort (`ssphy@88e8000`) est **désactivé dans le DT Android lui-même**, aucun étage SuperSpeed câblé au connecteur. Le port est USB 2.0 ; rien à réactiver côté Linux |
 | Casque sur adaptateur USB-C (FSA4480) | ⬜ | pilote `fsa4480` disponible, nœud DT à écrire |
 | GPS / GNSS | 🟡 | service LOC du modem présent (`gps-raw`, `gps-nmea`, A-GPS) mais `LOC start` refusé (`GeneralError`), y compris par `qmicli` seul. Écarté : verrou du moteur (était `all`, mis à `none` avec `qmicli --loc-set-engine-lock=none`, gardé après redémarrage du modem), mode (`standalone`/`default`), heure, données d'assistance, déclaration `gps/gps_service` de pd-mapper. Suite : journal F3 du modem par DIAG |
 | NFC | ❌ | NXP SN1xx, non gérée par le pilote `nxp-nci` |
