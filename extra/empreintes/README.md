@@ -402,3 +402,22 @@ images ne sont pas publiées : ce sont des empreintes réelles.)
 `1002/3` avec **`[32]` = 7** (valeur de la capture d'usine) au lieu de 1 :
 statut **0**. Le CRC faux (1028) venait du mode demandé, pas du matériel.
 `qseecom-cli` met maintenant 7 par défaut.
+
+### Vers l'enrôlement
+
+`1001/1` (enrollImage) seul fait planter l'appli : `gf_algo_enroll` envoie
+d'abord l'évènement 18 (« validate_token ») — il faut une session
+d'enrôlement ouverte. Côté HAL (`FingerprintCore`) :
+
+| Étape | Commande | Taille | Champs |
+|---|---|---|---|
+| clé HMAC (`startTap`) | 1000/10 | 284 | clé à `[28]+12` |
+| `setActiveGroup` | 1000/0 | 288 | `[28]` groupe, `[32]` chemin |
+| `preEnroll` | 1000/2 | 40 | rend le challenge (u64) en `[32]` |
+| `enroll` | 1000/3 | 108 | `[28]` groupe, `[33]` jeton `hw_auth_token_t` (69 octets) |
+| capture | 1002/3 | 40 | `[32]` = 7 |
+| `enrollImage` | 1001/1 | 48 | |
+
+`qseecom-cli` fabrique le jeton (version 0, challenge, user_id `GF_UID`,
+type mot de passe, horodatage, HMAC-SHA256 avec la clé de test donnée par
+1000/10).

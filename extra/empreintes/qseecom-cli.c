@@ -27,6 +27,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <linux/tee.h>
@@ -181,6 +182,111 @@ static int send_cmd(int fd, uint32_t session, const char *hex, size_t rsp_len)
  * [40]. L'appli peut l'exiger dans de la mémoire réservée au CDSP.
  */
 static bool carveout;
+
+/*
+ * Jeton d'authentification matériel (hw_auth_token_t d'Android, 69 octets)
+ * pour ouvrir une session d'enrôlement (1000/3). Signé en HMAC-SHA256 avec la
+ * clé que nous avons donnée à l'appli par 1000/10 (32 × 0x5a).
+ */
+static const uint8_t gf_hmac_key[32] = {
+	0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a,
+	0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a,
+	0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a,
+};
+static uint64_t gf_challenge;
+
+static const uint32_t sha_k[64] = {
+	0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1,
+	0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+	0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786,
+	0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+	0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147,
+	0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+	0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+	0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+	0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a,
+	0x5b9cca4f, 0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+	0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+};
+
+#define ROR(x, n) (((x) >> (n)) | ((x) << (32 - (n))))
+
+static void sha256(const uint8_t *msg, size_t len, uint8_t out[32])
+{
+	uint32_t h[8] = { 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+			  0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19 };
+	size_t total = ((len + 9 + 63) / 64) * 64;
+	uint8_t *buf = calloc(1, total);
+
+	memcpy(buf, msg, len);
+	buf[len] = 0x80;
+	for (int i = 0; i < 8; i++)
+		buf[total - 1 - i] = (uint64_t)len * 8 >> (8 * i);
+	for (size_t blk = 0; blk < total; blk += 64) {
+		uint32_t w[64], a, b, c, d, e, f, g, hh;
+
+		for (int i = 0; i < 16; i++)
+			w[i] = buf[blk + 4 * i] << 24 | buf[blk + 4 * i + 1] << 16 |
+			       buf[blk + 4 * i + 2] << 8 | buf[blk + 4 * i + 3];
+		for (int i = 16; i < 64; i++)
+			w[i] = w[i - 16] + (ROR(w[i - 15], 7) ^ ROR(w[i - 15], 18) ^ (w[i - 15] >> 3)) +
+			       w[i - 7] + (ROR(w[i - 2], 17) ^ ROR(w[i - 2], 19) ^ (w[i - 2] >> 10));
+		a = h[0]; b = h[1]; c = h[2]; d = h[3];
+		e = h[4]; f = h[5]; g = h[6]; hh = h[7];
+		for (int i = 0; i < 64; i++) {
+			uint32_t t1 = hh + (ROR(e, 6) ^ ROR(e, 11) ^ ROR(e, 25)) +
+				      ((e & f) ^ (~e & g)) + sha_k[i] + w[i];
+			uint32_t t2 = (ROR(a, 2) ^ ROR(a, 13) ^ ROR(a, 22)) +
+				      ((a & b) ^ (a & c) ^ (b & c));
+
+			hh = g; g = f; f = e; e = d + t1;
+			d = c; c = b; b = a; a = t1 + t2;
+		}
+		h[0] += a; h[1] += b; h[2] += c; h[3] += d;
+		h[4] += e; h[5] += f; h[6] += g; h[7] += hh;
+	}
+	free(buf);
+	for (int i = 0; i < 8; i++)
+		for (int j = 0; j < 4; j++)
+			out[4 * i + j] = h[i] >> (24 - 8 * j);
+}
+
+static void hmac_sha256(const uint8_t key[32], const uint8_t *msg, size_t len,
+			uint8_t out[32])
+{
+	uint8_t pad[64 + 64 + 32], inner[32];
+
+	for (int i = 0; i < 64; i++)
+		pad[i] = (i < 32 ? key[i] : 0) ^ 0x36;
+	memcpy(pad + 64, msg, len);
+	sha256(pad, 64 + len, inner);
+	for (int i = 0; i < 64; i++)
+		pad[i] = (i < 32 ? key[i] : 0) ^ 0x5c;
+	memcpy(pad + 64, inner, 32);
+	sha256(pad, 64 + 32, out);
+}
+
+static void put_be(uint8_t *p, uint64_t v, int n)
+{
+	for (int i = 0; i < n; i++)
+		p[i] = v >> (8 * (n - 1 - i));
+}
+
+/* hw_auth_token_t : version, challenge, user_id, authenticator_id (hôte),
+ * authenticator_type, timestamp (gros-boutistes), hmac sur les 37 premiers. */
+static void gf_make_hat(uint8_t hat[69])
+{
+	uint64_t uid = getenv("GF_UID") ? strtoull(getenv("GF_UID"), NULL, 0) : 1;
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	memset(hat, 0, 69);
+	memcpy(hat + 1, &gf_challenge, 8);
+	memcpy(hat + 9, &uid, 8);
+	put_be(hat + 25, 1, 4);		/* HW_AUTH_PASSWORD */
+	put_be(hat + 29, (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000, 8);
+	hmac_sha256(gf_hmac_key, hat, 37, hat + 37);
+}
 #define GF_CARVEOUT_SIZE 0x400000
 
 static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
@@ -236,7 +342,7 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 		d[7] = 0;	/* [28] statut keymaster */
 		d[8] = 12;	/* [32] offset de la clé, depuis [28] */
 		d[9] = 32;	/* [36] longueur */
-		memset(data.va + 40, 0x5a, 32);
+		memcpy(data.va + 40, gf_hmac_key, 32);
 	}
 	/*
 	 * GF_CMD_ALGO_INIT (1001/0) : SZAlgo::init() envoie 180 octets nuls
@@ -266,6 +372,23 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 			printf("  attention : pas de 1002/2 avant, configuration vide\n");
 		memcpy(data.va + 32, sensor_cfg, sizeof(sensor_cfg));
 		memcpy(data.va + 32 + 388, &type, 4);
+	}
+	/*
+	 * GF_CMD_AUTH_SET_ACTIVE_GROUP (1000/0, 288 octets) : groupe en [28],
+	 * chemin des gabarits en [32] (GF_PATH).
+	 * GF_CMD_AUTH_ENROLL (1000/3, 108 octets) : groupe en [28], jeton
+	 * d'authentification de 69 octets en [33] (challenge rendu par 1000/2).
+	 */
+	if (target == 1000 && cmd == 0 && size >= 288) {
+		const char *path = getenv("GF_PATH") ? getenv("GF_PATH") : "/data/vendor_de/0/fpdata";
+
+		d[7] = getenv("GF_GID") ? strtoul(getenv("GF_GID"), NULL, 0) : 0;
+		strncpy((char *)data.va + 32, path, 255);
+	}
+	if (target == 1000 && cmd == 3 && size >= 102) {
+		d[7] = getenv("GF_GID") ? strtoul(getenv("GF_GID"), NULL, 0) : 0;
+		gf_make_hat(data.va + 33);
+		printf("  jeton : challenge 0x%llx\n", (unsigned long long)gf_challenge);
 	}
 	/*
 	 * GF_SET="1003/18@28=2000,1003/18@32=1" : mots de 32 bits à écrire dans
@@ -324,6 +447,10 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 	if (ioctl(fd, TEE_IOC_INVOKE, &bd)) {
 		fprintf(stderr, "  invoke : %s\n", strerror(errno));
 		return -errno;
+	}
+	if (target == 1000 && cmd == 2 && size >= 40 && !h[7]) {
+		memcpy(&gf_challenge, data.va + 32, 8);
+		printf("  challenge : 0x%llx\n", (unsigned long long)gf_challenge);
 	}
 	if (target == 1002 && cmd == 2 && size >= 32 + sizeof(sensor_cfg) && !h[7]) {
 		memcpy(sensor_cfg, data.va + 32, sizeof(sensor_cfg));
