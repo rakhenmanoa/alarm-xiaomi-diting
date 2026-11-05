@@ -23,61 +23,8 @@ Il n'y a donc pas d'extraction au premier démarrage.
 
 ## État du matériel
 
-✅ fonctionne · 🟡 partiel ou à améliorer · ❌ ne fonctionne pas · ⬜ pas encore testé
-
-Testé sur le téléphone sous ALARM, sauf mention « diting-ubuntu » : ces lignes reprennent le
-[suivi de diting-ubuntu](https://github.com/royka1/diting-ubuntu/blob/main/docs/BRINGUP_STATUS.md),
-même noyau, pas encore revérifiées ici.
-
-| Matériel | État | Détails / reste à faire |
-|---|:---:|---|
-| **Système** | | |
-| Démarrage, slots A/B | ✅ | `diting-boot-successful` obligatoire, sinon le slot tombe après 7 démarrages |
-| Redémarrage vers fastboot | ✅ | `diting-reboot-bootloader` (diting-ubuntu) |
-| Veille | 🟡 | s2idle et deep fonctionnent, mais pas d'effondrement complet du SoC (CX/AOSD/DDR) : consommation en veille à réduire |
-| Gestion thermique | 🟡 | zones thermiques du PMIC (alerte à 95 °C) ; thermistances de la carte (patch `0914` : peau, flash, poche, connecteur USB, chargeur, PA, Wi-Fi) lues correctement (33 à 37 °C au repos) ; pas de régulation sur ces zones ni de limitation de courant BCL (pas de pilote) |
-| **Affichage** | | |
-| Écran (dalles 36 02 0b et 42 02 0a) | ✅ | 60, 90 et 120 Hz, DSC |
-| Luminosité | ✅ | courbe réglable (patch `0916`), validée avec les valeurs par défaut (`bl_min_dbv=60`, `bl_courbe=70`, modifiables à chaud dans `/sys/module/panel_xiaomi_l12_36_02_0b/parameters/`) |
-| HBM (plein soleil) | 🟡 | patch `0917` (option `bl_hbm`, désactivée par défaut) : aucune différence visible en écrivant DBV 4095 sur 2 octets. Piste : la séquence Xiaomi écrit `0x51` sur 4 octets (`00 00 0f fe`, second champ = plafond HBM ?) et utilise `0x87`/`0x88`. Impression aussi que 100 % est moins lumineux qu'avant `0916`, non vérifiée (comparer avec le module d'origine) |
-| Écran toujours allumé (AOD) | ⬜ | Xiaomi utilise DBV 20 / 252 en veille ; demande un mode basse consommation de la dalle et sa prise en charge par Plasma |
-| Tactile (ST FTM5 et Goodix GT9916) | ✅ | coins du bas corrigés (`diting-touch-cmd grip off`) ; SPI à 1 MHz au lieu de 12 |
-| GPU Adreno 730 | 🟡 | freedreno + Turnip ; blocages GMU rares (écran noir), à corriger |
-| Fluidité de Plasma Mobile | 🟡 | moins fluide qu'Android ; à faire : rendu KWin en basse résolution, agrandi par le contrôleur d'affichage |
-| **Connectivité** | | |
-| Wi-Fi | ✅ | jusqu'à HE 160 MHz ; économie d'énergie désactivée |
-| Bluetooth | 🟡 | appairage et musique (A2DP) vérifiés avec un casque, via PipeWire ; reste l'audio des appels (HFP), non testé : Android le fait passer par SLIMbus (`btfmslim`), le kit mains libres en appel pourrait rester muet |
-| USB périphérique (SSH par USB) | ✅ | réseau NCM, `172.16.42.1` |
-| USB hôte (OTG) | ✅ | patch `0915` : connecteur USB-C sous pmic-glink, rôle choisi par UCSI ; testé avec un téléphone Android en câble C-C (énuméré en haute vitesse) |
-| USB 3, sortie vidéo par USB-C | ⚪ | absents : Xiaomi désactive le PHY combo USB3/DisplayPort, le port est en USB 2.0 |
-| Casque sur adaptateur USB-C (FSA4480) | ⬜ | pilote `fsa4480` disponible, nœud DT à écrire |
-| GPS / GNSS | 🟡 | service LOC du modem présent (`gps-raw`, `gps-nmea`, A-GPS) mais `LOC start` refusé (`GeneralError`), y compris par `qmicli` seul. Écarté : verrou du moteur (était `all`, mis à `none` avec `qmicli --loc-set-engine-lock=none`, gardé après redémarrage du modem), mode (`standalone`/`default`), heure, données d'assistance, déclaration `gps/gps_service` de pd-mapper. Suite : journal F3 du modem par DIAG |
-| NFC | ❌ | NXP SN1xx, non gérée par le pilote `nxp-nci` |
-| Émetteur infrarouge | ✅ | patch `0913` (`ir-spi`, `/dev/lirc0`) ; émission vérifiée (`ir-ctl -S nec:…`, LED vue par une autre caméra) |
-| **Téléphonie** | | |
-| Modem, 4G, SMS, USSD | ✅ | avec les correctifs ModemManager (`pkgbuilds/modemmanager-fix/`) |
-| Données mobiles | ✅ | idem |
-| Appels | 🟡 | en 3G uniquement : pas de VoLTE |
-| **Audio** | | |
-| Haut-parleurs stéréo | ✅ | protection CS35L41 avec la calibration d'usine |
-| Écouteur, micros | ✅ | |
-| Audio des appels | ✅ | écouteur, haut-parleur, sourdine |
-| **Capteurs** | | |
-| Rotation, proximité, lumière, boussole, gyroscope | ✅ | via le SLPI (`libssc`, `iio-sensor-proxy-diting`) |
-| Écran éteint contre l'oreille, lever pour réveiller | ✅ | `diting-proximite-appel`, `diting-lever-reveil` |
-| Lecteur d'empreintes | 🟡 | Goodix sous l'écran, tout passe par l'appli sécurisée `gfdit` (pilote QSEECOM, patchs `0918`, `0920`) : capteur détecté et initialisé, algo initialisé, versions lues (`Shenzhen_v_2.00.41.08.57`). Reste : capture (éclairage sous le doigt, interruption GPIO 40), enrôlement, fprintd. Voir [extra/empreintes](extra/empreintes/README.md) |
-| **Caméras** | | |
-| Principale (S5KHP1, 200 Mpx) | ✅ | autofocus, photo dans plasma-camera ; ❌ sur les unités à capteur Samsung HM6 |
-| Ultra grand-angle (S5K4H7) | ✅ | diting-ubuntu |
-| Frontale (IMX596), macro (GC02M1) | ✅ | 30 im/s |
-| ISP matériel (IPE/BPS), JPEG matériel | ❌ | aucun pilote Linux : libcamera traite les images sur le CPU (ISP logiciel) |
-| Flash arrière / lampe torche | ✅ | patch `0912`, LED `white:flash` |
-| **Vidéo** | | |
-| Décodage matériel (H.264, HEVC, VP9) | ✅ | VA-API |
-| Encodage matériel | ❌ | le firmware se bloque au démarrage du flux |
-| **Divers** | | |
-| Vibreur | ✅ | patch `0904` |
-| Batterie, charge | 🟡 | niveau, courant, état de charge dans UPower ; pas de limite de charge |
+Le tableau complet (système, affichage, connectivité, téléphonie, audio, capteurs,
+caméras, vidéo…) est dans **[scoreboard.md](scoreboard.md)**.
 
 ## Variantes matérielles du diting
 
@@ -125,28 +72,9 @@ compilé **sur le téléphone**, par SSH.
 
 ### Pièges rencontrés
 
-- **pacman 7 sous qemu-user ou sans Landlock** : « restricting filesystem access failed ». Ajoutez
-  `DisableSandbox` dans `[options]` de `pacman.conf`. Le noyau `-5` active Landlock.
-- **`diting-boot-successful` en échec** (« bad partition entry CRC ») : sur cette unité, la table
-  GPT de secours de `sde` n'avait pas été mise à jour correctement par le bootloader. Il a fallu la
-  reconstruire depuis la table principale. **Sans ce service, le slot devient inutilisable après
-  7 démarrages.**
-- **`linux-firmware` d'ALARM sans `linux-firmware-qcom`** : il faut l'installer, sinon
-  `a730_sqe.fw` manque et le GPU ne démarre pas.
-- **Audio** : le profil UCM d'origine ne passe pas avec PipeWire 1.6 (capture non routée → profil HiFi rejeté) et mélange gauche/droite sur les deux amplis ; corrigé par `pkgbuilds/diting-device/ucm-diting.py`.
-- **Micros** : bruit blanc même ADC coupés, car les ports 1 et 2 du codec WCD938x (ADC1 et ADC4) partageaient le port maître SoundWire 1 et émettaient dans la même case. Le patch noyau `0903` envoie le port 2 du codec sur le port maître 2, et chaque port sur sa propre lane comme Android (`qcom,swr-tx-port-params` de l'overlay diting du `dtbo`, cas du bus à 9,6 MHz) : port 1 sur la lane 1, port 2 sur la lane 2, décalage 0. Une première version mettait les deux ports sur la lane 1 (décalages 0 et 1) : souffle à certains démarrages. L'ADC4 arrive alors sur `SWR_MIC5`, qu'utilise l'UCM, et la route DAPM suit (`TX SWR_INPUT5`), sinon l'ADC4 et MIC BIAS4 restent éteints. Test sans recompiler, sur `/boot/dtbs/qcom/sm8475-xiaomi-diting.dtb` : `fdtput -t u <dtb> /soc@0/soundwire@33b0000/codec@0,3 qcom,tx-port-mapping 1 2 3 4`, `fdtput -t bu <dtb> /soc@0/soundwire@33b0000 qcom,ports-lane-control 1 2 0 0`, `fdtput -t bu <dtb> /soc@0/soundwire@33b0000 qcom,ports-offset1 0 0 1 1`, `fdtput -t s <dtb> /sound audio-routing "AMIC1" "MIC BIAS1" "AMIC5" "MIC BIAS4" "TX SWR_INPUT0" "ADC1_OUTPUT" "TX SWR_INPUT5" "ADC4_OUTPUT"`, puis `mkinitcpio -P` et `diting-install-bootimg`.
-- **Test du micro de Plasma** : plasma-settings plantait (`abort` dans `pa_stream_unref`, flux libéré deux fois par `microphonetest.cpp` de plasma-pa) ; évité par la latence minimale de `diting-device`. Le test reste peu fiable (niveau, hachures) : vérifier le micro avec l'enregistreur de Plasma Mobile (voir `audio/README.md`).
-- **Modem** : ModemManager 1.24.2 plante toutes les 20 à 30 s (SIGSEGV dans `mm-netlink.c`), la 4G coupe ; recompiler avec le correctif officiel, voir `pkgbuilds/modemmanager-fix/`.
-- **Données mobiles** : enregistré en 4G mais `cm error: no-service` à chaque connexion ; ModemManager laisse le client data sur l'abonnement `any` et le modem multi-SIM vise le mauvais. Le patch `0002` de `pkgbuilds/modemmanager-fix/` le lie à l'abonnement primaire. Ajouter `IgnorePkg = modemmanager libmm-glib` dans `/etc/pacman.conf`.
-- **Wi-Fi** : l'économie d'énergie fait couper le Wi-Fi ; diting-device la désactive (`60-diting-wifi-powersave.conf` pour NetworkManager).
-- **Fluidité** : le GPU et les petits cœurs montaient trop tard en fréquence (interface saccadée) ; `diting-perf.service` relève les minima (GPU 439 MHz, cœurs 1056 et 1113,6 MHz). À désactiver si la batterie compte plus que la fluidité.
-- **Tactile, coins du bas** : le firmware Goodix retient les touchers des coins du bas (environ 10 % de large, 10 % de haut) jusqu'au relâchement ; `&123` et Entrée du clavier répondaient en retard. Le premier octet du module 0x64 de la configuration commande cette retenue (trouvé par essais avec `libinput debug-events`) : `diting-touch-cmd grip off` le coupe. Il n'est pas conservé à la mise sous tension du contrôleur : `diting-touch.service` et le hook de veille le réappliquent, puis envoient le réglage d'Android (`mode 2`, commande 0x18, trame du pilote Xiaomi `goodix_9916`). Sauvegarder d'abord la configuration avec `diting-touch-cmd config-read`. Bus SPI du tactile à 1 MHz (patch `0900`), qui fonctionne bien ; Android utilise 12 MHz.
-- **Vibreur** : aucun pilote mainline pour le bloc haptique haute tension du PM8350B ; le patch noyau `0904` ajoute un pilote minimal (vibration constante, ff-memless, séquence du pilote `qcom-hv-haptics`, Vmax 2000 mV) et le nœud DT. Plasma Mobile vibre par feedbackd (`org.sigxcpu.Feedback.Haptic`) ; diting-device en dépend et installe la règle udev `90-diting-vibreur.rules` (`FEEDBACKD_TYPE=vibra`). Test : `diting-vibrate 300 100` ou `fbcli -e phone-incoming-call`. Pour tester sans recompiler le paquet : `extra/pm8350b-haptics/`.
-- **PolicyKit** : sans règle, appels et USSD sont refusés à plasma-dialer ; diting-device installe `50-diting-modemmanager.rules` (groupe wheel).
-- **libssc** demande `gobject-introspection`, et **libcamera** a besoin de `-Dwerror=false` avec
-  GCC 16.
-- Après un échec de `makepkg`, relancez avec **`-C`** : les fichiers créés par les patches restent
-  sinon dans `src/`.
+La liste des problèmes rencontrés et de leurs contournements (pacman/qemu, GPT de secours,
+firmware, audio, micros, modem, Wi-Fi, tactile, vibreur…) est dans
+**[docs/pieges.md](docs/pieges.md)**.
 
 ## Étapes
 
