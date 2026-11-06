@@ -5,11 +5,21 @@
  *
  *   qseecom-cli NOM                     charge NOM (NOM.mdt + .bNN dans
  *                                       /usr/lib/firmware) et ouvre une session
- *   qseecom-cli NOM HEXREQ RSPLEN [...] idem, puis envoie chaque requête
- *                                       (octets en hexadécimal) et affiche les
- *                                       RSPLEN premiers octets de la réponse
+ *   qseecom-cli NOM CMD HEXREQ RSPLEN [...]
+ *                                       idem, puis envoie chaque requête (CMD =
+ *                                       identifiant de commande GP TEE, dans
+ *                                       arg.func ; HEXREQ = contenu du tampon,
+ *                                       en hexadécimal) et affiche les RSPLEN
+ *                                       premiers octets de la réponse
  *
- * Exemple : qseecom-cli gfdit 01000000 64
+ * Exemple : qseecom-cli gfdit 0 01000000 64
+ *
+ * CMD (arg.func) est l'identifiant de commande du protocole GP TEE, distinct
+ * du contenu du tampon de requête : une appli GP TA classique (ex.
+ * keymaster64) lit CMD pour savoir quelle commande exécuter, et ignore tout
+ * ce qui n'est pas dans les paramètres (MEMREF) qu'elle reçoit. L'envoyer à
+ * 0 par erreur (comme le faisait cet outil avant) revient à appeler une
+ * commande qui n'existe pas forcément dans la table de l'appli.
  *
  * L'appli reste chargée tant que ce programme tourne (le pilote la décharge
  * à la fermeture de la dernière session) : il attend Entrée avant de quitter.
@@ -124,7 +134,8 @@ static int hex2bin(const char *h, uint8_t *out, size_t max)
 }
 
 /* Requête et réponse dans le même tampon, la réponse après la requête. */
-static int send_cmd(int fd, uint32_t session, const char *hex, size_t rsp_len)
+static int send_cmd(int fd, uint32_t session, uint32_t func, const char *hex,
+		     size_t rsp_len)
 {
 	struct {
 		struct tee_ioctl_invoke_arg arg;
@@ -144,6 +155,7 @@ static int send_cmd(int fd, uint32_t session, const char *hex, size_t rsp_len)
 	}
 
 	memset(&b, 0, sizeof(b));
+	b.arg.func = func;
 	b.arg.session = session;
 	b.arg.num_params = 2;
 	b.p[0].attr = TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INPUT;
@@ -158,8 +170,8 @@ static int send_cmd(int fd, uint32_t session, const char *hex, size_t rsp_len)
 		fprintf(stderr, "  invoke : %s\n", strerror(errno));
 		return -errno;
 	}
-	printf("  requête %s -> ret=0x%x origine=%u\n  réponse :", hex,
-	       b.arg.ret, b.arg.ret_origin);
+	printf("  commande 0x%x, requête %s -> ret=0x%x origine=%u\n  réponse :",
+	       func, hex, b.arg.ret, b.arg.ret_origin);
 	for (size_t i = 0; i < rsp_len; i++)
 		printf("%s%02x", i % 16 ? " " : "\n    ", s.va[req_len + i]);
 	printf("\n");
@@ -541,8 +553,8 @@ int main(int argc, char **argv)
 
 	carveout = goodix && !strcmp(argv[2], "--goodix-carveout");
 
-	if (argc < 2 || (!goodix && (argc - 2) % 2) || (goodix && (argc - 3) % 3)) {
-		fprintf(stderr, "usage : %s NOM [HEXREQ RSPLEN]...\n"
+	if (argc < 2 || (!goodix && (argc - 2) % 3) || (goodix && (argc - 3) % 3)) {
+		fprintf(stderr, "usage : %s NOM [CMD HEXREQ RSPLEN]...\n"
 			"        %s NOM --goodix[-carveout] MODULE COMMANDE TAILLE [...]\n",
 			argv[0], argv[0]);
 		return 2;
@@ -587,8 +599,9 @@ int main(int argc, char **argv)
 			       strtoul(argv[i + 2], NULL, 0));
 		}
 	else
-		for (int i = 2; i + 1 < argc; i += 2)
-			send_cmd(cli, sess, argv[i], strtoul(argv[i + 1], NULL, 0));
+		for (int i = 2; i + 2 < argc; i += 3)
+			send_cmd(cli, sess, strtoul(argv[i], NULL, 0), argv[i + 1],
+				 strtoul(argv[i + 2], NULL, 0));
 
 	printf("Entrée pour décharger l'appli et quitter.\n");
 	getchar();
