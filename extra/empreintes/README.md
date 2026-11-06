@@ -492,47 +492,6 @@ puis le découper. Si c'est un `.mdt`+segments, `mbn-reassemble.py`.
 3. Sinon : reconnaissance **côté Linux** à partir des images brutes
    (SourceAFIS/NBIS), avec `gf-image.py` et la capture `1002/3` mode 7.
 
-### Commande 0x205 = GET_AUTH_TOKEN_KEY, et le bug de qseecom-cli (2026-11-06)
-
-Désassemblage de `keymaster_a.img` (partition `keymaster_a`, ELF64 PIE,
-framework GP TA via `GPAppLib`/`CElfFile_invoke`, point d'entrée distinct de
-`gfdit` qui lui n'est pas une appli GP). Sa table de commandes (86 entrées,
-lue dans le segment de données) contient bien `0x205 → GET_AUTH_TOKEN_KEY`
-(gestionnaire à l'offset `0x1753c` dans le binaire), confirmé par une table
-de correspondance commande→nom intégrée au binaire (utilisée pour ses
-propres journaux).
-
-Le gestionnaire de `0x205` valide les paramètres de la requête (un tag
-« purpose » attendu dans la liste), puis appelle `qsee_encapsulate_inter_app_message`
-pour sceller la clé HMAC à destination de l'appelant (`gfdit`). La constante
-`0xff000ffc` observée en réponse **n'apparaît nulle part** dans le binaire de
-`keymaster64` (recherche exhaustive, code et données) : elle ne vient donc
-pas d'un bug dans l'appli elle-même.
-
-En cause : `qseecom-cli` (fonction `send_cmd`, le mode générique
-`NOM HEXREQ RSPLEN` utilisé pour tester `0x205` directement) ne renseignait
-jamais le champ `func` de `struct tee_ioctl_invoke_arg` (confirmé dans
-`/usr/include/linux/tee.h` : premier champ de la structure, laissé à 0 par le
-`memset`). Or `func` est l'identifiant de commande du protocole GP TEE :
-c'est lui que lit le point d'entrée `CElfFile_invoke` de `keymaster64` pour
-savoir quelle commande exécuter, pas le contenu du tampon de requête. Les
-octets `05 02 00 00 02 00 00 00` envoyés comme hex atterrissaient donc dans
-les données, jamais dans `func` : `keymaster64` recevait en réalité la
-commande `0` (absente de sa table), pas `GET_AUTH_TOKEN_KEY`. `gfdit` n'est
-pas concerné (il passe par le pont QSEECOM `--goodix`, pas ce chemin GP TEE
-générique).
-
-Corrigé : `send_cmd` prend maintenant `CMD` en plus (`NOM CMD HEXREQ
-RSPLEN`), mis dans `arg.func`. À tester :
-
-```sh
-sudo ./qseecom-cli keymaster64 0x205 02000000 256
-```
-
-(`02000000` = les 4 octets après l'ancien faux « 0x205 », soit le paramètre
-`purpose` ; à ajuster si le gestionnaire attend autre chose une fois qu'on
-voit la vraie réponse).
-
 ### Rappels pratiques
 
 - Après chaque redémarrage : `sudo gpioset -z -c gpiochip6 41=1` (reset du
