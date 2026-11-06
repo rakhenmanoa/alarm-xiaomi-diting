@@ -538,26 +538,50 @@ pour n'être appelables qu'**une seule fois, en usine**, avant ce fusible :
 ce n'est pas un problème de format de requête, c'est verrouillé à vie par
 construction dès que l'appareil a quitté la chaîne de production.
 
-**Conclusion sur keymaster/`0x205` :** `GET_AUTH_TOKEN_KEY` répond
-`0xff000ffc` de façon propre et reproductible, très probablement renvoyé
-sans modification par `qsee_encapsulate_inter_app_message` (hors de portée
-du désassemblage de `keymaster64`, cf. plus haut). On ne peut pas reproduire
-la provision d'amorçage qui permettrait peut-être de contourner ça : les
-accesseurs correspondants (`SET_ROT`, `SET_BOOT_STATE`) sont bloqués à vie
-par un fusible de production, déjà soufflé. Sans le code source de
-`libcmnlib.so`/TZ, ou un moyen de faire émettre cette requête par `gfdit`
-lui-même depuis l'intérieur de TrustZone (non exploré, aucune garantie que
-ça existe), ce chemin est **bloqué**.
+**Déblocage (2026-11-06) :** l'hypothèse d'un scellement lié à l'identité du
+destinataire est confirmée. En gardant une session `gfdit` ouverte dans un
+premier terminal (`sudo ./qseecom-cli gfdit --goodix 1002 2 512`, par
+exemple, laissé en attente à l'invite « Entrée pour décharger… ») et en
+appelant `0x205` sur `keymaster64` depuis un second terminal pendant que
+`gfdit` reste chargé, la réponse n'est plus `0xff000ffc` mais **statut `0`**,
+avec un bloc complet : `[0]` statut (0), `[4]` décalage de la clé (12),
+`[8]` longueur (152 = `0x98`), puis 152 octets de clé HMAC **scellée** pour
+`gfdit`. TrustZone résout donc la cible du scellement en cherchant, au moment
+de l'appel, une appli actuellement chargée dont l'identité correspond à
+`gfdit` — et non par un mécanisme hors de portée côté Linux.
+
+`qseecom-cli` sait maintenant faire ça seul : quand la cible est `gfdit` et
+que des commandes `--goodix` sont passées, il ouvre d'abord une session sur
+`keymaster64` (sur le même fd client, donc sans décharger `gfdit`), envoie
+`0x205`, et réutilise le bloc scellé obtenu à la place de la fausse clé de
+test pour la commande `1000/10` (`GF_CMD_AUTH_SET_HMAC_KEY`) — avec repli sur
+la clé de test (rejetée, statut 1012) si `keymaster64` ne répond pas statut 0
+(par exemple si `gfdit` n'est pas chargé par ailleurs).
+
+Limite qui reste entière : ce scellement garde la clé HMAC **en clair**
+opaque au code Linux — c'est tout son but. Obtenir que `gfdit` accepte le
+bloc réel (`1000/10` → statut 0) confirmerait la mécanique de bout en bout,
+mais ne donne pas la valeur de la clé elle-même, nécessaire pour signer
+`hw_auth_token_t` côté Linux lors de l'enrôlement (`1000/3`). Sans la valeur
+en clair, `gf_make_hat()` ne peut pas produire une signature que `gfdit`
+validera après avoir lui-même décapsulé la vraie clé.
 
 ### Prochaines étapes
 
-1. Reconnaissance **côté Linux** à partir des images brutes (SourceAFIS/NBIS),
-   avec `gf-image.py` et la capture `1002/3` mode 7 — chemin déjà entièrement
-   débloqué (voir « Récapitulatif » plus haut) : c'est la voie à suivre.
-2. Piste non explorée, plus incertaine : chercher dans `libgf_hal.so`/`gfdit`
-   un chemin de commande qui ferait émettre la demande de clé par `gfdit`
-   lui-même (depuis l'intérieur de TrustZone, avec sa propre identité),
-   plutôt que de la synthétiser depuis Linux.
+1. Vérifier que `gfdit` accepte le bloc scellé réel via `1000/10` (statut 0
+   au lieu de 1012), avec `keymaster64` chargé en parallèle — confirme la
+   mécanique complète côté `gfdit`, sans lever la limite ci-dessus.
+2. Si `1000/10` réussit mais que l'enrôlement reste bloqué par la signature
+   HMAC inconnue : reconnaissance **côté Linux** à partir des images brutes
+   (SourceAFIS/NBIS), avec `gf-image.py` et la capture `1002/3` mode 7 —
+   chemin déjà entièrement débloqué (voir « Récapitulatif » plus haut) : ça
+   reste la voie de repli la plus sûre pour aboutir sans dépendre de la clé
+   HMAC d'Android.
+3. Piste non explorée : chercher si `gfdit`/`libgf_hal.so` expose un chemin
+   de commande qui ferait émettre *et utiliser* la clé par `gfdit` lui-même
+   (signature du jeton d'authentification à l'intérieur de TrustZone, sans
+   jamais exposer la clé à Linux) — cohérent avec le modèle Android normal,
+   mais pas encore localisé dans le désassemblage de `gfdit`.
 
 ### Rappels pratiques
 

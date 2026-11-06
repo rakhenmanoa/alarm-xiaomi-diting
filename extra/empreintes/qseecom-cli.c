@@ -184,6 +184,78 @@ static int send_cmd(int fd, uint32_t session, const char *hex, size_t rsp_len)
 static bool carveout;
 
 /*
+ * Clé HMAC scellée pour gfdit, obtenue de keymaster64 (0x205) tant que gfdit
+ * est lui-même chargé en TrustZone : voir fetch_km_hmac_key() et le README
+ * (section « Déblocage keymaster/0x205 »). 12 + longueur octets (statut,
+ * décalage, longueur, puis la clé scellée), à recopier tels quels à l'octet
+ * [28] de la commande 1000/10. NULL si l'appel échoue : la clé de test sert
+ * alors de repli, mais sera rejetée par gfdit (statut 1012).
+ */
+static uint8_t *km_hmac_key;
+static size_t km_hmac_len;
+
+/*
+ * Ouvre une session sur keymaster64 (sur le même fd client que gfdit, donc
+ * en gardant gfdit chargé en parallèle) et envoie 0x205 (GET_AUTH_TOKEN_KEY).
+ * TrustZone ne scelle le résultat pour gfdit que si gfdit est actuellement
+ * chargé : sans ça, la commande renvoie un statut non nul (0xff000ffc
+ * observé) sans erreur de transport.
+ */
+static uint8_t *fetch_km_hmac_key(int fd, size_t *out_len)
+{
+	struct {
+		struct tee_ioctl_invoke_arg arg;
+		struct tee_ioctl_param p[2];
+	} b;
+	struct tee_ioctl_buf_data bd = { .buf_ptr = (uintptr_t)&b, .buf_len = sizeof(b) };
+	static const uint8_t req[] = { 0x05, 0x02, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00 };
+	size_t req_len = 64, rsp_len = 256;
+	struct shm s;
+	uint32_t km_sess;
+	uint32_t *r;
+	size_t len;
+	uint8_t *out;
+
+	printf("  keymaster64 : récupération de la clé HMAC pour gfdit (0x205)\n");
+	if (open_by_name(fd, "keymaster64", &km_sess)) {
+		fprintf(stderr, "  keymaster64 : session refusée, clé HMAC réelle indisponible\n");
+		return NULL;
+	}
+	if (shm_alloc(fd, req_len + rsp_len, &s))
+		return NULL;
+	memcpy(s.va, req, sizeof(req));
+
+	memset(&b, 0, sizeof(b));
+	b.arg.session = km_sess;
+	b.arg.num_params = 2;
+	b.p[0].attr = TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_INPUT;
+	b.p[0].b = req_len;
+	b.p[0].c = s.id;
+	b.p[1].attr = TEE_IOCTL_PARAM_ATTR_TYPE_MEMREF_OUTPUT;
+	b.p[1].a = req_len;
+	b.p[1].b = rsp_len;
+	b.p[1].c = s.id;
+	if (ioctl(fd, TEE_IOC_INVOKE, &bd)) {
+		fprintf(stderr, "  keymaster64 0x205 : %s\n", strerror(errno));
+		return NULL;
+	}
+	r = (uint32_t *)(s.va + req_len);
+	if (r[0] != 0) {
+		fprintf(stderr, "  keymaster64 0x205 : statut 0x%x, gfdit n'est "
+			"probablement pas chargé ; clé HMAC réelle indisponible\n", r[0]);
+		return NULL;
+	}
+	len = r[2];
+	out = malloc(12 + len);
+	if (!out)
+		return NULL;
+	memcpy(out, s.va + req_len, 12 + len);
+	*out_len = len;
+	printf("  clé HMAC obtenue de keymaster64 (%zu octets scellés)\n", len);
+	return out;
+}
+
+/*
  * Jeton d'authentification matériel (hw_auth_token_t d'Android, 69 octets)
  * pour ouvrir une session d'enrôlement (1000/3). Signé en HMAC-SHA256 avec la
  * clé que nous avons donnée à l'appli par 1000/10 (32 × 0x5a).
@@ -338,7 +410,9 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 	 * [28], la réponse de keymaster64 à la commande 0x205 (statut, offset de
 	 * la clé, longueur, puis la clé). On y met une clé de test de 32 octets.
 	 */
-	if (target == 1000 && cmd == 10 && size >= 28 + 12 + 32) {
+	if (target == 1000 && cmd == 10 && km_hmac_key && size >= 28 + 12 + km_hmac_len) {
+		memcpy(data.va + 28, km_hmac_key, 12 + km_hmac_len);
+	} else if (target == 1000 && cmd == 10 && size >= 28 + 12 + 32) {
 		d[7] = 0;	/* [28] statut keymaster */
 		d[8] = 12;	/* [32] offset de la clé, depuis [28] */
 		d[9] = 32;	/* [36] longueur */
@@ -569,6 +643,9 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	printf("appli chargée et session ouverte\n");
+
+	if (goodix && !strcmp(argv[1], "gfdit"))
+		km_hmac_key = fetch_km_hmac_key(cli, &km_hmac_len);
 
 	if (goodix)
 		for (int i = 3; i + 2 < argc; i += 3) {
