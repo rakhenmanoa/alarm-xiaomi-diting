@@ -3,3 +3,4 @@ out/
 device-data/
 files/authorized_keys
 __pycache__/
+__pycache__/
