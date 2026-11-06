@@ -35,9 +35,11 @@ Bloqué, par conception, pas par un oubli :
 ## Prochaines étapes
 
 1. **Reconnaissance côté Linux**, indépendante d'Android, à partir des
-   images brutes (SourceAFIS/NBIS) — chemin déjà entièrement débloqué,
-   c'est la voie recommandée pour un lecteur d'empreintes fonctionnel sous
-   Arch Linux ARM.
+   images brutes — voie recommandée. **Amorcée dans `reco/`** (`gfreco.py`,
+   `gf-capture.sh`, voir `reco/README.md`) : chaîne complète écrite, mais
+   **non calibrée** ; il faut capturer un jeu de données (plusieurs doigts,
+   ~10 appuis chacun), lancer `gfreco.py eval`, fixer le seuil, puis
+   intégrer à fprintd.
 2. Si l'envie revient : reprendre la piste `gatekeeper` (format de requête
    propriétaire à décoder), en analyse statique uniquement avant toute
    requête réelle sur le téléphone.
