@@ -447,3 +447,64 @@ algo, temps de pose ; HBM local sous le capteur (patch 0923, fichier
 
 Bloqué : enrôlement/reconnaissance, qui exigent la chaîne keymaster/gatekeeper
 (ci-dessus). L'imagerie du capteur, elle, est entièrement accessible.
+
+## Reprise du travail (état au 2026-11-06)
+
+Point d'entrée pour une nouvelle session : lire ce fichier en entier, puis
+`scoreboard.md` et `docs/pieges.md`.
+
+### Consignes de travail de Fanasina
+
+- Répondre toujours en **français**.
+- Donner les commandes **une par une**, pas de script tout fait.
+- Pousser chaque étape dans le dépôt, avec les pieds de commit
+  `Co-Authored-By: Claude … <noreply@anthropic.com>` et
+  `Claude-Session: <lien de la session>`.
+- Ne **jamais** publier de blob propriétaire (TA `.mbn`, HAL, partitions
+  extraites) ni les images d'empreintes de Fanasina.
+
+### Où on en est sur keymaster
+
+Objectif : savoir si la clé HMAC de `gfdit` (bloc inter-applications fourni
+par keymaster64, commande `0x205`, requête `05 02 00 00 02 00 00 00`,
+réponse de 256 octets) peut être obtenue sous Linux. Constat : keymaster64
+répond `0xff000ffc` à cette commande.
+
+Image du TA : elle n'est **pas** dans `/usr/lib/firmware` (pas de
+`keymaster64.mdt`) ; elle est dans la partition `keymaster_a` (et `_b`) :
+
+```sh
+sudo dd if=/dev/disk/by-partlabel/keymaster_a of=$HOME/keymaster_a.img bs=1M status=none
+head -c 4 ~/keymaster_a.img | xxd     # attendu : 7f45 4c46 (ELF)
+```
+
+Si l'en-tête n'est pas un ELF, chercher l'ELF dedans (`grep -obUaP '\x7fELF'`)
+puis le découper. Si c'est un `.mdt`+segments, `mbn-reassemble.py`.
+
+### Prochaines étapes
+
+1. Récupérer `keymaster_a.img`, le désassembler (méthode utilisée pour
+   `gfdit.mbn` : `llvm-objdump`/`objdump` aarch64 + table de symboles), lire
+   le gestionnaire de `0x205` et comprendre l'origine de `0xff000ffc`
+   (clé partagée ISharedSecret, graine posée au démarrage d'Android ?).
+2. Si la clé est calculable sous Linux : suivre le chemin officiel
+   (keymaster + gatekeeper + RPMB, voir plus haut).
+3. Sinon : reconnaissance **côté Linux** à partir des images brutes
+   (SourceAFIS/NBIS), avec `gf-image.py` et la capture `1002/3` mode 7.
+
+### Rappels pratiques
+
+- Après chaque redémarrage : `sudo gpioset -z -c gpiochip6 41=1` (reset du
+  capteur), sinon 1012/2038 sur les commandes d'usine.
+- Chargement de `gfdit` : ~15 Mo contigus ; si « Cannot allocate memory »,
+  redémarrer ou ajouter `cma=128M` à `/etc/diting/cmdline`.
+- Changement d'initramfs ou de DT : `mkinitcpio -P` **puis**
+  `diting-install-bootimg` (les deux).
+- Nettoyages en attente : retirer `clk_ignore_unused pd_ignore_unused` de
+  `/etc/diting/cmdline` ; installer le noyau pkgrel 28 et supprimer les
+  modules d'essai de `/usr/lib/modules/$(uname -r)/updates/`.
+- Autres chantiers ouverts, sans lien : recharge limitée (retest 50–70 %),
+  HBM global (patch 0917), Bluetooth HFP, FSA4480 (casque USB-C), NFC,
+  ISP/JPEG, GPS (journaux F3 du modem).
+- Matériel non publiable (hors dépôt, à refaire depuis le téléphone) :
+  `gfdit.mbn`, `libgf_hal.so`, désassemblages, partition keymaster.
