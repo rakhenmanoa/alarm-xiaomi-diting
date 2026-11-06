@@ -613,6 +613,39 @@ découverte reste utile : elle confirme que toute la chaîne de confiance
 comme prévu par Qualcomm/Android, ce qui clôt proprement cette
 investigation.
 
+### Piste `gatekeeper` (2026-11-06) : comment Android contourne ce mur
+
+Sur Android, la signature n'est jamais calculée par du code non-TrustZone :
+pour l'enrôlement, Android fait vérifier le mot de passe par **`gatekeeper`**,
+qui possède son propre exemplaire du secret partagé (obtenu par le même
+scellement `keymaster64`), et c'est lui qui produit le `hw_auth_token_t`
+signé. Piste : si on peut faire ça nous-mêmes (enrôler un mot de passe de
+test, puis le faire vérifier), on obtiendrait peut-être un jeton signé avec
+le même secret que `gfdit`, sans jamais connaître la clé.
+
+Sur cet appareil, `gatekeeper` n'est pas une TA séparée : ses chaînes
+(`GK_ENROLL`, `GK_VERIFY`, `verify_password`, `deserializeEnroll`,
+`deserializeVerify`) sont **intégrées dans `keymaster64` lui-même**. Table
+de commandes de `keymaster64` entièrement extraite (86 entrées, via le
+`HASH`/`SYMTAB` du segment `DYNAMIC`, offset `0x526b0`) : les commandes
+`0x21001`–`0x21004` (gestionnaires `0x4a20`, `0x54a8`, `0x5818`, `0x58c4`)
+sont les bonnes — `0x21001` (`GK_ENROLL`) appelle en confirmé la fonction
+qui référence `deserializeEnroll` (`0x2211c`).
+
+Mur rencontré : le format de la requête n'est ni du AOSP GateKeeper brut, ni
+du protobuf — c'est le format interne propriétaire de Qualcomm pour passer
+des objets structurés à travers la frontière TA (un lecteur avec un nombre
+magique `0xb00f` à l'offset `0x18`, validé avant de lire le moindre champ).
+Le décoder entièrement depuis le désassemblage (sans aucune documentation
+publique) serait un chantier bien plus lourd que tout le reste de cette
+investigation, pour un résultat encore incertain à ce stade (on ne sait pas
+si `gatekeeper` dérive le même secret que `gfdit`, seulement qu'il passe par
+le même mécanisme de scellement). Analyse arrêtée ici par prudence, avant
+toute tentative d'appel réel : `GK_ENROLL` écrit vraisemblablement dans le
+stockage sécurisé persistant (`qsee_sfs_write`), contrairement à tout ce
+qu'on a essayé jusqu'ici — à reprendre uniquement avec un format de requête
+bien compris, pas par essais-erreurs.
+
 ### Prochaines étapes
 
 1. Reconnaissance **côté Linux**, indépendante d'Android, à partir des
@@ -620,6 +653,10 @@ investigation.
    `1002/3` mode 7 — chemin déjà entièrement débloqué (voir
    « Récapitulatif » plus haut) : c'est la voie à suivre pour un lecteur
    d'empreintes fonctionnel sous Arch Linux ARM.
+2. Si l'envie revient de creuser `gatekeeper` : décoder le format « QList »
+   de Qualcomm (nombre magique `0xb00f`) en partant de `0x3fe30` (init du
+   lecteur) et `0x3fe88`/`0x4141c` (lecture d'un champ), avant toute requête
+   réelle sur le téléphone.
 
 ### Rappels pratiques
 
