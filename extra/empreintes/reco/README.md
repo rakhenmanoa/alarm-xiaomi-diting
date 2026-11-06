@@ -64,6 +64,13 @@ Jeu : `ref.bin` + `index/` ×10 + `majeur/` ×10 (même personne).
 | Recherche étroite (±8 px, ±8°) | EER 46–58 % |
 | `diag` : classement par moyenne du doigt | 13/20 (hasard 10/20) |
 
+Second jeu (40 captures, 2 doigts × 20 appuis, même méthode) : `eval` EER
+**47,2 %**, `diag` 27/40 (hasard 20/40) ; énergie propre à chaque doigt 115
+contre 3943 de variabilité d'un appui à l'autre. Retirer le mode commun par
+projection (1 à 8 composantes, estimées sur l'autre moitié des captures)
+donne un EER de 49–52 % : même verdict. Le signal propre au doigt existe à
+peine (27/40 est un peu au-dessus du hasard) et reste noyé.
+
 Ce qui est établi :
 
 - Le signal est **reproductible dans une même capture** (corrélation 0,99
@@ -86,6 +93,18 @@ d'usine `1003/21` (5 trames, une pose, ratio à une référence sans doigt) ne
 suffit pas.
 
 ## Pistes (par ordre de rentabilité)
+
+0. **Essai physique, sans code** : doigt légèrement humide, appui franc et
+   constant (un doigt sec ou un appui léger donne peu de contraste de
+   crêtes sur un capteur optique). Refaire une série de 10 appuis par doigt,
+   puis `diag`. Aussi : pose 100 au lieu de 50.
+
+Note : `1002/3` (capture normale) ne renvoie qu'un **statut** (40 octets) ;
+l'image corrigée reste dans la TA et n'alimente que `1001/x` (algo). Elle
+n'est donc pas lisible directement depuis Linux ; seules les commandes
+d'usine `1003/…` rendent des pixels. La piste 1 ci-dessous suppose d'en
+trouver une qui renvoie l'image traitée (`1003/38` « localAreaSample »,
+20544 octets, à examiner).
 
 1. **Capture normale `1002/3` (mode 7)**, celle du HAL Android : le pilote
    l'a débloquée, ses images ont une chaîne de correction propre à Goodix
