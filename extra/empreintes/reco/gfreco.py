@@ -214,9 +214,14 @@ def fuse(ncc, mscore):
     return 0.5 * ncc + 0.5 * mscore
 
 
-def compare(fa, ma, ta, tm):
+def compare(fa, ma, ta, tm, mna=None, mnb=None):
+    """mna / mnb : minuties déjà extraites (sinon recalculées : lent)."""
     ncc = max(match(fa, ma, ta, tm)[0], 0.0)
-    ms = match_min(minutiae(fa, ma), minutiae(ta, tm))[0]
+    if mna is None:
+        mna = minutiae(fa, ma)
+    if mnb is None:
+        mnb = minutiae(ta, tm)
+    ms = match_min(mna, mnb)[0]
     return fuse(ncc, ms), ncc, ms
 
 
@@ -226,11 +231,11 @@ def need_ref():
     return np.load(ref_path())
 
 
-def put(name, k, f, m):
+def put(name, k, f, m, mn):
     d = os.path.join(DB, name)
     os.makedirs(d, mode=0o700, exist_ok=True)
     p = os.path.join(d, f'{k}.npz')
-    np.savez_compressed(p, f=f, m=m)
+    np.savez_compressed(p, f=f, m=m, mn=mn)
     os.chmod(p, 0o600)
 
 
@@ -243,7 +248,7 @@ def templates(name=None):
         if os.path.isdir(d) and (name is None or n == name):
             for f in sorted(os.listdir(d)):
                 z = np.load(os.path.join(d, f))
-                out.append((n, z['f'], z['m']))
+                out.append((n, z['f'], z['m'], z['mn']))
     return out
 
 
@@ -262,14 +267,16 @@ def main():
         for k, p in enumerate(a[2:]):
             f, m = features(p, ref)
             n = len(templates(a[1]))
-            put(a[1], n, f, m)
-            print(f'{p} -> modèle {n} de « {a[1]} » ({len(minutiae(f, m))} minuties)')
+            mn = minutiae(f, m)
+            put(a[1], n, f, m, mn)
+            print(f'{p} -> modèle {n} de « {a[1]} » ({len(mn)} minuties)')
     elif cmd == 'verify':
         ref = need_ref()
         f, m = features(a[1], ref)
+        mn = minutiae(f, m)
         best = ('', -1.0, 0, 0)
-        for n, t, tm in templates(a[2] if len(a) > 2 else None):
-            s, ncc, ms = compare(f, m, t, tm)
+        for n, t, tm, tmn in templates(a[2] if len(a) > 2 else None):
+            s, ncc, ms = compare(f, m, t, tm, mn, tmn)
             if s > best[1]:
                 best = (n, s, ncc, ms)
         ok = best[1] >= THRESH
@@ -280,12 +287,16 @@ def main():
         ref = need_ref()
         fa, ma = features(a[1], ref)
         fb, mb = features(a[2], ref)
-        s, ncc, ms = compare(fa, ma, fb, mb)
+        s, ncc, ms = compare(fa, ma, fb, mb, minutiae(fa, ma), minutiae(fb, mb))
         print(f'score {s:.3f} (corrélation {ncc:.3f}, minuties {ms:.3f})')
     elif cmd == 'eval':
         evaluate(a[1])
     else:
         sys.exit(__doc__)
+
+
+def _cmp(a, b):
+    return compare(a[0], a[1], b[0], b[1], a[2], b[2])[0]
 
 
 def evaluate(root):
@@ -295,19 +306,22 @@ def evaluate(root):
     for d in sorted(os.listdir(root)):
         p = os.path.join(root, d)
         if os.path.isdir(p):
-            data[d] = [features(os.path.join(p, f), ref)
-                       for f in sorted(os.listdir(p)) if f.endswith('.bin')]
+            data[d] = []
+            for f in sorted(os.listdir(p)):
+                if f.endswith('.bin'):
+                    x, m = features(os.path.join(p, f), ref)
+                    data[d].append((x, m, minutiae(x, m)))
     gen, imp = [], []
     names = list(data)
     for i, n in enumerate(names):
         for x in range(len(data[n])):
             for y in range(len(data[n])):
                 if x < y:
-                    gen.append(compare(*data[n][x], *data[n][y])[0])
+                    gen.append(_cmp(data[n][x], data[n][y]))
         for m in names[i + 1:]:
             for fa in data[n]:
                 for fb in data[m]:
-                    imp.append(compare(*fa, *fb)[0])
+                    imp.append(_cmp(fa, fb))
     if not gen or not imp:
         sys.exit('il faut au moins 2 captures par doigt et 2 doigts')
     gen, imp = np.array(gen), np.array(imp)
