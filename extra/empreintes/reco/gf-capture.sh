@@ -12,7 +12,8 @@ UH=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)
 CLI=${QSECOMCLI:-$UH/qseecom-cli}
 HBM=$(ls /sys/devices/platform/*/*/local_hbm /sys/devices/platform/*/*/*/local_hbm 2>/dev/null | head -1)
 [ -n "$HBM" ] || { echo "local_hbm introuvable (patch 0923 installé ?)" >&2; exit 1; }
-gpioset -z -c gpiochip6 41=1          # reset du capteur (à refaire après chaque démarrage)
+# reset du capteur ; « busy » = un gpioset précédent tient déjà la ligne à 1
+gpioset -z -c gpiochip6 41=1 2>/dev/null || true
 TMP=$(mktemp -d)
 trap 'echo 0 > "$HBM"; rm -rf "$TMP"' EXIT
 echo 1 > "$HBM"
