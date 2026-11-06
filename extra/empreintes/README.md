@@ -463,34 +463,63 @@ Point d'entrée pour une nouvelle session : lire ce fichier en entier, puis
 - Ne **jamais** publier de blob propriétaire (TA `.mbn`, HAL, partitions
   extraites) ni les images d'empreintes de Fanasina.
 
-### Où on en est sur keymaster
+### Où on en est sur keymaster (2026-11-06)
 
 Objectif : savoir si la clé HMAC de `gfdit` (bloc inter-applications fourni
 par keymaster64, commande `0x205`, requête `05 02 00 00 02 00 00 00`,
 réponse de 256 octets) peut être obtenue sous Linux. Constat : keymaster64
 répond `0xff000ffc` à cette commande.
 
-Image du TA : elle n'est **pas** dans `/usr/lib/firmware` (pas de
-`keymaster64.mdt`) ; elle est dans la partition `keymaster_a` (et `_b`) :
+`keymaster_a.img` (partition `keymaster_a`, ELF64 PIE, pas de `.mdt` à
+recomposer) désassemblé. C'est une vraie appli GP TA (point d'entrée
+`CElfFile_invoke`, protocole ouverture/fermeture de session + invoke
+standard), contrairement à `gfdit` qui répond aux commandes « à l'ancienne ».
+Sa table de commandes (86 entrées, lue dans le binaire, avec une table
+commande→nom intégrée pour ses propres journaux) confirme `0x205 →
+GET_AUTH_TOKEN_KEY`, gestionnaire à l'offset `0x1753c` : il valide un tag
+« purpose » dans la requête puis appelle `qsee_encapsulate_inter_app_message`
+pour sceller la clé à renvoyer. La constante `0xff000ffc` **n'apparaît nulle
+part** dans ce binaire (recherche exhaustive, code et données) : l'erreur ne
+vient donc pas d'un bug dans keymaster64 lui-même.
 
-```sh
-sudo dd if=/dev/disk/by-partlabel/keymaster_a of=$HOME/keymaster_a.img bs=1M status=none
-head -c 4 ~/keymaster_a.img | xxd     # attendu : 7f45 4c46 (ELF)
-```
+Fausse piste explorée et écartée : `qseecom-cli` ne renseignait pas le champ
+`func` de l'ioctl `TEE_IOC_INVOKE`, qui porte la commande dans le protocole
+GP TEE générique. Mais le pilote réellement utilisé ici
+(`drivers/tee/qseecom/core.c`, `qseecom_tee_invoke_func`, ligne 818) **refuse
+tout `func` non nul** (`if (arg->func) return -EINVAL;`) : ce pilote ne
+transmet que deux tampons bruts à TrustZone, sans notion de commande séparée
+au niveau noyau — comme pour `gfdit`. Mettre `0x205` dans les 4 premiers
+octets de la requête hexadécimale (ce qui était fait à l'origine) est donc la
+bonne façon de faire ; `0xff000ffc` est une vraie réponse de TrustZone à
+cette requête, pas un artefact de l'outil.
 
-Si l'en-tête n'est pas un ELF, chercher l'ELF dedans (`grep -obUaP '\x7fELF'`)
-puis le découper. Si c'est un `.mdt`+segments, `mbn-reassemble.py`.
+Reste à comprendre : comment la commande encodée dans les premiers octets du
+tampon brut est traduite, à l'intérieur de TrustZone, en l'appel GP ABI que
+`CElfFile_invoke` attend (registres w1/w3, table des 86 commandes). Cette
+traduction n'est pas dans `qseecom-cli` ni dans le pilote Linux : elle doit se
+faire soit dans `libcmnlib.so` (liée par keymaster64, cf. `DT_NEEDED`), soit
+dans le runtime QSEE lui-même — donc hors de portée d'une simple commande
+`qseecom-cli`. Même contraintes observées côté noyau (`qseecom_tee_invoke_func`) :
+`num_params` doit être 2 (ou 2 + 2×k pour des adresses à corriger dans la
+requête), et la session doit porter sur l'app encore chargée (vérification
+`app_id`/`app_gen` contre une éventuelle réutilisation d'id par TZ).
 
 ### Prochaines étapes
 
-1. Récupérer `keymaster_a.img`, le désassembler (méthode utilisée pour
-   `gfdit.mbn` : `llvm-objdump`/`objdump` aarch64 + table de symboles), lire
-   le gestionnaire de `0x205` et comprendre l'origine de `0xff000ffc`
-   (clé partagée ISharedSecret, graine posée au démarrage d'Android ?).
-2. Si la clé est calculable sous Linux : suivre le chemin officiel
-   (keymaster + gatekeeper + RPMB, voir plus haut).
-3. Sinon : reconnaissance **côté Linux** à partir des images brutes
-   (SourceAFIS/NBIS), avec `gf-image.py` et la capture `1002/3` mode 7.
+1. Lire, dans `keymaster_a.img`, la partie de `CElfFile_invoke` qui traite le
+   cas « legacy » (celui qui ne passe pas par un `w3==0x1200` direct) pour
+   voir si c'est elle qui relit le `0x205` dans le tampon brut, ou si cette
+   traduction se fait plus haut (TZ, avant même d'entrer dans le binaire de
+   l'appli) — dans ce dernier cas, on ne pourra rien en dire de plus sans le
+   code source de TZ (fermé).
+2. En parallèle, confirmer empiriquement : réessayer `0x205` tel qu'envoyé à
+   l'origine (`sudo ./qseecom-cli keymaster64 0502000002000000 256`, syntaxe
+   d'avant ce correctif), et essayer d'autres valeurs du second champ
+   (`purpose`?) pour voir si `0xff000ffc` change.
+3. Si la clé reste inaccessible : suivre le chemin officiel
+   (keymaster + gatekeeper + RPMB, voir plus haut), ou reconnaissance
+   **côté Linux** à partir des images brutes (SourceAFIS/NBIS), avec
+   `gf-image.py` et la capture `1002/3` mode 7.
 
 ### Rappels pratiques
 
