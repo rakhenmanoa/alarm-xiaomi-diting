@@ -523,22 +523,41 @@ chargée et identifiée comme telle par TrustZone) ; un appel direct depuis
 Linux via le pont QSEECOM n'a pas cette identité, d'où l'échec. Reste non
 confirmé sans le code de `libcmnlib.so`/TZ (fermé).
 
+Tentative (2026-11-06) de reproduire la séquence d'amorçage de Keymaster
+avant `0x205` : `SET_ROT` (`0x201`) et `SET_BOOT_STATE` (`0x208`) existent
+bien dans la table (gestionnaires à `0xb058`/`0xac30`), tous deux réduits à
+un même accesseur interne (`0x2c408`, vérifié sans écriture permanente ni
+fusible, deux niveaux d'appel). Mais les deux répondent `-15`
+(`qseecom-cli keymaster64 010200000000000000000000 64
+08020000000000000000000000000000 64`) : ce code vient d'un contrôle commun
+(`0x16e20`), qui appelle `qsee_is_sw_fuse_blown(index=1)` (lecture pure, sans
+risque) et refuse si **le fusible n°1 est déjà soufflé** — ce qui est
+pratiquement certain sur un téléphone sorti d'usine (fusible de type
+« provisionnement terminé »). `SET_ROT`/`SET_BOOT_STATE` sont donc conçus
+pour n'être appelables qu'**une seule fois, en usine**, avant ce fusible :
+ce n'est pas un problème de format de requête, c'est verrouillé à vie par
+construction dès que l'appareil a quitté la chaîne de production.
+
+**Conclusion sur keymaster/`0x205` :** `GET_AUTH_TOKEN_KEY` répond
+`0xff000ffc` de façon propre et reproductible, très probablement renvoyé
+sans modification par `qsee_encapsulate_inter_app_message` (hors de portée
+du désassemblage de `keymaster64`, cf. plus haut). On ne peut pas reproduire
+la provision d'amorçage qui permettrait peut-être de contourner ça : les
+accesseurs correspondants (`SET_ROT`, `SET_BOOT_STATE`) sont bloqués à vie
+par un fusible de production, déjà soufflé. Sans le code source de
+`libcmnlib.so`/TZ, ou un moyen de faire émettre cette requête par `gfdit`
+lui-même depuis l'intérieur de TrustZone (non exploré, aucune garantie que
+ça existe), ce chemin est **bloqué**.
+
 ### Prochaines étapes
 
-1. Si on veut confirmer/réfuter l'hypothèse d'identité : essayer d'obtenir
-   l'appel « légitime » en laissant **gfdit lui-même**, chargé en TZ,
-   déclencher sa propre demande de clé (plutôt que de la synthétiser depuis
-   Linux) — par exemple en trouvant, dans `libgf_hal.so`/`gfdit`, un chemin de
-   commande qui force `gf_decapsulate_key` sans passer par le keymaster
-   complet d'Android (risque : aucune garantie que ça existe).
-2. Sinon, accepter le blocage et basculer sur la reconnaissance **côté
-   Linux** à partir des images brutes (SourceAFIS/NBIS), avec `gf-image.py`
-   et la capture `1002/3` mode 7 — chemin déjà entièrement débloqué (voir
-   « Récapitulatif » plus haut).
-3. Piste annexe, moins prioritaire : essayer d'autres valeurs du second champ
-   de la requête (le tag « purpose », `02 00 00 00` ici) pour voir si
-   `0xff000ffc` change de valeur selon ce qu'on demande — utile seulement si
-   on veut affiner l'hypothèse ci-dessus avant de trancher.
+1. Reconnaissance **côté Linux** à partir des images brutes (SourceAFIS/NBIS),
+   avec `gf-image.py` et la capture `1002/3` mode 7 — chemin déjà entièrement
+   débloqué (voir « Récapitulatif » plus haut) : c'est la voie à suivre.
+2. Piste non explorée, plus incertaine : chercher dans `libgf_hal.so`/`gfdit`
+   un chemin de commande qui ferait émettre la demande de clé par `gfdit`
+   lui-même (depuis l'intérieur de TrustZone, avec sa propre identité),
+   plutôt que de la synthétiser depuis Linux.
 
 ### Rappels pratiques
 
