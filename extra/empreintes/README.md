@@ -504,22 +504,41 @@ dans le runtime QSEE lui-même — donc hors de portée d'une simple commande
 requête), et la session doit porter sur l'app encore chargée (vérification
 `app_id`/`app_gen` contre une éventuelle réutilisation d'id par TZ).
 
+Confirmé par le test (2026-11-06) : `sudo ./qseecom-cli keymaster64
+0502000002000000 256` répond `ret=0x0 origine=0` (transport TrustZone/noyau
+sans erreur) avec, dans la réponse, `fc 0f 00 ff` suivi de zéros — soit
+`0xff000ffc` en petit-boutiste dans les 4 premiers octets du tampon de
+sortie. C'est un statut écrit par l'appli elle-même (même convention que
+`gfdit` : `[0]` = résultat), pas une erreur de transport : la commande est
+bien arrivée à `GET_AUTH_TOKEN_KEY`, qui a répondu proprement par un échec.
+
+Comme `0xff000ffc` n'est écrit nulle part dans le binaire de `keymaster64`
+sous forme de constante, ce n'est pas davantage un code d'erreur propre au
+gestionnaire de `0x205` : ça ressemble à une valeur de retour propagée sans
+modification depuis `qsee_encapsulate_inter_app_message` (l'appel externe,
+dans `libcmnlib.so`/le runtime QSEE, que ce gestionnaire effectue pour
+sceller la clé). Hypothèse la plus probable : ce scellement est lié à
+l'identité de l'appelant (il doit cibler une appli précise, `gfdit`, encore
+chargée et identifiée comme telle par TrustZone) ; un appel direct depuis
+Linux via le pont QSEECOM n'a pas cette identité, d'où l'échec. Reste non
+confirmé sans le code de `libcmnlib.so`/TZ (fermé).
+
 ### Prochaines étapes
 
-1. Lire, dans `keymaster_a.img`, la partie de `CElfFile_invoke` qui traite le
-   cas « legacy » (celui qui ne passe pas par un `w3==0x1200` direct) pour
-   voir si c'est elle qui relit le `0x205` dans le tampon brut, ou si cette
-   traduction se fait plus haut (TZ, avant même d'entrer dans le binaire de
-   l'appli) — dans ce dernier cas, on ne pourra rien en dire de plus sans le
-   code source de TZ (fermé).
-2. En parallèle, confirmer empiriquement : réessayer `0x205` tel qu'envoyé à
-   l'origine (`sudo ./qseecom-cli keymaster64 0502000002000000 256`, syntaxe
-   d'avant ce correctif), et essayer d'autres valeurs du second champ
-   (`purpose`?) pour voir si `0xff000ffc` change.
-3. Si la clé reste inaccessible : suivre le chemin officiel
-   (keymaster + gatekeeper + RPMB, voir plus haut), ou reconnaissance
-   **côté Linux** à partir des images brutes (SourceAFIS/NBIS), avec
-   `gf-image.py` et la capture `1002/3` mode 7.
+1. Si on veut confirmer/réfuter l'hypothèse d'identité : essayer d'obtenir
+   l'appel « légitime » en laissant **gfdit lui-même**, chargé en TZ,
+   déclencher sa propre demande de clé (plutôt que de la synthétiser depuis
+   Linux) — par exemple en trouvant, dans `libgf_hal.so`/`gfdit`, un chemin de
+   commande qui force `gf_decapsulate_key` sans passer par le keymaster
+   complet d'Android (risque : aucune garantie que ça existe).
+2. Sinon, accepter le blocage et basculer sur la reconnaissance **côté
+   Linux** à partir des images brutes (SourceAFIS/NBIS), avec `gf-image.py`
+   et la capture `1002/3` mode 7 — chemin déjà entièrement débloqué (voir
+   « Récapitulatif » plus haut).
+3. Piste annexe, moins prioritaire : essayer d'autres valeurs du second champ
+   de la requête (le tag « purpose », `02 00 00 00` ici) pour voir si
+   `0xff000ffc` change de valeur selon ce qu'on demande — utile seulement si
+   on veut affiner l'hypothèse ci-dessus avant de trancher.
 
 ### Rappels pratiques
 
