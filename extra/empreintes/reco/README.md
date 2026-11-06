@@ -4,9 +4,10 @@
 Ce dossier contourne le problème : on ne garde de `gfdit` que **l'image brute**
 du capteur, et la reconnaissance se fait entièrement sous Linux.
 
-**État (2026-11-06) : chaîne complète écrite, mais NON calibrée.** Voir
-« Limites » : les seules captures disponibles (un seul doigt, poses d'usine
-20/50, pas encore de capture 1002/3) ne permettent pas de fixer un seuil fiable.
+**État (2026-11-06, soir) : chaîne complète écrite, mais elle ne sépare pas les
+doigts avec la capture actuelle.** Mesure sur 20 captures réelles (2 doigts ×
+10 appuis, pose 50, `gf-capture.sh`) : EER ≈ **47 %** (hasard = 50 %). Voir
+« Mesures et diagnostic ». Ne pas utiliser pour déverrouiller quoi que ce soit.
 
 ## Fichiers
 
@@ -49,20 +50,63 @@ sudo ./gf-capture.sh ~/doigt1.bin 50         # doigt posé sur le disque
 d'usine 50 et 100 sont acceptées par `1003/18` ; la référence et les captures
 avec doigt doivent avoir **la même pose**.
 
-## Limites (honnêtes)
+## Mesures et diagnostic (2026-11-06)
 
-- Sur les captures disponibles, les crêtes sont nettes mais le champ montre
-  surtout des **lignes parallèles** (pas de cœur ni de delta) : peu de
-  minuties (20 à 32) et une corrélation ambiguë le long des crêtes. Mesures
-  faites : même doigt à deux poses, score fusionné ≈ 0,24 ; capture sans
-  doigt contre doigt ≈ 0,16–0,18. L'écart existe mais il est mince : **le
-  seuil par défaut (0,30) refuserait ces captures authentiques**.
-- Aucune mesure d'imposteur réel (un seul doigt disponible). Le taux de faux
-  accepts est donc inconnu. **Ne pas utiliser pour déverrouiller quoi que ce
-  soit** avant d'avoir lancé `eval`.
+Jeu : `ref.bin` + `index/` ×10 + `majeur/` ×10 (même personne).
+
+| Mesure | Résultat |
+|---|---|
+| `eval`, version d'origine | authentiques 0,265 / imposteurs 0,258, **EER 47 %** |
+| Soustraction du motif commun (validation croisée) | EER ≈ 42 % |
+| Champ d'orientation seul | EER 49 % |
+| Corrélation de phase (POC) | EER 45–55 % |
+| Recherche étroite (±8 px, ±8°) | EER 46–58 % |
+| `diag` : classement par moyenne du doigt | 13/20 (hasard 10/20) |
+
+Ce qui est établi :
+
+- Le signal est **reproductible dans une même capture** (corrélation 0,99
+  entre moitiés de trames) et deux appuis consécutifs sont recalés à moins
+  de 1 px : le doigt est bien posé au même endroit.
+- Mais **47 % de l'énergie de l'image est un motif commun à tous les
+  appuis et tous les doigts** (grille du capteur mal éliminée par la
+  référence, moiré avec les pixels de la dalle) : une corrélation brute
+  donne 0,43 entre deux appuis du même doigt comme entre deux doigts.
+- Une fois ce motif retiré, la différence entre les deux doigts est
+  **17 fois plus petite** que la variabilité d'un appui à l'autre
+  (199 contre 3451). Les crêtes visibles ne sont pas reproductibles d'un appui à
+  l'autre (pression, humidité, couplage optique) ; aucun algorithme de
+  comparaison ne peut séparer ce qui n'est pas dans l'image.
+- Ne **pas** estimer le motif commun sur des images du doigt à enrôler :
+  la pose étant répétable, on retire alors les crêtes elles-mêmes.
+
+Conclusion : le problème est la **capture**, pas la comparaison. La capture
+d'usine `1003/21` (5 trames, une pose, ratio à une référence sans doigt) ne
+suffit pas.
+
+## Pistes (par ordre de rentabilité)
+
+1. **Capture normale `1002/3` (mode 7)**, celle du HAL Android : le pilote
+   l'a débloquée, ses images ont une chaîne de correction propre à Goodix
+   (éclairé / sombre, étalonnage). Mettre `gf-capture.sh` sur cette commande
+   et relancer `gfreco.py diag`.
+2. **Motif fixe dédié** : capture d'une peau sans crêtes (dos de la main,
+   avant-bras) ou d'un adhésif uniforme posé sur l'écran, à utiliser comme
+   référence à la place du « sans doigt ».
+3. Plusieurs poses d'exposition (20/50/100) moyennées ; appuis plus francs et
+   plus constants.
+4. Seulement ensuite : retoucher la comparaison (minuties plus fiables,
+   appariement par morceaux).
+
+À chaque nouvelle capture : lancer `diag` d'abord. Si le classement reste
+proche du hasard, inutile de toucher à `eval`.
+
+## Limites
+
 - Pas de détection de faux doigt (photo, silicone).
-- Pas d'intégration (fprintd, écran de verrouillage de Plasma Mobile) : à
-  faire une fois le taux d'erreur connu.
+- Pas d'intégration (fprintd, écran de verrouillage de Plasma Mobile).
+- Seuil par défaut (0,30) arbitraire, à fixer par `eval` quand le diagnostic
+  sera bon.
 
 ## Calibrer : jeu de données à capturer
 

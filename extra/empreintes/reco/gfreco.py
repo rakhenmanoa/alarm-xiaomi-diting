@@ -8,6 +8,7 @@ Dépendances : python-numpy, python-scipy, python-opencv (rien d'autre).
   gfreco.py verify CAPTURE.bin [NOM]               compare ; code retour 0 = reconnu
   gfreco.py score  A.bin B.bin                     score brut entre deux captures
   gfreco.py eval   DOSSIER                         courbes genuine/imposteur (voir README)
+  gfreco.py diag   DOSSIER                         y a-t-il un signal propre à chaque doigt ?
 
 Une capture est un fichier « GF_DUMP=… 1003 21 921640 » (voir gf-image.py).
 La base est dans $GFRECO_DIR (défaut ~/.local/share/gfreco), en 0600 : les
@@ -291,8 +292,50 @@ def main():
         print(f'score {s:.3f} (corrélation {ncc:.3f}, minuties {ms:.3f})')
     elif cmd == 'eval':
         evaluate(a[1])
+    elif cmd == 'diag':
+        diag(a[1])
     else:
         sys.exit(__doc__)
+
+
+def diag(root):
+    """Décompose l'énergie des images : motif commun, différence entre doigts,
+    variabilité d'un appui à l'autre ; classement par différence de moyennes.
+
+    Si « différence entre doigts » est petite devant « variabilité intra-doigt »
+    ou si le classement est proche du hasard, aucun algorithme de comparaison
+    ne pourra séparer les doigts : c'est la capture qu'il faut changer."""
+    ref = mean_frame(os.path.join(root, 'ref.bin'))
+    win = np.zeros((H, W), bool)
+    win[20:-20, 20:-20] = True
+    X = {}
+    for d in sorted(os.listdir(root)):
+        p = os.path.join(root, d)
+        if os.path.isdir(p):
+            X[d] = np.stack([ridge_image(os.path.join(p, f), ref)[0][win]
+                             for f in sorted(os.listdir(p)) if f.endswith('.bin')])
+    names = list(X)
+    if len(names) < 2:
+        sys.exit('il faut au moins 2 doigts')
+    M = {n: X[n].mean(0) for n in names}
+    common = np.mean([M[n] for n in names], 0)
+    print(f'énergie du motif commun à tous les doigts : {(common ** 2).sum():.0f}')
+    print(f'énergie propre à chaque doigt (moyenne − commun) : '
+          f'{np.mean([((M[n] - common) ** 2).sum() for n in names]):.0f}')
+    print(f'variabilité d\'un appui à l\'autre (même doigt) : '
+          f'{np.mean([X[n].var(0).sum() for n in names]):.0f}')
+    ok = n = 0
+    for d in names:
+        for k in range(len(X[d])):
+            best, bs = None, -1e18
+            for o in names:
+                T = np.delete(X[d], k, 0).mean(0) if o == d else M[o]
+                sc = ((X[d][k] - common) * (T - common)).sum() / np.sqrt(((T - common) ** 2).sum() + 1e-9)
+                if sc > bs:
+                    best, bs = o, sc
+            ok += best == d
+            n += 1
+    print(f'classement leave-one-out par moyenne du doigt : {ok}/{n} (hasard ≈ {n // len(names)}/{n})')
 
 
 def _cmp(a, b):

@@ -35,11 +35,12 @@ Bloqué, par conception, pas par un oubli :
 ## Prochaines étapes
 
 1. **Reconnaissance côté Linux**, indépendante d'Android, à partir des
-   images brutes — voie recommandée. **Amorcée dans `reco/`** (`gfreco.py`,
-   `gf-capture.sh`, voir `reco/README.md`) : chaîne complète écrite, mais
-   **non calibrée** ; il faut capturer un jeu de données (plusieurs doigts,
-   ~10 appuis chacun), lancer `gfreco.py eval`, fixer le seuil, puis
-   intégrer à fprintd.
+   images brutes — voie recommandée. Chaîne écrite dans `reco/`
+   (`gfreco.py`, `gf-capture.sh`), mais **mesurée sans pouvoir séparer deux
+   doigts** avec la capture d'usine `1003/21` (EER 47 %, hasard) : la
+   variabilité d'un appui à l'autre dépasse 17 fois la différence entre
+   doigts. Prochaine étape : passer à la capture normale `1002/3` (mode 7)
+   et relancer `gfreco.py diag` (détails : `reco/README.md`).
 2. Si l'envie revient : reprendre la piste `gatekeeper` (format de requête
    propriétaire à décoder), en analyse statique uniquement avant toute
    requête réelle sur le téléphone.
