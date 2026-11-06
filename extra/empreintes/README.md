@@ -558,30 +558,41 @@ test pour la commande `1000/10` (`GF_CMD_AUTH_SET_HMAC_KEY`) — avec repli sur
 la clé de test (rejetée, statut 1012) si `keymaster64` ne répond pas statut 0
 (par exemple si `gfdit` n'est pas chargé par ailleurs).
 
+**Confirmé (2026-11-06) :** `gfdit --goodix-carveout 1000 10 284` (avec
+`keymaster64` chargé en parallèle) répond **statut `0`** — `gfdit` décapsule
+avec succès la clé réelle et l'installe comme sa clé HMAC. Il manquait
+simplement une taille totale suffisante : `gf_fpcore_set_hmac_key`
+(`gfdit.mbn`, désassemblé via `mbn-reassemble.py` + `llvm-objdump`, jamais
+publié) rejette toute requête de moins de **284 octets** (`0x11c`) avec
+`1024`, *avant même* de regarder le contenu — ce qui expliquait les échecs
+identiques avec la fausse clé et la vraie clé à `256` octets. Au-delà de ce
+seuil, `gf_set_hmac_key` (`0xd9a0`) vérifie `offset` (12) et `longueur` (152)
+contre la borne de 256 octets, puis décapsule : tout correspond à notre bloc.
+La chaîne complète (identité → scellement par `keymaster64` → décapsulation
+par `gfdit`) fonctionne donc de bout en bout, confirmée expérimentalement.
+
 Limite qui reste entière : ce scellement garde la clé HMAC **en clair**
-opaque au code Linux — c'est tout son but. Obtenir que `gfdit` accepte le
-bloc réel (`1000/10` → statut 0) confirmerait la mécanique de bout en bout,
-mais ne donne pas la valeur de la clé elle-même, nécessaire pour signer
-`hw_auth_token_t` côté Linux lors de l'enrôlement (`1000/3`). Sans la valeur
-en clair, `gf_make_hat()` ne peut pas produire une signature que `gfdit`
-validera après avoir lui-même décapsulé la vraie clé.
+opaque au code Linux — c'est tout son but. `gfdit` connaît maintenant la
+vraie clé *en interne*, mais Linux ne l'a jamais vue : `gf_make_hat()` (qui
+signe `hw_auth_token_t` avec la clé de test `0x5a`) ne peut donc pas produire
+une signature que `gfdit` validera à l'enrôlement (`1000/3`), puisque `gfdit`
+vérifiera avec la vraie clé décapsulée, pas avec `0x5a`.
 
 ### Prochaines étapes
 
-1. Vérifier que `gfdit` accepte le bloc scellé réel via `1000/10` (statut 0
-   au lieu de 1012), avec `keymaster64` chargé en parallèle — confirme la
-   mécanique complète côté `gfdit`, sans lever la limite ci-dessus.
-2. Si `1000/10` réussit mais que l'enrôlement reste bloqué par la signature
-   HMAC inconnue : reconnaissance **côté Linux** à partir des images brutes
-   (SourceAFIS/NBIS), avec `gf-image.py` et la capture `1002/3` mode 7 —
-   chemin déjà entièrement débloqué (voir « Récapitulatif » plus haut) : ça
-   reste la voie de repli la plus sûre pour aboutir sans dépendre de la clé
-   HMAC d'Android.
-3. Piste non explorée : chercher si `gfdit`/`libgf_hal.so` expose un chemin
-   de commande qui ferait émettre *et utiliser* la clé par `gfdit` lui-même
-   (signature du jeton d'authentification à l'intérieur de TrustZone, sans
-   jamais exposer la clé à Linux) — cohérent avec le modèle Android normal,
-   mais pas encore localisé dans le désassemblage de `gfdit`.
+1. Tester `1000/3` (enrôlement) avec la vraie clé installée, pour confirmer
+   que c'est bien la signature HMAC (et non autre chose) qui bloque —
+   attendu : rejet, puisque `gf_make_hat()` signe encore avec `0x5a`.
+2. Chercher dans `gfdit.mbn` (symboles déjà repérés : `gf_generate_hmac_enroll`
+   à `0xdd90`, `gf_generate_hmac_authenticate` à `0xdf58`) si un chemin de
+   commande fait calculer *et utiliser* la signature par `gfdit` lui-même
+   (à l'intérieur de TrustZone, avec la vraie clé, sans jamais l'exposer à
+   Linux) — cohérent avec le modèle Android normal, piste la plus directe
+   maintenant que `gfdit` a la bonne clé.
+3. Voie de repli si (2) n'aboutit pas : reconnaissance **côté Linux** à
+   partir des images brutes (SourceAFIS/NBIS), avec `gf-image.py` et la
+   capture `1002/3` mode 7 — chemin déjà entièrement débloqué (voir
+   « Récapitulatif » plus haut), indépendant de la clé HMAC d'Android.
 
 ### Rappels pratiques
 
