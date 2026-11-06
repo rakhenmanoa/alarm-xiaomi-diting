@@ -578,21 +578,48 @@ signe `hw_auth_token_t` avec la clé de test `0x5a`) ne peut donc pas produire
 une signature que `gfdit` validera à l'enrôlement (`1000/3`), puisque `gfdit`
 vérifiera avec la vraie clé décapsulée, pas avec `0x5a`.
 
+### Chemin TrustZone de l'enrôlement natif : exploré jusqu'au bout, bloqué
+
+Désassemblage de `gfdit.mbn` (réassemblé avec `mbn-reassemble.py`, jamais
+publié) pour chercher un moyen de faire signer le jeton par `gfdit`
+lui-même plutôt que par Linux :
+
+- `gf_fpcore_enroll` (`0x2238`) copie les 37 premiers octets du jeton reçu
+  dans un tampon local, appelle `gf_generate_hmac_enroll` (`0x2730`) pour
+  calculer le HMAC attendu, puis **compare** (octet par octet, `memcmp`
+  classique à `0xf544`, sans raccourci ni valeur magique) ce résultat à
+  l'octet `[0x65]` de la requête — l'emplacement de la signature dans
+  `hw_auth_token_t`. Échec (`1059`) si ça ne correspond pas.
+- `gf_generate_hmac_enroll` (`0xdd90` → `0xde98`) vérifie d'abord un
+  drapeau (`[0xc31505] == 1`, posé par un `1000/10` réussi), puis appelle
+  le primitif HMAC (`0x390`, importé de `libcmnlib.so`) avec la clé prise
+  à une adresse **globale interne à `gfdit`** (`[struct+0x404]`, remplie
+  par `gf_set_hmac_key` lors de la décapsulation) — jamais exposée en
+  dehors de cette zone mémoire TrustZone.
+- `SAVE_TEMPLATES` (`1000/9`, `gf_fpcore_save_template` à `0x3ed8`), qui
+  persiste un gabarit, exige un objet d'empreinte dans l'état `== 2` —
+  positionné uniquement par un `ENROLL` déjà réussi. Pas de raccourci par
+  une autre commande.
+
+**Conclusion :** le chemin est verrouillé par conception, pas par un oubli
+qu'on pourrait exploiter. `gfdit` vérifie la signature avec sa vraie clé,
+jamais avec la nôtre, et rien dans sa table de commandes ne permet de lui
+faire signer un jeton pour nous ou de contourner cette vérification. Sans
+le secret en clair — que le scellement de `keymaster64` est spécifiquement
+conçu pour ne jamais exposer à Linux — l'enrôlement natif Android
+(`hw_auth_token_t` signé) est **définitivement bloqué** sur cette voie. La
+découverte reste utile : elle confirme que toute la chaîne de confiance
+(identité → scellement → décapsulation → signature) fonctionne exactement
+comme prévu par Qualcomm/Android, ce qui clôt proprement cette
+investigation.
+
 ### Prochaines étapes
 
-1. Tester `1000/3` (enrôlement) avec la vraie clé installée, pour confirmer
-   que c'est bien la signature HMAC (et non autre chose) qui bloque —
-   attendu : rejet, puisque `gf_make_hat()` signe encore avec `0x5a`.
-2. Chercher dans `gfdit.mbn` (symboles déjà repérés : `gf_generate_hmac_enroll`
-   à `0xdd90`, `gf_generate_hmac_authenticate` à `0xdf58`) si un chemin de
-   commande fait calculer *et utiliser* la signature par `gfdit` lui-même
-   (à l'intérieur de TrustZone, avec la vraie clé, sans jamais l'exposer à
-   Linux) — cohérent avec le modèle Android normal, piste la plus directe
-   maintenant que `gfdit` a la bonne clé.
-3. Voie de repli si (2) n'aboutit pas : reconnaissance **côté Linux** à
-   partir des images brutes (SourceAFIS/NBIS), avec `gf-image.py` et la
-   capture `1002/3` mode 7 — chemin déjà entièrement débloqué (voir
-   « Récapitulatif » plus haut), indépendant de la clé HMAC d'Android.
+1. Reconnaissance **côté Linux**, indépendante d'Android, à partir des
+   images brutes (SourceAFIS/NBIS), avec `gf-image.py` et la capture
+   `1002/3` mode 7 — chemin déjà entièrement débloqué (voir
+   « Récapitulatif » plus haut) : c'est la voie à suivre pour un lecteur
+   d'empreintes fonctionnel sous Arch Linux ARM.
 
 ### Rappels pratiques
 
