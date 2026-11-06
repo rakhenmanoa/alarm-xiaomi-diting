@@ -8,7 +8,8 @@
 set -e
 OUT=${1:?usage: gf-capture.sh SORTIE.bin [POSE]}
 POSE=${2:-50}
-CLI=${QSECOMCLI:-$HOME/qseecom-cli}
+UH=$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f6)
+CLI=${QSECOMCLI:-$UH/qseecom-cli}
 HBM=$(ls /sys/devices/platform/*/*/local_hbm /sys/devices/platform/*/*/*/local_hbm 2>/dev/null | head -1)
 [ -n "$HBM" ] || { echo "local_hbm introuvable (patch 0923 installé ?)" >&2; exit 1; }
 gpioset -z -c gpiochip6 41=1          # reset du capteur (à refaire après chaque démarrage)
