@@ -12,6 +12,7 @@ doigts avec la capture actuelle.** Mesure sur 20 captures réelles (2 doigts ×
 ## Fichiers
 
 - `gf-capture.sh` : allume le HBM local, lance la capture d'usine, éteint.
+- `gf-serie.sh` : enchaîne les captures, une par Entrée, sans relancer la commande.
 - `gfreco.py` : mise à plat, amélioration des crêtes, corrélation, minuties,
   base, `ref` / `enroll` / `verify` / `score` / `eval`.
 
@@ -107,6 +108,18 @@ proche du hasard, inutile de toucher à `eval`.
 - Pas d'intégration (fprintd, écran de verrouillage de Plasma Mobile).
 - Seuil par défaut (0,30) arbitraire, à fixer par `eval` quand le diagnostic
   sera bon.
+
+## Capturer une série
+
+```sh
+sudo ./gf-serie.sh -r ~/jeu/ref.bin       # référence, sans doigt
+sudo ./gf-serie.sh ~/jeu/index 10         # 10 appuis du même doigt
+sudo ./gf-serie.sh ~/jeu/majeur 10        # autre doigt
+```
+
+À chaque invite : pose le doigt, Entrée (compte à rebours de 2 s), la capture
+part, l'invite suivante revient. `q` + Entrée termine. Relancer sur le même
+dossier continue la numérotation.
 
 ## Calibrer : jeu de données à capturer
 
