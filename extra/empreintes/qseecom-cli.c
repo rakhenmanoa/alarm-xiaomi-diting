@@ -361,6 +361,21 @@ static void gf_make_hat(uint8_t hat[69])
 }
 #define GF_CARVEOUT_SIZE 0x400000
 
+/*
+ * Tampons partagés TEE, réutilisés pour toutes les commandes d'un même
+ * processus plutôt que réalloués à chaque appel : TrustZone semble tenir,
+ * par session, une table de taille fixe des enregistrements de mémoire
+ * partagée qui ne se vide jamais avant la fermeture de la session (constaté
+ * empiriquement : le 7e gf_cmd() d'une chaîne échoue toujours au niveau de
+ * l'appel SMC lui-même — « scm call failed with error -22 » côté noyau —
+ * quelle que soit la commande concernée, même après libération explicite
+ * des tampons des appels précédents). Allouer une fois et réécrire leur
+ * contenu reste sous cette limite.
+ */
+static struct shm hdr_buf, data_buf, cv_buf;
+static bool hdr_ready, cv_ready;
+static size_t data_cap;
+
 static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 		  size_t size)
 {
@@ -368,13 +383,11 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 		struct tee_ioctl_invoke_arg arg;
 		struct tee_ioctl_param p[6];
 	} b;
-	struct shm cv;
 	struct tee_ioctl_buf_data bd = { .buf_ptr = (uintptr_t)&b, .buf_len = sizeof(b) };
 	static uint32_t seq;
 	/* Configuration du capteur rendue par 1002/2 (octets 32 à 480). */
 	static uint8_t sensor_cfg[448];
 	static bool have_cfg;
-	struct shm hdr, data;
 	uint32_t *h, *d;
 
 	/*
@@ -389,9 +402,29 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 	 */
 	size_t data_len = (size + log_size + 4095) & ~(size_t)4095;
 
-	if (size < 12 || shm_alloc(fd, 128, &hdr) ||
-	    shm_alloc(fd, data_len, &data))
+	if (size < 12)
 		return -ENOMEM;
+	if (!hdr_ready) {
+		if (shm_alloc(fd, 128, &hdr_buf))
+			return -ENOMEM;
+		hdr_ready = true;
+	} else {
+		memset(hdr_buf.va, 0, hdr_buf.size);
+	}
+	if (data_len > data_cap) {
+		if (data_cap) {
+			munmap(data_buf.va, data_buf.size);
+			close(data_buf.fd);
+		}
+		if (shm_alloc(fd, data_len, &data_buf))
+			return -ENOMEM;
+		data_cap = data_len;
+	} else {
+		memset(data_buf.va, 0, data_len);
+	}
+#define hdr hdr_buf
+#define data data_buf
+#define cv cv_buf
 	h = (uint32_t *)hdr.va;
 	d = (uint32_t *)data.va;
 	h[2] = size;		/* [8] */
@@ -505,8 +538,13 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 	b.p[3].b = data_len;
 	b.p[3].c = data.id;
 	if (carveout) {
-		if (shm_alloc(fd, GF_CARVEOUT_SIZE, &cv))
-			return -ENOMEM;
+		if (!cv_ready) {
+			if (shm_alloc(fd, GF_CARVEOUT_SIZE, &cv))
+				return -ENOMEM;
+			cv_ready = true;
+		} else {
+			memset(cv.va, 0, GF_CARVEOUT_SIZE);
+		}
 		h[10] = GF_CARVEOUT_SIZE;	/* [40] */
 		b.arg.num_params = 6;
 		b.p[4].attr = TEE_IOCTL_PARAM_ATTR_TYPE_VALUE_INPUT;
@@ -611,24 +649,15 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 		}
 	}
 	/*
-	 * Libérer les tampons de cette commande avant de revenir : sans ça,
-	 * chaque appel (y compris le tampon carveout de 4 Mo) reste enregistré
-	 * auprès de TrustZone jusqu'à la fin du processus. Sur une chaîne de
-	 * plusieurs commandes avec --goodix-carveout, ça accumule plusieurs
-	 * dizaines de Mo de tampons TEE simultanément vivants, ce qui peut
-	 * épuiser le tas sécurisé et faire échouer l'appel SMC lui-même
-	 * (qcom_scm : « scm call failed with error -22 », remonté à
-	 * l'utilisateur comme « invoke : Invalid argument »).
+	 * hdr_buf/data_buf/cv_buf sont volontairement NON libérés ici : ils
+	 * sont réutilisés par le prochain gf_cmd() de ce même processus (voir
+	 * le commentaire au-dessus de leur déclaration). Le noyau les libère
+	 * à la fermeture des descripteurs, à la sortie du processus.
 	 */
-	munmap(hdr.va, hdr.size);
-	close(hdr.fd);
-	munmap(data.va, data.size);
-	close(data.fd);
-	if (carveout) {
-		munmap(cv.va, cv.size);
-		close(cv.fd);
-	}
 	return 0;
+#undef hdr
+#undef data
+#undef cv
 }
 
 int main(int argc, char **argv)
