@@ -526,7 +526,15 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 		memcpy(&gf_challenge, data.va + 32, 8);
 		printf("  challenge : 0x%llx\n", (unsigned long long)gf_challenge);
 	}
-	if (target == 1002 && cmd == 2 && size >= 32 + sizeof(sensor_cfg) && !h[7]) {
+	/*
+	 * gf_sensor_init() tolère le code 0x3e9 (1001) comme un cas non fatal
+	 * en interne (même branche que le succès, pas de reset_flag posé) mais
+	 * le remonte quand même tel quel à l'appelant au lieu de le convertir
+	 * en 0. On met donc en cache la config dans ce cas aussi, sinon elle
+	 * ne l'est jamais et 1002/6 ne réinjecte qu'une config vide.
+	 */
+	if (target == 1002 && cmd == 2 && size >= 32 + sizeof(sensor_cfg) &&
+	    (!h[7] || h[7] == 0x3e9)) {
 		memcpy(sensor_cfg, data.va + 32, sizeof(sensor_cfg));
 		have_cfg = true;
 	}
