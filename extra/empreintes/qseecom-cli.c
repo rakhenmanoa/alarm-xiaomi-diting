@@ -610,6 +610,24 @@ static int gf_cmd(int fd, uint32_t session, uint32_t target, uint32_t cmd,
 			perror(name);
 		}
 	}
+	/*
+	 * Libérer les tampons de cette commande avant de revenir : sans ça,
+	 * chaque appel (y compris le tampon carveout de 4 Mo) reste enregistré
+	 * auprès de TrustZone jusqu'à la fin du processus. Sur une chaîne de
+	 * plusieurs commandes avec --goodix-carveout, ça accumule plusieurs
+	 * dizaines de Mo de tampons TEE simultanément vivants, ce qui peut
+	 * épuiser le tas sécurisé et faire échouer l'appel SMC lui-même
+	 * (qcom_scm : « scm call failed with error -22 », remonté à
+	 * l'utilisateur comme « invoke : Invalid argument »).
+	 */
+	munmap(hdr.va, hdr.size);
+	close(hdr.fd);
+	munmap(data.va, data.size);
+	close(data.fd);
+	if (carveout) {
+		munmap(cv.va, cv.size);
+		close(cv.fd);
+	}
 	return 0;
 }
 
