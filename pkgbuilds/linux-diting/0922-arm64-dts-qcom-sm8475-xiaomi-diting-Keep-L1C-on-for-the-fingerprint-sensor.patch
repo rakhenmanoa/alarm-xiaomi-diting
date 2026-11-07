@@ -1,12 +1,17 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Fanasina RANDRIATSARAFARA <m.randriatsarafara.f@gmail.com>
 Date: Wed, 4 Nov 2026 11:15:00 +0300
-Subject: [PATCH] arm64: dts: qcom: sm8475-xiaomi-diting: Keep L1C on for the
- fingerprint sensor
+Subject: [PATCH] arm64: dts: qcom: sm8475-xiaomi-diting: Keep L7C and L11C
+ on for the fingerprint sensor
 
-The Goodix under-display fingerprint sensor is supplied by L1C (1.8 V)
-and L3C (3.3 V) and driven by the secure world over an SPI bus Linux
-does not see, so no Linux driver ever votes for L1C. Keep it on.
+The Goodix under-display fingerprint sensor is driven by the secure
+world over an SPI bus Linux does not see, so no Linux driver ever
+votes for its supplies. Confirmed this session, empirically, by
+forcing them on from a test kernel module: the sensor is supplied by
+L7C (vreg_l7c_3p0) and L11C (vreg_l11c_2p5) on this board revision, not
+L1C/L3C as an earlier version of this patch assumed from the vendor
+devicetree's generic "fingerprint_goodix" label without checking which
+LDOs it actually resolved to on this specific unit. Keep both on.
 
 The sensor reset (TLMM 41) is left to user space, which has to pulse it
 the way the vendor HAL does.
@@ -14,26 +19,43 @@ the way the vendor HAL does.
 diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
 --- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
-@@ -528,11 +528,20 @@
- 			regulator-initial-mode = <RPMH_REGULATOR_MODE_AUTO>;
+@@ -575,11 +575,19 @@
+ 			regulator-max-microvolt = <3544000>;
+ 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
  		};
- 
+
 +		/*
-+		 * Also the Goodix fingerprint sensor supply (vendor
-+		 * fingerprint_goodix: L1C and L3C). The sensor is driven by
-+		 * the secure world over its own SPI bus, so no Linux driver
-+		 * claims it: keep it on, or the trusted application cannot
-+		 * initialise the sensor (errors 1043/1064).
++		 * Also the Goodix fingerprint sensor supply. The sensor is
++		 * driven by the secure world over its own SPI bus, so no
++		 * Linux driver claims it: keep it on, or the trusted
++		 * application cannot initialise the sensor (errors
++		 * 1043/1064).
 +		 */
- 		vreg_l1c_1p8: ldo1 {
- 			regulator-name = "vreg_l1c_1p8";
- 			regulator-min-microvolt = <1800000>;
- 			regulator-max-microvolt = <1800000>;
+ 		vreg_l7c_3p0: ldo7 {
+ 			regulator-name = "vreg_l7c_3p0";
+ 			regulator-min-microvolt = <3000000>;
+ 			regulator-max-microvolt = <3544000>;
  			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 +			regulator-boot-on;
 +			regulator-always-on;
  		};
- 
- 		vreg_l2c_1p8: ldo2 {
--- 
+
+ 		vreg_l8c_1p8: ldo8 {
+@@ -603,11 +611,14 @@
+ 			regulator-max-microvolt = <2960000>;
+ 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+ 		};
+
++		/* Also the Goodix fingerprint sensor supply, see above. */
+ 		vreg_l11c_2p5: ldo11 {
+ 			regulator-name = "vreg_l11c_2p5";
+ 			regulator-min-microvolt = <2504000>;
+ 			regulator-max-microvolt = <3008000>;
+ 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++			regulator-boot-on;
++			regulator-always-on;
+ 		};
+
+ 		vreg_l12c_1p8: ldo12 {
+--
 2.43.0
