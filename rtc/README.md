@@ -14,6 +14,7 @@ le RTC du PMIC, pourquoi il est en lecture seule, et comment l'heure est gardée
 | `pilote/rtc-pm8xxx.c` | Pilote RTC des PMIC Qualcomm, tel quel dans Linux 7.2.10 (non modifié) | `drivers/rtc/rtc-pm8xxx.c` |
 | `patches/diting-ubuntu/` | Activation du nœud `pmk8350_rtc` dans le device tree (royka1/diting-ubuntu, commit `c68ff47db947`) | `kernel/patches/0028` de diting-ubuntu |
 | `scripts/diting-rtc/` | Démon `diting-rtcd`, service systemd, règle udev, PKGBUILD | `pkgbuilds/diting-rtc/` |
+| `outils/uefivar-test.c` | Test en lecture seule de l'appli TrustZone `uefisecapp` (variables UEFI) | — |
 
 ## 1. Matériel
 
@@ -164,3 +165,43 @@ timedatectl                             # état NTP
 - Possible plus tard : retrouver dans le device tree d'Android un registre SDAM libre et passer
   au décalage géré par le noyau (`nvmem-cells`), ce qui rendrait `hwclock` utilisable. À ne faire
   qu'avec la certitude que ce registre n'est utilisé par personne.
+
+## 6. Piste : garder le décalage en TrustZone (variable UEFI `RTCInfo`)
+
+Sur les PC Snapdragon, le noyau garde le décalage dans la variable UEFI `RTCInfo`
+(GUID `882f8c2b-9646-435f-8de5-f208ff80c1bd`, propriété DT `qcom,uefi-rtc-info`). Ces variables
+sont gérées par l'appli TrustZone `qcom.tz.uefisecapp`, qui les range dans la partition
+`uefivarstore`. Le diting a les deux (`uefisecapp_a/b`, `uefivarstore`).
+
+État constaté le 2026-11-08 :
+
+- `qcom_scm` trouve QSEECOM (version `0x1402000`) mais refuse de créer l'interface du noyau :
+  `qseecom: untested machine, skipping` (liste blanche de machines, uniquement des PC) ;
+- le pilote TEE `qseecom` du patch `0918`, lui, n'est pas soumis à cette liste et peut ouvrir
+  une session sur une appli chargée par le bootloader.
+
+`outils/uefivar-test.c` utilise ce pilote TEE pour interroger `uefisecapp` **en lecture seule**
+(espace disponible, présence de `RTCInfo`, liste des variables), sans toucher au noyau :
+
+```sh
+cc -O2 -Wall -o uefivar-test rtc/outils/uefivar-test.c
+sudo ./uefivar-test
+sudo ./uefivar-test -l
+```
+
+Points à vérifier avant d'aller plus loin :
+
+1. `uefisecapp` répond-il depuis Linux ?
+2. `RTCInfo` existe-t-elle ? Sinon, `rtc-pm8xxx` avec `qcom,uefi-rtc-info` **échoue au
+   démarrage** (lecture de la variable obligatoire) : plus de RTC du tout. Il faudrait la créer
+   d'abord, ou patcher le pilote pour accepter son absence.
+3. Une écriture survit-elle au redémarrage ? Sur téléphone, l'écriture dans `uefivarstore`
+   pourrait demander un service (« listener ») côté Linux que seul Android fournit.
+4. Ensuite seulement : patch du noyau ajoutant `xiaomi,diting` à
+   `qcom_scm_qseecom_allowlist`, puis `qcom,uefi-rtc-info` sur `&pmk8350_rtc`.
+
+Sauvegarder `uefivarstore` avant toute écriture :
+
+```sh
+sudo dd if=/dev/disk/by-partlabel/uefivarstore of=uefivarstore.img
+```
