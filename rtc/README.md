@@ -12,6 +12,7 @@ le RTC du PMIC, pourquoi il est en lecture seule, et comment l'heure est gardée
 | Dossier | Contenu | Original |
 |---|---|---|
 | `pilote/rtc-pm8xxx.c` | Pilote RTC des PMIC Qualcomm, tel quel dans Linux 7.2.10 (non modifié) | `drivers/rtc/rtc-pm8xxx.c` |
+| `patches/alarm-diting/0924-…` | Inscription des listeners QSEECOM à la manière d'Android (variante smcinvoke) | `pkgbuilds/linux-diting/0924` |
 | `patches/diting-ubuntu/` | Activation du nœud `pmk8350_rtc` dans le device tree (royka1/diting-ubuntu, commit `c68ff47db947`) | `kernel/patches/0028` de diting-ubuntu |
 | `scripts/diting-rtc/` | Démon `diting-rtcd`, service systemd, règle udev, PKGBUILD | `pkgbuilds/diting-rtc/` |
 | `scripts/diting-qseecomd/` | Listener RPMB pour la TrustZone (variables UEFI persistantes) | `pkgbuilds/diting-qseecomd/` |
@@ -297,5 +298,48 @@ cd ../..
 
    Réussite : après le redémarrage, `RTCInfo` garde le décalage et « compteur + décalage »
    donne l'heure juste.
+
+### Résultats (2026-11-08)
+
+- Accès au RPMB depuis Linux : ✅ (`/dev/bsg/ufs-bsg0`, LUN RPMB `0:0:0:49476`, 32 768
+  secteurs de 512 o soit 16 Mio, 64 trames par commande ; `CONFIG_RPMB` désactivé, aucun
+  pilote du noyau ne le réclame).
+- Inscription du listener `0x2000` : refusée avec un tampon de `0x6400`, acceptée avec `0x7000`
+  (multiple de 4096 exigé).
+- **Mais `uefisecapp` n'appelle jamais le listener** : avec `0x2000` inscrit, `SetVariable`
+  sur `RTCInfo` répond tout de suite, sans aucune demande au listener, et la valeur reste en
+  mémoire. Le noyau n'a pas non plus signalé de demande pour un listener absent lors des
+  écritures précédentes.
+
+### Piste suivante : l'inscription « smcinvoke » (patch `0924`)
+
+Le pilote `qseecom` d'Android (msm, `QSEOS_REGISTER_LISTENER`) inscrit les listeners avec la
+commande **`0x06`** (`TZ_OS_REGISTER_LISTENER_SMCINVOKE_ID`) et ne se rabat sur l'ancienne
+**`0x01`** (`TZ_OS_REGISTER_LISTENER_ID`) que si la TrustZone ne la connaît pas. Le pilote du
+patch `0918` n'utilise que `0x01`. Sur une TrustZone qui gère smcinvoke, comme celle du SM8475,
+un listener inscrit à l'ancienne n'est peut-être visible que des applis qui appellent leurs
+listeners à l'ancienne, ce qui expliquerait le silence de `uefisecapp`.
+
+Le patch `0924` (`pkgbuilds/linux-diting`, copie dans `patches/alarm-diting/`) inscrit d'abord
+avec `0x06`, puis avec `0x01` si la TrustZone refuse, et journalise la méthode retenue :
+`qseecom: listener 8192 registered (smcinvoke)`.
+
+Test après installation du noyau :
+
+```sh
+sudo systemd-run --unit=qseecomd-test diting-qseecomd -v
+sudo dmesg | grep -i "qseecom: listener"
+sudo ./uefivar-test -r
+journalctl -u qseecomd-test
+sudo systemctl stop qseecomd-test
+```
+
+Si la TrustZone appelle enfin le listener, le journal montre `RPMB init` et des lectures, puis
+l'écriture refusée (lecture seule). On passe alors à `-w`.
+
+Limite connue : si l'appli répond par une demande de rappel smcinvoke
+(`QSEOS_RESULT_CBACK_REQUEST`) plutôt que par une demande de listener classique, le pilote
+`0918` ne sait pas la traiter et l'interface QSEECOM peut rester bloquée jusqu'au redémarrage
+(empreintes comprises). Rien n'est écrit dans ce cas.
 
 En attendant, le décalage reste gardé par `diting-rtc` (fichier `/var/lib/diting-rtc/offset`).
