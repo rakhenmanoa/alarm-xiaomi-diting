@@ -12,7 +12,7 @@ le RTC du PMIC, pourquoi il est en lecture seule, et comment l'heure est gardée
 | Dossier | Contenu | Original |
 |---|---|---|
 | `pilote/rtc-pm8xxx.c` | Pilote RTC des PMIC Qualcomm, tel quel dans Linux 7.2.10 (non modifié) | `drivers/rtc/rtc-pm8xxx.c` |
-| `patches/alarm-diting/0924-…` | Inscription des listeners QSEECOM à la manière d'Android (variante smcinvoke) | `pkgbuilds/linux-diting/0924` |
+| `patches/alarm-diting/0924-…` | Inscription des listeners QSEECOM à la manière d'Android (variante smcinvoke) — **retiré du noyau** (pkgrel 31), voir section 7 | — |
 | `patches/diting-ubuntu/` | Activation du nœud `pmk8350_rtc` dans le device tree (royka1/diting-ubuntu, commit `c68ff47db947`) | `kernel/patches/0028` de diting-ubuntu |
 | `scripts/diting-rtc/` | Démon `diting-rtcd`, service systemd, règle udev, PKGBUILD | `pkgbuilds/diting-rtc/` |
 | `scripts/diting-qseecomd/` | Listener RPMB pour la TrustZone (variables UEFI persistantes) | `pkgbuilds/diting-qseecomd/` |
@@ -362,7 +362,11 @@ s'en sert d'ailleurs jamais (`RTCInfo` à zéro).
 
 - `diting-qseecomd` fonctionne (accès RPMB, inscription, boucle de service) et pourra servir si
   une autre appli QSEE demande un jour le RPMB ; il n'est ni installé par défaut ni activé ;
-- le patch `0924` inscrit les listeners comme Android, sans effet visible ici.
+- le patch `0924` inscrivait les listeners comme Android : sans effet pour `uefisecapp`, et
+  avec lui, charger `gfdit` alors que des listeners sont inscrits **fige le téléphone**
+  (2026-11-08 : aucune demande ne parvient au service, aucun message du noyau ; l'appel à
+  la TrustZone ne revient pas). Le pilote `0918` n'est écrit que pour l'inscription
+  classique. Patch retiré du paquet (pkgrel 31), gardé ici pour mémoire.
 
 ## 8. Pourquoi `uefisecapp` ne garde rien : la commande de synchronisation
 
