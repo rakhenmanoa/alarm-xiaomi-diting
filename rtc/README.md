@@ -211,10 +211,13 @@ Points à vérifier avant d'aller plus loin :
 2. ✅ `RTCInfo` existe. (Sinon, `rtc-pm8xxx` avec `qcom,uefi-rtc-info` **échoue au
    démarrage** (lecture de la variable obligatoire) : plus de RTC du tout. Il faudrait la créer
    d'abord, ou patcher le pilote pour accepter son absence.)
-3. Une écriture survit-elle au redémarrage (`uefivar-test -r`, redémarrer, `uefivar-test` :
-   « compteur + décalage » doit donner l'heure juste) ? Sur téléphone, l'écriture dans `uefivarstore`
+3. ❌ **Une écriture ne survit pas au redémarrage.** Testé le 2026-11-08 : `uefivar-test -r`
+   écrit `RTCInfo` (statut `0x0`, relecture juste : « compteur + décalage » = heure exacte),
+   mais après redémarrage la variable est revenue à zéro. `uefisecapp` garde l'écriture en
+   mémoire et ne la reporte pas dans `uefivarstore`. Sous Android, l'écriture sur le stockage
+   passe probablement par un service (« listener ») de `qseecomd`, absent sous Linux. Sur téléphone, l'écriture dans `uefivarstore`
    pourrait demander un service (« listener ») côté Linux que seul Android fournit.
-4. Ensuite seulement : patch du noyau ajoutant `xiaomi,diting` à
+4. (Abandonné tant que le point 3 n'est pas résolu) patch du noyau ajoutant `xiaomi,diting` à
    `qcom_scm_qseecom_allowlist`, puis `qcom,uefi-rtc-info` sur `&pmk8350_rtc`.
 
 Sauvegarder `uefivarstore` avant toute écriture :
@@ -222,3 +225,8 @@ Sauvegarder `uefivarstore` avant toute écriture :
 ```sh
 sudo dd if=/dev/disk/by-partlabel/uefivarstore of=uefivarstore.img
 ```
+
+**Conclusion** : la piste TrustZone est arrêtée. Le décalage reste gardé par `diting-rtc`
+(fichier `/var/lib/diting-rtc/offset`). La rouvrir demanderait d'identifier et de servir depuis
+Linux le listener de stockage qu'utilise `uefisecapp` (le pilote TEE `0918` sait servir des
+listeners par le supplicant TEE), sans garantie que ce soit le seul obstacle.
