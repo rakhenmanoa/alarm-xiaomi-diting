@@ -173,7 +173,7 @@ Sur les PC Snapdragon, le noyau garde le décalage dans la variable UEFI `RTCInf
 sont gérées par l'appli TrustZone `qcom.tz.uefisecapp`, qui les range dans la partition
 `uefivarstore`. Le diting a les deux (`uefisecapp_a/b`, `uefivarstore`).
 
-État constaté le 2026-11-08 :
+État constaté le 2026-11-08 (voir les résultats plus bas) :
 
 - `qcom_scm` trouve QSEECOM (version `0x1402000`) mais refuse de créer l'interface du noyau :
   `qseecom: untested machine, skipping` (liste blanche de machines, uniquement des PC) ;
@@ -189,13 +189,24 @@ sudo ./uefivar-test
 sudo ./uefivar-test -l
 ```
 
+Résultats sur le téléphone (2026-11-08) :
+
+- `uefisecapp` **répond** depuis Linux : 64 512 o d'espace, 63 996 o libres ;
+- **`RTCInfo` existe déjà** (créée par le bootloader) : attributs `0x7`, 12 octets, tout à zéro
+  (décalage 0, Android ne s'en sert pas). Taille conforme à `struct qcom_uefi_rtc_info` ;
+- 16 variables en tout (`RTCInfo`, `RunCycles`, `UefiSecAppId`, variables d'affichage, console).
+
+Pour tester l'écriture sans toucher à `RTCInfo`, `uefivar-test -w` écrit une variable à part,
+`DitingTest` (GUID `d17b6a3e-5c2f-4f0e-9a41-7d3c2b8e6f10`, contenant l'heure d'écriture), et
+`-d` l'efface.
+
 Points à vérifier avant d'aller plus loin :
 
-1. `uefisecapp` répond-il depuis Linux ?
-2. `RTCInfo` existe-t-elle ? Sinon, `rtc-pm8xxx` avec `qcom,uefi-rtc-info` **échoue au
+1. ✅ `uefisecapp` répond depuis Linux.
+2. ✅ `RTCInfo` existe. (Sinon, `rtc-pm8xxx` avec `qcom,uefi-rtc-info` **échoue au
    démarrage** (lecture de la variable obligatoire) : plus de RTC du tout. Il faudrait la créer
-   d'abord, ou patcher le pilote pour accepter son absence.
-3. Une écriture survit-elle au redémarrage ? Sur téléphone, l'écriture dans `uefivarstore`
+   d'abord, ou patcher le pilote pour accepter son absence.)
+3. Une écriture survit-elle au redémarrage (`uefivar-test -w`, redémarrer, `uefivar-test`) ? Sur téléphone, l'écriture dans `uefivarstore`
    pourrait demander un service (« listener ») côté Linux que seul Android fournit.
 4. Ensuite seulement : patch du noyau ajoutant `xiaomi,diting` à
    `qcom_scm_qseecom_allowlist`, puis `qcom,uefi-rtc-info` sur `&pmk8350_rtc`.

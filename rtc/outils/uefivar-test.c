@@ -1,18 +1,26 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * uefivar-test : interroger l'appli TrustZone qcom.tz.uefisecapp (variables
- * UEFI, partition uefivarstore) depuis Linux, en LECTURE SEULE, via le pilote
- * TEE « qseecom » (impl_id 5, patch 0918). Aucune modification du noyau.
+ * UEFI, partition uefivarstore) depuis Linux, via le pilote TEE « qseecom »
+ * (impl_id 5, patch 0918). Aucune modification du noyau. Lecture seule sauf
+ * avec -w / -d.
  *
  * But : savoir si le décalage du RTC peut être gardé en TrustZone, dans la
  * variable RTCInfo qu'utilise rtc-pm8xxx avec « qcom,uefi-rtc-info ».
  *
- *   uefivar-test          espace des variables, présence de RTCInfo
+ *   uefivar-test          espace des variables, RTCInfo, variable de test
  *   uefivar-test -l       idem, puis liste de toutes les variables
+ *   uefivar-test -w       ÉCRIT la variable de test DitingTest (heure actuelle)
+ *   uefivar-test -d       EFFACE la variable de test
+ *
+ * La variable de test a son propre GUID (d17b6a3e-5c2f-4f0e-9a41-7d3c2b8e6f10) :
+ * elle ne touche ni RTCInfo ni les variables du bootloader. Elle sert à voir si
+ * une écriture depuis Linux survit à un redémarrage.
  *
  * Commandes de uefisecapp (protocole de drivers/firmware/qcom/
- * qcom_qseecom_uefisecapp.c) : 0x8000 GetVariable, 0x8002 GetNextVariableName,
- * 0x8003 QueryVariableInfo. SetVariable (0x8001) n'est jamais envoyé.
+ * qcom_qseecom_uefisecapp.c) : 0x8000 GetVariable, 0x8001 SetVariable
+ * (seulement avec -w / -d, et seulement sur DitingTest), 0x8002
+ * GetNextVariableName, 0x8003 QueryVariableInfo.
  *
  * Compilation : cc -O2 -Wall -o uefivar-test uefivar-test.c
  */
@@ -24,6 +32,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <linux/tee.h>
@@ -34,6 +43,7 @@
 
 #define APP		"qcom.tz.uefisecapp"
 #define CMD_GET_VAR	0x8000
+#define CMD_SET_VAR	0x8001
 #define CMD_GET_NEXT	0x8002
 #define CMD_QUERY_INFO	0x8003
 
@@ -45,6 +55,13 @@ static const uint8_t rtc_guid[16] = {
 	0x2b, 0x8c, 0x2f, 0x88, 0x46, 0x96, 0x5f, 0x43,
 	0x8d, 0xe5, 0xf2, 0x08, 0xff, 0x80, 0xc1, 0xbd,
 };
+
+/* variable de test, GUID propre à ce dépôt */
+static const uint8_t test_guid[16] = {
+	0x3e, 0x6a, 0x7b, 0xd1, 0x2f, 0x5c, 0x0e, 0x4f,
+	0x9a, 0x41, 0x7d, 0x3c, 0x2b, 0x8e, 0x6f, 0x10,
+};
+#define TEST_NAME	"DitingTest"
 
 static int fd = -1;
 static uint32_t session;
@@ -192,14 +209,16 @@ static size_t ucs2(uint8_t *dst, const char *s)
 	return n + 2;
 }
 
-static void lire_rtcinfo(void)
+/* GetVariable ; renvoie le statut EFI, données copiées dans out (64 o max) */
+static uint32_t get_var(const uint8_t guid[16], const char *nom, uint32_t *attr,
+			uint8_t *out, uint32_t *len)
 {
 	/* en-tête 28 o, GUID à 32, nom à 48 */
 	size_t name_len;
 
 	memset(buf, 0, REQ_MAX);
-	memcpy(buf + 32, rtc_guid, 16);
-	name_len = ucs2(buf + 48, "RTCInfo");
+	memcpy(buf + 32, guid, 16);
+	name_len = ucs2(buf + 48, nom);
 	wr32(buf + 0, CMD_GET_VAR);
 	wr32(buf + 4, 48 + name_len);
 	wr32(buf + 8, 48);		/* name_offset */
@@ -208,25 +227,69 @@ static void lire_rtcinfo(void)
 	wr32(buf + 20, 16);
 	wr32(buf + 24, 64);		/* data_size proposée */
 	if (envoyer(48 + name_len, 24 + 64))
-		return;
+		return 0xffffffff;
 	uint8_t *r = buf + REQ_MAX;
 	uint32_t st = rd32(r + 8);
 
-	printf("\nRTCInfo {882f8c2b-9646-435f-8de5-f208ff80c1bd} : statut 0x%x (%s)\n",
-	       st, efi_statut(st));
 	if (!st) {
-		uint32_t off = rd32(r + 16), len = rd32(r + 20);
+		uint32_t off = rd32(r + 16);
 
-		printf("  attributs 0x%x, %u octets :", rd32(r + 12), len);
-		for (uint32_t i = 0; i < len && off + i < RSP_MAX; i++)
-			printf(" %02x", r[off + i]);
-		printf("\n");
-		if (len >= 4)
-			printf("  décalage GPS %u s\n", rd32(r + off));
-	} else if (st == 0x8000000e) {
-		printf("  absente : le noyau ne pourrait pas démarrer le RTC avec\n"
-		       "  qcom,uefi-rtc-info tant qu'elle n'est pas créée\n");
+		*attr = rd32(r + 12);
+		*len = rd32(r + 20);
+		if (*len > 64 || off + *len > RSP_MAX)
+			*len = 0;
+		memcpy(out, r + off, *len);
 	}
+	return st;
+}
+
+static void afficher_var(const char *titre, const uint8_t guid[16], const char *nom)
+{
+	uint8_t d[64];
+	uint32_t attr, len, st = get_var(guid, nom, &attr, d, &len);
+
+	printf("\n%s : statut 0x%x (%s)\n", titre, st, efi_statut(st));
+	if (st)
+		return;
+	printf("  attributs 0x%x, %u octets :", attr, len);
+	for (uint32_t i = 0; i < len; i++)
+		printf(" %02x", d[i]);
+	printf("\n");
+	if (guid == rtc_guid && len >= 4)
+		printf("  décalage GPS %u s\n", rd32(d));
+	if (guid == test_guid && len >= 8) {
+		time_t t = (time_t)rd64(d);
+
+		printf("  écrite le %s", ctime(&t));
+	}
+}
+
+/* SetVariable sur DitingTest uniquement ; data NULL = effacement */
+static void set_test(const uint8_t *data, uint32_t len)
+{
+	/* en-tête 36 o, GUID à 40, nom à 56, données à 128 */
+	size_t name_len;
+
+	memset(buf, 0, REQ_MAX);
+	memcpy(buf + 40, test_guid, 16);
+	name_len = ucs2(buf + 56, TEST_NAME);
+	if (len)
+		memcpy(buf + 128, data, len);
+	wr32(buf + 0, CMD_SET_VAR);
+	wr32(buf + 4, 128 + len);
+	wr32(buf + 8, 56);		/* name_offset */
+	wr32(buf + 12, name_len);
+	wr32(buf + 16, 40);		/* guid_offset */
+	wr32(buf + 20, 16);
+	wr32(buf + 24, 0x7);		/* NON_VOLATILE | BOOTSERVICE | RUNTIME */
+	wr32(buf + 28, 128);		/* data_offset */
+	wr32(buf + 32, len);
+	if (envoyer(128 + (len ? len : 8), 32))
+		return;
+	uint32_t st = rd32(buf + REQ_MAX + 8);
+
+	printf("\nSetVariable %s (%s) : statut 0x%x (%s)\n", TEST_NAME,
+	       len ? "écriture" : "effacement", st, efi_statut(st));
 }
 
 static void lister(void)
@@ -282,8 +345,18 @@ int main(int argc, char **argv)
 {
 	if (ouvrir() || shm() || session_app())
 		return 1;
+	if (argc > 1 && !strcmp(argv[1], "-w")) {
+		uint8_t d[8];
+		uint64_t t = (uint64_t)time(NULL);
+
+		memcpy(d, &t, 8);
+		set_test(d, 8);
+	} else if (argc > 1 && !strcmp(argv[1], "-d")) {
+		set_test(NULL, 0);
+	}
 	query_info();
-	lire_rtcinfo();
+	afficher_var("RTCInfo {882f8c2b-9646-435f-8de5-f208ff80c1bd}", rtc_guid, "RTCInfo");
+	afficher_var("DitingTest {d17b6a3e-5c2f-4f0e-9a41-7d3c2b8e6f10}", test_guid, TEST_NAME);
 	if (argc > 1 && !strcmp(argv[1], "-l"))
 		lister();
 	return 0;
