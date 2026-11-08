@@ -27,8 +27,10 @@
  *   -w        autoriser les écritures RPMB (sinon : lecture seule, les
  *             demandes d'écriture sont journalisées et refusées)
  *   -v        journal détaillé (-vv : encore plus)
- *   -e ID     enregistrer aussi le listener ID (décimal ou 0x…), seulement
- *             pour journaliser ses demandes, refusées ; répétable
+ *   -e ID[:TAILLE]  enregistrer aussi le listener ID (décimal ou 0x…),
+ *             seulement pour journaliser ses demandes, refusées ; répétable ;
+ *             TAILLE du tampon, 4096 par défaut
+ *   -s TAILLE taille du tampon du listener RPMB (0x6400 par défaut)
  *   -n        ne pas enregistrer le listener RPMB (essais avec -e)
  */
 #define _GNU_SOURCE
@@ -61,6 +63,7 @@
 
 int qseecomd_verbeux;
 static int ecritures, sans_rpmb;
+static size_t rpmb_tampon = RPMB_TAMPON;
 static int fd = -1;
 
 struct listener {
@@ -382,11 +385,12 @@ int main(int argc, char **argv)
 {
 	struct sigaction sa = { .sa_handler = sur_signal };
 	uint32_t extra[MAX_LISTENERS];
+	size_t extra_taille[MAX_LISTENERS];
 	int nb_extra = 0, opt;
 	rpmb_init_info_t info = { 0 };
 
 	setvbuf(stderr, NULL, _IOLBF, 0);
-	while ((opt = getopt(argc, argv, "wvne:")) != -1) {
+	while ((opt = getopt(argc, argv, "wvns:e:")) != -1) {
 		switch (opt) {
 		case 'w':
 			ecritures = 1;
@@ -397,12 +401,21 @@ int main(int argc, char **argv)
 		case 'n':
 			sans_rpmb = 1;
 			break;
+		case 's':
+			rpmb_tampon = strtoul(optarg, NULL, 0);
+			break;
 		case 'e':
-			if (nb_extra < MAX_LISTENERS - 1)
-				extra[nb_extra++] = strtoul(optarg, NULL, 0);
+			if (nb_extra < MAX_LISTENERS - 1) {
+				char *fin_id;
+
+				extra[nb_extra] = strtoul(optarg, &fin_id, 0);
+				extra_taille[nb_extra] = *fin_id == ':' ?
+					strtoul(fin_id + 1, NULL, 0) : AUTRE_TAMPON;
+				nb_extra++;
+			}
 			break;
 		default:
-			fprintf(stderr, "usage : %s [-w] [-v] [-n] [-e ID]...\n", argv[0]);
+			fprintf(stderr, "usage : %s [-w] [-v] [-n] [-s TAILLE] [-e ID[:TAILLE]]...\n", argv[0]);
 			return 2;
 		}
 	}
@@ -416,10 +429,10 @@ int main(int argc, char **argv)
 
 	if (ouvrir_priv())
 		return 1;
-	if (!sans_rpmb && enregistrer(RPMB_SERVICE_ID, RPMB_TAMPON, servir_rpmb))
+	if (!sans_rpmb && enregistrer(RPMB_SERVICE_ID, rpmb_tampon, servir_rpmb))
 		return 1;
 	for (int i = 0; i < nb_extra; i++)
-		enregistrer(extra[i], AUTRE_TAMPON, servir_journal);
+		enregistrer(extra[i], extra_taille[i], servir_journal);
 	if (!nb_listeners) {
 		LOG(3, "aucun listener enregistré");
 		return 1;
