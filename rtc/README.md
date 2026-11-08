@@ -249,6 +249,9 @@ service RPMB.
   par zéro ;
 - sert le listener `0x2000` par le pilote TEE `qseecom` du patch `0918` : enregistrement par une
   session sur `/dev/teeprivN`, puis boucle `TEE_IOC_SUPPL_RECV` / `TEE_IOC_SUPPL_SEND` ;
+- inscrit le listener avec un tampon de `0x7000` octets : la TrustZone du diting refuse une
+  taille qui n'est pas un multiple de 4096 (`0x6400`, la valeur d'Android, est refusé avec
+  `-EINVAL` ; 4096 à 32768 par pas de 4096 sont acceptés) ;
 - recopie les trames de chaque requête avant de les envoyer (la réponse est écrite dans le même
   tampon) et vérifie que tout tient dans le tampon ;
 - est **en lecture seule par défaut** : les écritures RPMB sont journalisées et refusées. `-w`

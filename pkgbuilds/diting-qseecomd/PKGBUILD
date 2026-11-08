@@ -3,7 +3,7 @@
 # nécessaire pour que uefisecapp enregistre les variables UEFI (RTCInfo).
 # Accès RPMB UFS repris de qualcomm/minkipc (BSD-3-Clause-Clear).
 pkgname=diting-qseecomd
-pkgver=0.1.1
+pkgver=0.1.2
 pkgrel=1
 pkgdesc="Xiaomi diting : listener RPMB pour la TrustZone (variables UEFI persistantes)"
 arch=(aarch64)

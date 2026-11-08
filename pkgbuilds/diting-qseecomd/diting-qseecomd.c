@@ -30,7 +30,8 @@
  *   -e ID[:TAILLE]  enregistrer aussi le listener ID (décimal ou 0x…),
  *             seulement pour journaliser ses demandes, refusées ; répétable ;
  *             TAILLE du tampon, 4096 par défaut
- *   -s TAILLE taille du tampon du listener RPMB (0x6400 par défaut)
+ *   -s TAILLE taille du tampon du listener RPMB (0x7000 par défaut)
+ * Les tailles sont arrondies au multiple de 4096 supérieur (exigé par la TZ).
  *   -n        ne pas enregistrer le listener RPMB (essais avec -e)
  */
 #define _GNU_SOURCE
@@ -57,7 +58,13 @@
 #define TEE_IMPL_ID_QSEECOM 5
 #endif
 
-#define RPMB_TAMPON	0x6400	/* taille enregistrée par le qseecomd d'Android */
+/*
+ * La TrustZone du diting refuse un tampon de listener dont la taille n'est pas
+ * un multiple de 4096 (essais du 2026-11-08 : 0x6400 refusé, 4096 à 32768 par
+ * pas de 4096 acceptés). 0x7000 : le multiple suivant les 0x6400 d'Android.
+ */
+#define PAGE_TZ		4096
+#define RPMB_TAMPON	0x7000
 #define AUTRE_TAMPON	0x1000
 #define MAX_LISTENERS	8
 
@@ -264,6 +271,8 @@ static int enregistrer(uint32_t id, size_t taille, int (*servir)(struct listener
 
 	if (nb_listeners >= MAX_LISTENERS)
 		return -1;
+	taille = (taille + PAGE_TZ - 1) / PAGE_TZ * PAGE_TZ;
+	d.size = taille;
 	sfd = ioctl(fd, TEE_IOC_SHM_ALLOC, &d);
 	if (sfd < 0) {
 		LOG(3, "listener 0x%x : mémoire partagée : %s", id, strerror(errno));
