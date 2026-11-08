@@ -452,4 +452,22 @@ sudo ./uefivar-test          # RTCInfo chargé par le bootloader depuis la parti
 sudo ./uefivarstore liste    # le bootloader a réécrit l'autre banc, génération + 1
 ```
 
+### Conclusion (2026-11-08) : rien ne persiste dans `uefisecapp` sur ce téléphone
+
+- Nouveau banc correct (état 3, génération 63, `RTCInfo` rempli) : après redémarrage,
+  `RTCInfo` vaut toujours 0 en mémoire.
+- En mémoire, `RunCycles` vaut **1**, alors que `uefivarstore` contient 62 et que `MTC`
+  n'existe pas : le contenu de `uefisecapp` ne vient pas de cette partition, et repart de zéro
+  à chaque démarrage. `uefivarstore` est une copie ancienne que plus rien ne relit.
+- Dans le code, `uefisecapp` ouvre son stockage sur le périphérique `3` de l'interface
+  `qsee_stor` (le RPMB) ou `0xb` (partition de type `165bd6bc-9250-4ac8-95a7-a93f4a440066`,
+  cas des PC). Sur le diting, l'ouverture échoue à l'initialisation : les tables sont créées
+  « en mémoire seulement » (d'où `SyncVarTables` qui répond succès sans écrire).
+
+**La piste TrustZone est close** : sur ce firmware, les variables UEFI ne sont gardées nulle
+part. `uefivarstore` a été remise dans son état d'origine avec la sauvegarde.
+
+Solutions qui restent : `diting-rtc` (en place) ou le décalage dans une SDAM du PMIC
+(`nvmem-cells`), à condition de trouver 4 octets libres.
+
 En attendant, le décalage reste gardé par `diting-rtc` (fichier `/var/lib/diting-rtc/offset`).
