@@ -29,6 +29,7 @@
  *   -v        journal détaillé (-vv : encore plus)
  *   -e ID     enregistrer aussi le listener ID (décimal ou 0x…), seulement
  *             pour journaliser ses demandes, refusées ; répétable
+ *   -n        ne pas enregistrer le listener RPMB (essais avec -e)
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -59,7 +60,7 @@
 #define MAX_LISTENERS	8
 
 int qseecomd_verbeux;
-static int ecritures;
+static int ecritures, sans_rpmb;
 static int fd = -1;
 
 struct listener {
@@ -286,8 +287,8 @@ static int enregistrer(uint32_t id, size_t taille, int (*servir)(struct listener
 	b.p[1].b = taille;
 	b.p[1].c = d.id;
 	if (ioctl(fd, TEE_IOC_OPEN_SESSION, &bd) || b.arg.ret) {
-		LOG(3, "listener 0x%x : enregistrement refusé : %s (ret 0x%x)", id,
-		    strerror(errno), b.arg.ret);
+		LOG(3, "listener 0x%x (%zu octets) : enregistrement refusé : %s (ret 0x%x) ; "
+		    "voir dmesg | grep qseecom", id, taille, strerror(errno), b.arg.ret);
 		return -1;
 	}
 	l->session = b.arg.session;
@@ -385,7 +386,7 @@ int main(int argc, char **argv)
 	rpmb_init_info_t info = { 0 };
 
 	setvbuf(stderr, NULL, _IOLBF, 0);
-	while ((opt = getopt(argc, argv, "wve:")) != -1) {
+	while ((opt = getopt(argc, argv, "wvne:")) != -1) {
 		switch (opt) {
 		case 'w':
 			ecritures = 1;
@@ -393,12 +394,15 @@ int main(int argc, char **argv)
 		case 'v':
 			qseecomd_verbeux++;
 			break;
+		case 'n':
+			sans_rpmb = 1;
+			break;
 		case 'e':
 			if (nb_extra < MAX_LISTENERS - 1)
 				extra[nb_extra++] = strtoul(optarg, NULL, 0);
 			break;
 		default:
-			fprintf(stderr, "usage : %s [-w] [-v] [-e ID]...\n", argv[0]);
+			fprintf(stderr, "usage : %s [-w] [-v] [-n] [-e ID]...\n", argv[0]);
 			return 2;
 		}
 	}
@@ -412,10 +416,14 @@ int main(int argc, char **argv)
 
 	if (ouvrir_priv())
 		return 1;
-	if (enregistrer(RPMB_SERVICE_ID, RPMB_TAMPON, servir_rpmb))
+	if (!sans_rpmb && enregistrer(RPMB_SERVICE_ID, RPMB_TAMPON, servir_rpmb))
 		return 1;
 	for (int i = 0; i < nb_extra; i++)
 		enregistrer(extra[i], AUTRE_TAMPON, servir_journal);
+	if (!nb_listeners) {
+		LOG(3, "aucun listener enregistré");
+		return 1;
+	}
 
 	sigaction(SIGTERM, &sa, NULL);
 	sigaction(SIGINT, &sa, NULL);
