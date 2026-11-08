@@ -97,6 +97,13 @@ sous Linux) ; sans eux elle prend des valeurs par défaut.
   (`GF_ERROR_SPI_RAW_DATA_CRC_FAILED`) au lieu de 1004 (`BAD_PARAMS`) ;
   juste après `1002/0`, le changement de taille du tampon fait refuser l'appel
   par la TZ (`scm call failed with error -22`).
+- `1003/17` (86080 octets, pose 50, gain 1,0) : statut 0, image 192 × 224
+  **brute** (même allure que `1003/21` : grille de points, tache du HBM) ;
+  la calibration ne s'applique pas aux commandes d'usine.
+- **`1002/3` en mode 1** (`GF_CAP_OP=1`, mode de l'enrôlement Android) après
+  la chaîne de `gf-capture.sh` : **statut 0**, alors qu'il donnait toujours
+  1028 le 2026-11-04 (sans calibration). À confirmer : même chaîne sans
+  diting-qseecomd.
   Monter d'abord : `mount -o ro,noload /dev/disk/by-partlabel/persist
   /mnt/vendor/persist`.
 
