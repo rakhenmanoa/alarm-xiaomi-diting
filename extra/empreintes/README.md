@@ -63,6 +63,23 @@ Vérifier :
 sudo grep -E "l1c|l7c|l11c" /sys/kernel/debug/regulator/regulator_summary
 ```
 
+## Listeners pour la calibration (2026-11-08)
+
+`gfdit` lit sa calibration d'usine via les listeners de qseecomd (absents
+sous Linux) ; sans eux elle prend des valeurs par défaut.
+
+- Avec le patch `0924` (inscription smcinvoke), la TrustZone redémarre le
+  téléphone dès qu'elle doit transmettre une demande : patch retiré
+  (linux-diting pkgrel 31, inscription classique).
+- Tampons à la taille de Qualcomm (minkipc) : fichiers `0xa` 20 Ko,
+  fichiers GP `0x7000` 504 Ko, RPMB `0x2000` 28 Ko.
+- Avec pkgrel 31 et
+  `sudo diting-qseecomd -v -e 0xa:20480 -e 0x7000:516096`, plus de
+  plantage ; première demande reçue pendant `1002/9` : service `0xa`,
+  commande `0x202` (FILE_OPEN) de `/mnt/vendor/persist/goodix/cali_data.so`.
+- Prochaine étape : servir le service fichiers `0xa` (lecture seule) depuis
+  la partition `persist` montée sur `/mnt/vendor/persist`.
+
 ## Rappels pratiques
 
 - Après chaque redémarrage : `sudo gpioset -z -c gpiochip6 41=1` (reset du
