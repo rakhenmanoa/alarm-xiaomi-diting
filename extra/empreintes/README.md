@@ -89,6 +89,14 @@ sous Linux) ; sans eux elle prend des valeurs par défaut.
 - Avec diting-qseecomd 0.2.1 (`-v -f`) : gfdit lit `cali_data.so` en entier
   (4 octets d'en-tête, puis 512000 + 12340 octets), sans erreur. Aucun autre
   fichier pendant `1002/9`.
+- Chaîne complète de `gf-capture.sh` (jusqu'à `1003/18`) : gfdit lit en plus
+  `caliParamsInfo.so`, `BMatrix.so`, `HLBMatrix.so`, `highflesh.so` (+ `.bak`)
+  et `midbase.so` (+ `.bak`), tous servis sans erreur (`chartbase.so`,
+  `oemInfo.so`, `gf_extra_feature.so` ne sont pas demandés).
+- `1003/38` à 86080 octets après cette chaîne : statut 1028
+  (`GF_ERROR_SPI_RAW_DATA_CRC_FAILED`) au lieu de 1004 (`BAD_PARAMS`) ;
+  juste après `1002/0`, le changement de taille du tampon fait refuser l'appel
+  par la TZ (`scm call failed with error -22`).
   Monter d'abord : `mount -o ro,noload /dev/disk/by-partlabel/persist
   /mnt/vendor/persist`.
 
