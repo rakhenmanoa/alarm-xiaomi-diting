@@ -80,8 +80,12 @@ sous Linux) ; sans eux elle prend des valeurs par défaut.
 - `persist` contient bien la calibration d'usine de 2022
   (`/mnt/vendor/persist/goodix/` : `cali_data.so`, `caliParamsInfo.so`,
   `chartbase.so`, `highflesh.so`, `midbase.so`, `oemInfo.so`…).
-- diting-qseecomd 0.2.0 : option `-f`, service fichiers `0xa` en lecture
-  seule, limité à `/mnt/vendor/persist/` (écritures refusées avec EROFS).
+- diting-qseecomd 0.2.x : option `-f`, services fichiers `0xa` et fichiers
+  GP `0x7000` (504 Ko) en lecture seule, limités à `/mnt/vendor/persist/`
+  (écritures refusées avec EROFS).
+- Pendant `1002/9`, gfdit ouvre puis ferme `cali_data.so` par `0xa`, puis le
+  lit par `0x7000` avec la commande `0` (ancienne lecture à chemin absolu,
+  absente de minkipc, qui commence à 4).
   Monter d'abord : `mount -o ro,noload /dev/disk/by-partlabel/persist
   /mnt/vendor/persist`.
 

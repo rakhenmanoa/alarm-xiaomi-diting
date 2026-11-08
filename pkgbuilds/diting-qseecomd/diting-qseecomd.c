@@ -19,7 +19,7 @@
  *   0x2000  RPMB (protocole et accès UFS repris de qualcomm/minkipc,
  *           listeners/librpmbservice : rpmb.c, rpmb_ufs.c)
  *   0xa     fichiers, en lecture seule, sous /mnt/vendor/persist/ (option -f,
- *           fichiers.c) : calibration d'usine du capteur d'empreintes (gfdit)
+ *   0x7000  fichiers.c) : calibration d'usine du capteur d'empreintes (gfdit)
  *
  * Le contenu du RPMB est chiffré et authentifié par la TrustZone : ce
  * programme ne fait que transporter des trames qu'il ne peut ni lire ni
@@ -35,7 +35,8 @@
  *   -s TAILLE taille du tampon du listener RPMB (0x7000 par défaut)
  * Les tailles sont arrondies au multiple de 4096 supérieur (exigé par la TZ).
  *   -n        ne pas enregistrer le listener RPMB (essais avec -e)
- *   -f        servir aussi les fichiers (listener 0xa, 20 Ko, lecture seule ;
+ *   -f        servir aussi les fichiers (listeners 0xa, 20 Ko, et 0x7000,
+ *             504 Ko, lecture seule ;
  *             monter d'abord la partition persist sur /mnt/vendor/persist)
  *
  * Le noyau doit enregistrer les listeners de façon classique : avec le patch
@@ -242,6 +243,11 @@ static int servir_journal(struct listener *l)
 static int servir_fichiers_l(struct listener *l)
 {
 	return servir_fichiers(l->va, l->taille);
+}
+
+static int servir_fichiers_gp_l(struct listener *l)
+{
+	return servir_fichiers_gp(l->va, l->taille);
 }
 
 /* ---- pilote TEE ---------------------------------------------------------- */
@@ -457,8 +463,10 @@ int main(int argc, char **argv)
 		return 1;
 	if (!sans_rpmb && enregistrer(RPMB_SERVICE_ID, rpmb_tampon, servir_rpmb))
 		return 1;
-	if (avec_fichiers)
+	if (avec_fichiers) {
 		enregistrer(FICHIERS_SERVICE_ID, FICHIERS_TAMPON, servir_fichiers_l);
+		enregistrer(FICHIERS_GP_SERVICE_ID, FICHIERS_GP_TAMPON, servir_fichiers_gp_l);
+	}
 	for (int i = 0; i < nb_extra; i++)
 		enregistrer(extra[i], extra_taille[i], servir_journal);
 	if (!nb_listeners) {

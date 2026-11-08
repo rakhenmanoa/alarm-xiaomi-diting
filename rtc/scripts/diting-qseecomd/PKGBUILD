@@ -4,7 +4,7 @@
 # capteur d'empreintes).
 # Accès RPMB UFS repris de qualcomm/minkipc (BSD-3-Clause-Clear).
 pkgname=diting-qseecomd
-pkgver=0.2.0
+pkgver=0.2.1
 pkgrel=1
 pkgdesc="Xiaomi diting : listeners RPMB et fichiers pour la TrustZone"
 arch=(aarch64)

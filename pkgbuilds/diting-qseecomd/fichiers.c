@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 /*
- * Service fichiers (listener 0xa) de diting-qseecomd, en LECTURE SEULE.
+ * Services fichiers de diting-qseecomd, en LECTURE SEULE :
+ *   0xa     fichiers « POSIX » (open/read/lseek/fstat/close…) ;
+ *   0x7000  fichiers GP (lecture d'un morceau d'un fichier en une demande).
  *
  * Les applis QSEE (gfdit : calibration d'usine du capteur d'empreintes)
  * lisent leurs fichiers du monde normal par ce listener. Le format des
  * messages (numéros de commande, structures « packed ») est repris de
- * qualcomm/minkipc, listeners/libfsservice/fs/fs_msg.h (BSD-3-Clause-Clear,
+ * qualcomm/minkipc, listeners/libfsservice/fs/fs_msg.h et gpfs/gpfs_msg.h
+ * (BSD-3-Clause-Clear,
  * voir LICENSE.minkipc) ; le code ci-dessous est une réécriture.
  *
  * Garde-fous :
@@ -437,5 +440,133 @@ int servir_fichiers(uint8_t *va, size_t taille)
 		break;
 	}
 	rs->cmd = cmd;
+	return 0;
+}
+
+/* ---- fichiers GP (0x7000), d'après minkipc gpfs_msg.h ------------------- */
+
+/*
+ * minkipc ne connaît que les commandes 4 à 12 (fichiers relatifs à un dossier
+ * « data » ou « persist »). gfdit envoie la commande 0 avec un chemin absolu :
+ * c'est l'ancienne lecture « FILE_READ » de qseecomd (1, 2, 3 : écriture,
+ * suppression, renommage), au même format que les lectures 4 et 8.
+ */
+enum {
+	GP_READ = 0, GP_WRITE, GP_REMOVE, GP_RENAME,
+	GP_DATA_READ, GP_DATA_WRITE, GP_DATA_REMOVE, GP_DATA_RENAME,
+	GP_PERSIST_READ, GP_PERSIST_WRITE, GP_PERSIST_REMOVE, GP_PERSIST_RENAME,
+	GP_VERSION,
+};
+
+#define GP_DONNEES_MAX	(500 * 1024)	/* TZ_GPFS_FILE_SIZE */
+
+struct gp_req_read { uint32_t cmd; char chemin[NOM_MAX]; int32_t off; uint32_t nb; } __attribute__((packed));
+struct gp_rep_read { uint32_t cmd; int32_t err; uint32_t lus; uint8_t buf[GP_DONNEES_MAX]; } __attribute__((packed));
+struct gp_rep_err { uint32_t cmd; int32_t err; } __attribute__((packed));
+struct gp_rep_version { uint32_t cmd; uint32_t version; int32_t err; } __attribute__((packed));
+
+static int gp_lire(const char *c, int32_t off, uint32_t nb, struct gp_rep_read *r)
+{
+	size_t total = 0;
+	int fd;
+
+	if (!chemin_ok(c)) {
+		LOG(4, "fichiers GP : chemin refusé « %.*s »", NOM_MAX, c);
+		return EACCES;
+	}
+	if (off < 0)
+		return EINVAL;
+	fd = open(c, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (fd < 0) {
+		LOG(6, "fichiers GP : lire %s : %s", c, strerror(errno));
+		return errno;
+	}
+	if (nb > GP_DONNEES_MAX)
+		nb = GP_DONNEES_MAX;
+	while (total < nb) {
+		ssize_t n = pread(fd, r->buf + total, nb - total, off + total);
+
+		if (n < 0) {
+			int e = errno;
+
+			close(fd);
+			return e;
+		}
+		if (!n)
+			break;
+		total += n;
+	}
+	close(fd);
+	r->lus = total;
+	LOG(6, "fichiers GP : lu %s, %zu octets à l'octet %d (%u demandés)", c, total, off, nb);
+	return 0;
+}
+
+int servir_fichiers_gp(uint8_t *va, size_t taille)
+{
+	uint32_t cmd = *(uint32_t *)va;
+	struct gp_rep_err *re = (void *)va;
+
+	if (taille < sizeof(struct gp_rep_read))
+		return -1;
+
+	if (cmd == GP_VERSION) {
+		struct gp_rep_version *r = (void *)va;
+
+		r->version = 2;	/* GP_FS_VERSION */
+		r->err = 0;
+		LOG(6, "fichiers GP : version demandée");
+		return 0;
+	}
+	if (!persist_montee()) {
+		LOG(4, "fichiers GP : %s n'est pas montée, commande %u refusée", RACINE, cmd);
+		re->err = EAGAIN;
+		return 0;
+	}
+
+	switch (cmd) {
+	case GP_READ:
+	case GP_PERSIST_READ: {
+		struct gp_req_read q = *(struct gp_req_read *)va;
+		struct gp_rep_read *r = (void *)va;
+		char chemin[NOM_MAX + sizeof(RACINE) + 1];
+
+		q.chemin[NOM_MAX - 1] = '\0';
+		/* lecture « persist » : chemin relatif à la partition persist */
+		if (cmd == GP_PERSIST_READ && q.chemin[0] != '/')
+			snprintf(chemin, sizeof(chemin), RACINE "/%s", q.chemin);
+		else
+			snprintf(chemin, sizeof(chemin), "%s", q.chemin);
+		r->lus = 0;
+		r->err = gp_lire(chemin, q.off, q.nb, r);
+		if (r->err)
+			r->lus = 0;
+		break;
+	}
+	case GP_DATA_READ: {
+		struct gp_req_read q = *(struct gp_req_read *)va;
+
+		LOG(4, "fichiers GP : lecture « data » %.*s non servie", NOM_MAX, q.chemin);
+		re->err = ENOENT;
+		break;
+	}
+	case GP_WRITE:
+	case GP_REMOVE:
+	case GP_RENAME:
+	case GP_DATA_WRITE:
+	case GP_DATA_REMOVE:
+	case GP_DATA_RENAME:
+	case GP_PERSIST_WRITE:
+	case GP_PERSIST_REMOVE:
+	case GP_PERSIST_RENAME:
+		LOG(4, "fichiers GP : commande de modification %u REFUSÉE (lecture seule) « %.*s »",
+		    cmd, NOM_MAX - 8, (char *)va + 4);
+		re->err = EROFS;
+		break;
+	default:
+		LOG(4, "fichiers GP : commande inconnue %u", cmd);
+		re->err = -1;	/* GPFS_ERROR_NO_CMD */
+		break;
+	}
 	return 0;
 }
