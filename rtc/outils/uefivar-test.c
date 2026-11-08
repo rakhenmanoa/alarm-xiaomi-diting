@@ -12,6 +12,9 @@
  *   uefivar-test -l       idem, puis liste de toutes les variables
  *   uefivar-test -w       ÉCRIT la variable de test DitingTest (heure actuelle)
  *   uefivar-test -d       EFFACE la variable de test
+ *   uefivar-test -r       ÉCRIT RTCInfo avec le vrai décalage (heure système -
+ *                         compteur de /dev/rtc0), comme le ferait rtc-pm8xxx
+ *   uefivar-test -z       remet RTCInfo à zéro (valeur d'origine)
  *
  * La variable de test a son propre GUID (d17b6a3e-5c2f-4f0e-9a41-7d3c2b8e6f10) :
  * elle ne touche ni RTCInfo ni les variables du bootloader. Elle sert à voir si
@@ -19,7 +22,7 @@
  *
  * Commandes de uefisecapp (protocole de drivers/firmware/qcom/
  * qcom_qseecom_uefisecapp.c) : 0x8000 GetVariable, 0x8001 SetVariable
- * (seulement avec -w / -d, et seulement sur DitingTest), 0x8002
+ * (seulement avec -w / -d / -r / -z), 0x8002
  * GetNextVariableName, 0x8003 QueryVariableInfo.
  *
  * Compilation : cc -O2 -Wall -o uefivar-test uefivar-test.c
@@ -47,6 +50,7 @@
 #define CMD_GET_NEXT	0x8002
 #define CMD_QUERY_INFO	0x8003
 
+#define GPS_EPOCH	315964800	/* 1980-01-06, origine de RTCInfo */
 #define REQ_MAX		1024	/* requête, puis réponse à cet offset */
 #define RSP_MAX		1024
 
@@ -209,6 +213,20 @@ static size_t ucs2(uint8_t *dst, const char *s)
 	return n + 2;
 }
 
+static int lire_compteur(uint32_t *v)
+{
+	FILE *f = fopen("/sys/class/rtc/rtc0/since_epoch", "r");
+	unsigned long x;
+	int ok;
+
+	if (!f)
+		return -1;
+	ok = fscanf(f, "%lu", &x) == 1;
+	fclose(f);
+	*v = x;
+	return ok ? 0 : -1;
+}
+
 /* GetVariable ; renvoie le statut EFI, données copiées dans out (64 o max) */
 static uint32_t get_var(const uint8_t guid[16], const char *nom, uint32_t *attr,
 			uint8_t *out, uint32_t *len)
@@ -255,8 +273,17 @@ static void afficher_var(const char *titre, const uint8_t guid[16], const char *
 	for (uint32_t i = 0; i < len; i++)
 		printf(" %02x", d[i]);
 	printf("\n");
-	if (guid == rtc_guid && len >= 4)
-		printf("  décalage GPS %u s\n", rd32(d));
+	if (guid == rtc_guid && len >= 4) {
+		uint32_t brut;
+
+		printf("  décalage GPS %u s (Unix %lld s)\n", rd32(d),
+		       (long long)rd32(d) + GPS_EPOCH);
+		if (rd32(d) && !lire_compteur(&brut)) {
+			time_t t = (time_t)brut + rd32(d) + GPS_EPOCH;
+
+			printf("  compteur + décalage = %s", ctime(&t));
+		}
+	}
 	if (guid == test_guid && len >= 8) {
 		time_t t = (time_t)rd64(d);
 
@@ -264,15 +291,16 @@ static void afficher_var(const char *titre, const uint8_t guid[16], const char *
 	}
 }
 
-/* SetVariable sur DitingTest uniquement ; data NULL = effacement */
-static void set_test(const uint8_t *data, uint32_t len)
+/* SetVariable, attributs NV|BS|RT ; len 0 = effacement */
+static void set_var(const uint8_t guid[16], const char *nom,
+		    const uint8_t *data, uint32_t len)
 {
 	/* en-tête 36 o, GUID à 40, nom à 56, données à 128 */
 	size_t name_len;
 
 	memset(buf, 0, REQ_MAX);
-	memcpy(buf + 40, test_guid, 16);
-	name_len = ucs2(buf + 56, TEST_NAME);
+	memcpy(buf + 40, guid, 16);
+	name_len = ucs2(buf + 56, nom);
 	if (len)
 		memcpy(buf + 128, data, len);
 	wr32(buf + 0, CMD_SET_VAR);
@@ -288,7 +316,7 @@ static void set_test(const uint8_t *data, uint32_t len)
 		return;
 	uint32_t st = rd32(buf + REQ_MAX + 8);
 
-	printf("\nSetVariable %s (%s) : statut 0x%x (%s)\n", TEST_NAME,
+	printf("\nSetVariable %s (%s) : statut 0x%x (%s)\n", nom,
 	       len ? "écriture" : "effacement", st, efi_statut(st));
 }
 
@@ -341,6 +369,32 @@ static void lister(void)
 	}
 }
 
+/* RTCInfo : décalage GPS (u32), puis 8 octets réservés gardés tels quels */
+static void ecrire_rtcinfo(int zero)
+{
+	uint8_t d[64] = { 0 };
+	uint32_t attr, len, brut, off;
+
+	if (get_var(rtc_guid, "RTCInfo", &attr, d, &len) || len != 12) {
+		fprintf(stderr, "RTCInfo illisible ou de taille inattendue, rien écrit\n");
+		return;
+	}
+	if (zero) {
+		off = 0;
+	} else {
+		if (lire_compteur(&brut)) {
+			fprintf(stderr, "/sys/class/rtc/rtc0/since_epoch illisible\n");
+			return;
+		}
+		/* rtc-pm8xxx sans décalage : since_epoch = compteur brut */
+		off = (uint32_t)((uint64_t)time(NULL) - brut - GPS_EPOCH);
+		printf("compteur RTC %u s, heure %lld : décalage Unix %lld s, GPS %u s\n",
+		       brut, (long long)time(NULL), (long long)time(NULL) - brut, off);
+	}
+	memcpy(d, &off, 4);
+	set_var(rtc_guid, "RTCInfo", d, 12);
+}
+
 int main(int argc, char **argv)
 {
 	if (ouvrir() || shm() || session_app())
@@ -350,9 +404,13 @@ int main(int argc, char **argv)
 		uint64_t t = (uint64_t)time(NULL);
 
 		memcpy(d, &t, 8);
-		set_test(d, 8);
+		set_var(test_guid, TEST_NAME, d, 8);
 	} else if (argc > 1 && !strcmp(argv[1], "-d")) {
-		set_test(NULL, 0);
+		set_var(test_guid, TEST_NAME, NULL, 0);
+	} else if (argc > 1 && !strcmp(argv[1], "-r")) {
+		ecrire_rtcinfo(0);
+	} else if (argc > 1 && !strcmp(argv[1], "-z")) {
+		ecrire_rtcinfo(1);
 	}
 	query_info();
 	afficher_var("RTCInfo {882f8c2b-9646-435f-8de5-f208ff80c1bd}", rtc_guid, "RTCInfo");

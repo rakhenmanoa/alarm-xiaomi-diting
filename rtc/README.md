@@ -200,13 +200,19 @@ Pour tester l'écriture sans toucher à `RTCInfo`, `uefivar-test -w` écrit une 
 `DitingTest` (GUID `d17b6a3e-5c2f-4f0e-9a41-7d3c2b8e6f10`, contenant l'heure d'écriture), et
 `-d` l'efface.
 
+On peut aussi tester directement sur `RTCInfo` : `uefivar-test -r` y écrit le vrai décalage
+(heure système − compteur de `/dev/rtc0`, converti en origine GPS comme le fait `rtc-pm8xxx`),
+en gardant les 8 octets réservés ; `-z` remet la valeur d'origine (zéro). L'heure système doit
+être synchronisée (`timedatectl`) avant `-r`.
+
 Points à vérifier avant d'aller plus loin :
 
 1. ✅ `uefisecapp` répond depuis Linux.
 2. ✅ `RTCInfo` existe. (Sinon, `rtc-pm8xxx` avec `qcom,uefi-rtc-info` **échoue au
    démarrage** (lecture de la variable obligatoire) : plus de RTC du tout. Il faudrait la créer
    d'abord, ou patcher le pilote pour accepter son absence.)
-3. Une écriture survit-elle au redémarrage (`uefivar-test -w`, redémarrer, `uefivar-test`) ? Sur téléphone, l'écriture dans `uefivarstore`
+3. Une écriture survit-elle au redémarrage (`uefivar-test -r`, redémarrer, `uefivar-test` :
+   « compteur + décalage » doit donner l'heure juste) ? Sur téléphone, l'écriture dans `uefivarstore`
    pourrait demander un service (« listener ») côté Linux que seul Android fournit.
 4. Ensuite seulement : patch du noyau ajoutant `xiaomi,diting` à
    `qcom_scm_qseecom_allowlist`, puis `qcom,uefi-rtc-info` sur `&pmk8350_rtc`.
