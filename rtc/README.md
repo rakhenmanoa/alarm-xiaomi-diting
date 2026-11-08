@@ -374,11 +374,15 @@ Analyse de `uefisecapp_a` (ELF aarch64, symboles dynamiques présents) et de la 
 - `PTBL` en tête : 4 tables (types 2, 3, 4, 6), chacune une plage de blocs de 4 Kio.
 - Chaque table a **deux bancs** (moitié haute et moitié basse). Un banc = en-tête `DStr`, puis
   `nblk` blocs de données `VAR2`, puis une copie de l'en-tête.
-- En-tête `DStr` : numéro de banc (octet 6), nombre de blocs (u16 à `0x0c`), **génération**
+- En-tête `DStr` : **état du banc** (u16 à `0x06`, cyclique 1 → 2 → 3 → 1), nombre de blocs
+  (u16 à `0x0c`), blocs utilisés (u16 à `0x0e`), **génération**
   (u32 à `0x10`), CRC32 des données `VAR2` (u32 à `0x14`, sur la longueur indiquée dans `VAR2`),
   CRC32 de l'en-tête (u32 à `0x28`, sur les `0x28` premiers octets). CRC32 standard (zlib).
-- Le banc de génération la plus haute est le bon ; à chaque démarrage le bootloader incrémente
-  `RunCycles` et réécrit l'autre banc avec la génération suivante (62 démarrages ici).
+- Le banc actif est choisi d'après les **états** des deux bancs, pas d'après la génération
+  (`DataMgrOpen` : indice `état_bas | état_haut << 2`, bits `0xa5a5` = incohérent, bits
+  `0x1842` = banc bas, sinon banc haut). Chaque écriture prend l'état suivant celui du banc
+  actif et la génération + 1. Le bootloader ne réécrit pas la partition à chaque démarrage
+  (génération restée à 62 malgré plusieurs redémarrages).
 - La table 4 (blocs `0x66` à `0x74`) contient les variables du GUID `882f8c2b-…` : `RTCInfo`
   (12 octets à zéro), `RunCycles`, puis `ConIn`, `ConOut`, `ErrOut`, `HwErrRecSupport`.
 
@@ -434,10 +438,10 @@ Le format est connu et sans signature : on peut faire comme le bootloader. `uefi
 Essai hors ligne sur l'image du 2026-11-08 : 23 octets modifiés, tous dans le banc haut de la
 table 4 (génération, CRC, `RTCInfo`) ; vérification indépendante des CRC en Python.
 
-Inconnue : le bootloader pourrait comparer la génération à un compteur (`MTC`, table 2, égal
-à 62 comme la génération actuelle). Dans ce cas il ignorerait le nouveau banc et reprendrait
-l'ancien (banc intact), ou dans le pire des cas reformaterait la table : la sauvegarde permet
-de tout remettre.
+Premier essai sur le téléphone (2026-11-08) : banc haut écrit en génération 63 mais avec
+l'état 1 (repris de l'ancien banc haut) ; état bas 2 + état haut 1 → banc bas : le nouveau
+banc a été ignoré, rien d'abîmé. L'outil donne maintenant l'état suivant (3), comme
+`uefisecapp` (fonction `0x6a8`), et choisit le banc actif avec la même règle que `DataMgrOpen`.
 
 ```sh
 cc -O2 -Wall -o uefivarstore rtc/outils/uefivarstore.c

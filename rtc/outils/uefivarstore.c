@@ -14,7 +14,8 @@
  *            16 octets par table : u32 type, u16 premier bloc, u16 nb blocs ;
  *   table  : deux bancs de taille égale (moitié basse, moitié haute) ;
  *   banc   : bloc d'en-tête « DStr », nblk blocs « VAR2 », bloc d'en-tête copié ;
- *   DStr   : +6 u8 numéro de banc (2 = moitié basse, 1 = moitié haute),
+ *   DStr   : +6 u16 état du banc, cyclique 1 → 2 → 3 → 1 (incrémenté à chaque
+ *            écriture, voir plus bas),
  *            +0x0c u16 nblk, +0x0e u16 blocs utilisés, +0x10 u32 génération,
  *            +0x14 u32 CRC32 des données (longueur donnée par VAR2),
  *            +0x28 u32 CRC32 des 0x28 premiers octets ;
@@ -22,9 +23,14 @@
  *            u32 taille, GUID, puis variables : u32 taille, 8 octets,
  *            u32 taille des données, u16 taille du nom, nom UCS-2, données
  *            alignées sur 4.
- * Le banc valide de plus haute génération fait foi. On écrit le nouveau banc
- * (génération + 1) sur l'autre, dans l'ordre du code de uefisecapp
- * (DataMgrWrite) : en-tête, données, copie de l'en-tête.
+ * Le banc actif n'est PAS celui de plus haute génération : DataMgrOpen
+ * (uefisecapp) le choisit d'après les états des deux bancs, indice
+ * e_bas | e_haut << 2 : bits 0xa5a5 = incohérent, bits 0x1842 = banc bas,
+ * sinon banc haut. Un nouveau banc prend l'état suivant celui du banc actif
+ * (fonction 0x6a8 : état + 1, 3 → 1) et la génération + 1. On l'écrit sur
+ * l'autre banc dans l'ordre de DataMgrWrite : en-tête, données, copie de
+ * l'en-tête. (Premier essai, 2026-11-08 : état laissé à 1 au lieu de 3,
+ * nouveau banc ignoré.)
  *
  *   uefivarstore [-f FICHIER] liste
  *   uefivarstore [-f FICHIER] rtcinfo GPS     (GPS : décalage, origine 1980)
@@ -78,6 +84,7 @@ static uint32_t crc32(const uint8_t *p, size_t n)
 struct banc {
 	size_t debut;		/* octet de l'en-tête */
 	int valide;
+	uint16_t etat;
 	uint32_t gen;
 	uint16_t nblk, utilises;
 	uint32_t var2_len;
@@ -100,6 +107,7 @@ static void lire_banc(struct banc *b, size_t debut, uint32_t nblk_attendu)
 	b->debut = debut;
 	if (debut + (nblk_attendu + 2) * BLOC > taille || memcmp(h, "DStr", 4))
 		return;
+	b->etat = rd16(h + 6) & 3;
 	b->nblk = rd16(h + 0x0c);
 	b->utilises = rd16(h + 0x0e);
 	b->gen = rd32(h + 0x10);
@@ -153,15 +161,23 @@ static int lire_ptbl(void)
 	return 0;
 }
 
+/* même choix que DataMgrOpen ; -1 : aucun banc ou combinaison incohérente */
 static int actif(const struct table *t)
 {
-	if (t->b[0].valide && t->b[1].valide)
-		return t->b[0].gen >= t->b[1].gen ? 0 : 1;
-	if (t->b[0].valide)
-		return 0;
-	if (t->b[1].valide)
-		return 1;
-	return -1;
+	unsigned e0 = t->b[0].valide ? t->b[0].etat : 0;
+	unsigned e1 = t->b[1].valide ? t->b[1].etat : 0;
+	unsigned bit = 1u << (e0 | e1 << 2);
+
+	if (bit & 0xa5a5)
+		return -1;
+	if (bit & 0x1842)
+		return t->b[0].valide ? 0 : -1;
+	return t->b[1].valide ? 1 : -1;
+}
+
+static uint16_t etat_suivant(uint16_t e)
+{
+	return e >= 3 ? 1 : e + 1;
 }
 
 /* parcours des variables ; rappel pour chacune ; renvoie -1 si incohérent */
@@ -264,8 +280,8 @@ static void liste(void)
 			printf("  banc %s (octet 0x%zx) : %s", k ? "haut" : "bas", b->debut,
 			       b->valide ? "valide" : "absent ou invalide");
 			if (b->valide)
-				printf(", génération %u, %u o%s", b->gen, b->var2_len,
-				       k == a ? "  ← actif" : "");
+				printf(", état %u, génération %u, %u o%s", b->etat, b->gen,
+				       b->var2_len, k == a ? "  ← actif" : "");
 			printf("\n");
 		}
 		if (a >= 0) {
@@ -377,7 +393,9 @@ static int rtcinfo(const char *chemin, int est_fichier, uint32_t gps)
 
 	uint8_t *h = img + dst;
 
-	h[6] = k ? 1 : 2;
+	uint16_t e = etat_suivant(src->etat);
+
+	memcpy(h + 6, &e, 2);
 	wr32(h + 0x10, src->gen + 1);
 	wr32(h + 0x14, crc32(h + BLOC, src->var2_len));
 	wr32(h + 0x28, crc32(h, 0x28));
