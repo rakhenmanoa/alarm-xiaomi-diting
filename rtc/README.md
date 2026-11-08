@@ -342,4 +342,26 @@ Limite connue : si l'appli répond par une demande de rappel smcinvoke
 `0918` ne sait pas la traiter et l'interface QSEECOM peut rester bloquée jusqu'au redémarrage
 (empreintes comprises). Rien n'est écrit dans ce cas.
 
+### Résultat avec le patch `0924` (2026-11-08)
+
+- Inscription : `qseecom: listener 8192 registered (smcinvoke)` : la TrustZone accepte la
+  commande `0x06`.
+- `diting-qseecomd` tourne, listener `0x2000` inscrit, puis `uefivar-test -r` près d'une heure
+  plus tard : `SetVariable` répond succès **sans aucune demande au listener**, comme avec
+  l'inscription à l'ancienne.
+
+**Conclusion : `uefisecapp` n'écrit pas dans le RPMB pendant que Linux (ou Android) tourne.**
+Il garde les variables non volatiles en mémoire ; seul le bootloader, qui a son propre accès
+à l'UFS, les enregistre. Cela rejoint ce qu'écrit Qualcomm (série « Add TEE based client driver
+for UEFI Secure Application », juillet 2026) : avec le RPMB sur UFS, l'interface QSEECOM de
+`uefisecapp` ne permet pas de rendre ces variables persistantes ; il faut une version récente
+de la TrustZone avec un `uefisecapp` en object-IPC, absente de ce firmware de 2022. Android ne
+s'en sert d'ailleurs jamais (`RTCInfo` à zéro).
+
+**La piste TrustZone est close.** Ce qui reste utile :
+
+- `diting-qseecomd` fonctionne (accès RPMB, inscription, boucle de service) et pourra servir si
+  une autre appli QSEE demande un jour le RPMB ; il n'est ni installé par défaut ni activé ;
+- le patch `0924` inscrit les listeners comme Android, sans effet visible ici.
+
 En attendant, le décalage reste gardé par `diting-rtc` (fichier `/var/lib/diting-rtc/offset`).
