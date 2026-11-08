@@ -19,6 +19,8 @@
  *                         variables modifiées dans uefivarstore (commande
  *                         0x800b, TzSyncVarTables(0), celle qu'utilise le
  *                         bootloader) ; combinable : -r -s, -z -s
+ *   uefivar-test -g NOM   lit la variable NOM (GUID 882f8c2b-…, celui de
+ *                         RTCInfo), ex. RunCycles, MTC
  *   uefivar-test -L       affiche le journal interne de uefisecapp
  *                         (commande 0x800c, DumpLogBuffer), lecture seule
  *
@@ -455,6 +457,10 @@ int main(int argc, char **argv)
 
 	if (argc > 1 && !strcmp(argv[1], "-s"))
 		sync = 1;
+	if (argc > 2 && !strcmp(argv[1], "-g")) {
+		afficher_var(argv[2], rtc_guid, argv[2]);
+		return 0;
+	}
 	if (argc > 1 && !strcmp(argv[1], "-L")) {
 		journal();
 		return 0;
