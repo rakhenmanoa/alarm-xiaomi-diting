@@ -15,6 +15,10 @@
  *   uefivar-test -r       ÉCRIT RTCInfo avec le vrai décalage (heure système -
  *                         compteur de /dev/rtc0), comme le ferait rtc-pm8xxx
  *   uefivar-test -z       remet RTCInfo à zéro (valeur d'origine)
+ *   uefivar-test -s       demande à uefisecapp d'ENREGISTRER les tables de
+ *                         variables modifiées dans uefivarstore (commande
+ *                         0x800b, TzSyncVarTables(0), celle qu'utilise le
+ *                         bootloader) ; combinable : -r -s, -z -s
  *
  * La variable de test a son propre GUID (d17b6a3e-5c2f-4f0e-9a41-7d3c2b8e6f10) :
  * elle ne touche ni RTCInfo ni les variables du bootloader. Elle sert à voir si
@@ -49,6 +53,12 @@
 #define CMD_SET_VAR	0x8001
 #define CMD_GET_NEXT	0x8002
 #define CMD_QUERY_INFO	0x8003
+/*
+ * Trouvé dans uefisecapp (svc_uefi_var_entry, table de saut des commandes
+ * 0x8000 à 0x8018) : 0x800a = EfiExitBootServices, 0x800b = TzSyncVarTables
+ * (u32 à l'octet 8 : 0 = toutes les tables modifiées), réponse de 12 octets.
+ */
+#define CMD_SYNC_TABLES	0x800b
 
 #define GPS_EPOCH	315964800	/* 1980-01-06, origine de RTCInfo */
 #define REQ_MAX		1024	/* requête, puis réponse à cet offset */
@@ -395,10 +405,28 @@ static void ecrire_rtcinfo(int zero)
 	set_var(rtc_guid, "RTCInfo", d, 12);
 }
 
+static void sync_tables(void)
+{
+	memset(buf, 0, REQ_MAX);
+	wr32(buf + 0, CMD_SYNC_TABLES);
+	wr32(buf + 4, 12);
+	wr32(buf + 8, 0);		/* toutes les tables modifiées */
+	if (envoyer(12, 12))
+		return;
+	uint32_t st = rd32(buf + REQ_MAX + 8);
+
+	printf("\nSyncVarTables : commande 0x%x, statut 0x%x (%s)\n",
+	       rd32(buf + REQ_MAX), st, efi_statut(st));
+}
+
 int main(int argc, char **argv)
 {
 	if (ouvrir() || shm() || session_app())
 		return 1;
+	int sync = argc > 2 && !strcmp(argv[2], "-s");
+
+	if (argc > 1 && !strcmp(argv[1], "-s"))
+		sync = 1;
 	if (argc > 1 && !strcmp(argv[1], "-w")) {
 		uint8_t d[8];
 		uint64_t t = (uint64_t)time(NULL);
@@ -412,6 +440,8 @@ int main(int argc, char **argv)
 	} else if (argc > 1 && !strcmp(argv[1], "-z")) {
 		ecrire_rtcinfo(1);
 	}
+	if (sync)
+		sync_tables();
 	query_info();
 	afficher_var("RTCInfo {882f8c2b-9646-435f-8de5-f208ff80c1bd}", rtc_guid, "RTCInfo");
 	afficher_var("DitingTest {d17b6a3e-5c2f-4f0e-9a41-7d3c2b8e6f10}", test_guid, TEST_NAME);

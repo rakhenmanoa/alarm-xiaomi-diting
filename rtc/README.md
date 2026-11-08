@@ -364,4 +364,49 @@ s'en sert d'ailleurs jamais (`RTCInfo` à zéro).
   une autre appli QSEE demande un jour le RPMB ; il n'est ni installé par défaut ni activé ;
 - le patch `0924` inscrit les listeners comme Android, sans effet visible ici.
 
+## 8. Pourquoi `uefisecapp` ne garde rien : la commande de synchronisation
+
+Analyse de `uefisecapp_a` (ELF aarch64, symboles dynamiques présents) et de la partition
+`uefivarstore` (2026-11-08).
+
+### Format de `uefivarstore` (512 Kio, en clair)
+
+- `PTBL` en tête : 4 tables (types 2, 3, 4, 6), chacune une plage de blocs de 4 Kio.
+- Chaque table a **deux bancs** (moitié haute et moitié basse). Un banc = en-tête `DStr`, puis
+  `nblk` blocs de données `VAR2`, puis une copie de l'en-tête.
+- En-tête `DStr` : numéro de banc (octet 6), nombre de blocs (u16 à `0x0c`), **génération**
+  (u32 à `0x10`), CRC32 des données `VAR2` (u32 à `0x14`, sur la longueur indiquée dans `VAR2`),
+  CRC32 de l'en-tête (u32 à `0x28`, sur les `0x28` premiers octets). CRC32 standard (zlib).
+- Le banc de génération la plus haute est le bon ; à chaque démarrage le bootloader incrémente
+  `RunCycles` et réécrit l'autre banc avec la génération suivante (62 démarrages ici).
+- La table 4 (blocs `0x66` à `0x74`) contient les variables du GUID `882f8c2b-…` : `RTCInfo`
+  (12 octets à zéro), `RunCycles`, puis `ConIn`, `ConOut`, `ErrOut`, `HwErrRecSupport`.
+
+Aucun chiffrement ni signature : seulement des CRC.
+
+### La commande oubliée
+
+`svc_uefi_var_entry` répartit les commandes `0x8000` à `0x8018` par une table de saut. Les
+quatre connues de Linux (`0x8000` à `0x8003`) ne font que lire ou modifier les tables **en
+mémoire** (`RT_NV_NS_Changed` passe à 1). L'écriture sur la partition est faite par
+`TzSyncVarTables` → `SyncTable` → `DataMgrWrite` → `qsee_stor_write_sectors`, appelée par la
+commande **`0x800b`** (requête de 12 octets, u32 à l'octet 8 = type de table, 0 = toutes les
+tables modifiées). C'est le bootloader qui l'envoie ; ni Android ni le pilote Linux ne la
+connaissent, d'où les écritures perdues. (`0x800a` = `EfiExitBootServices`.)
+
+`uefivar-test -s` envoie `0x800b` (type 0) :
+
+```sh
+sudo dd if=/dev/disk/by-partlabel/uefivarstore of=avant.img bs=4M
+sudo ./uefivar-test -r -s
+sudo dd if=/dev/disk/by-partlabel/uefivarstore of=apres.img bs=4M
+cmp -l avant.img apres.img | wc -l
+sudo reboot
+sudo ./uefivar-test
+```
+
+Réussite : des octets changent dans la partition, et après redémarrage « compteur +
+décalage » donne l'heure juste. Si la TrustZone a besoin d'un listener pour écrire sur l'UFS,
+`dmesg` le dira (`no listener … registered`).
+
 En attendant, le décalage reste gardé par `diting-rtc` (fichier `/var/lib/diting-rtc/offset`).
