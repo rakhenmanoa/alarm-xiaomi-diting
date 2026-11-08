@@ -45,6 +45,24 @@ Bloqué, par conception, pas par un oubli :
    propriétaire à décoder), en analyse statique uniquement avant toute
    requête réelle sur le téléphone.
 
+## Alimentations du capteur (2026-11-08)
+
+Le capteur a besoin de **trois** alimentations, qu'aucun pilote Linux
+n'active : **L1C** (1,8 V, entrées-sorties), **L7C** (3,0 V) et **L11C**
+(2,504 V). Avec L7C et L11C seules : `1002/0` → 1043, `1002/1` → 1064
+(même schéma que reset à 0). L1C ajoutée (`fdtput … ldo1
+regulator-always-on`) : `1002/0` et `1002/1` → **0**, détection 8 / 224 /
+192. Le patch noyau `0922` (pkgrel 30) garde les trois allumées.
+Explication probable des résultats changeants du 4 au 7 novembre : selon les
+essais, l'une ou l'autre de ces alimentations restait allumée par le
+bootloader ou par un module de test.
+
+Vérifier :
+
+```sh
+sudo grep -E "l1c|l7c|l11c" /sys/kernel/debug/regulator/regulator_summary
+```
+
 ## Rappels pratiques
 
 - Après chaque redémarrage : `sudo gpioset -z -c gpiochip6 41=1` (reset du

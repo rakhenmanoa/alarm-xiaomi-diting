@@ -1,25 +1,45 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Fanasina RANDRIATSARAFARA <m.randriatsarafara.f@gmail.com>
-Date: Wed, 4 Nov 2026 11:15:00 +0300
-Subject: [PATCH] arm64: dts: qcom: sm8475-xiaomi-diting: Keep L7C and L11C
+Date: Sun, 8 Nov 2026 15:40:00 +0300
+Subject: [PATCH] arm64: dts: qcom: sm8475-xiaomi-diting: Keep L1C, L7C and L11C
  on for the fingerprint sensor
 
 The Goodix under-display fingerprint sensor is driven by the secure
 world over an SPI bus Linux does not see, so no Linux driver ever
-votes for its supplies. Confirmed this session, empirically, by
-forcing them on from a test kernel module: the sensor is supplied by
-L7C (vreg_l7c_3p0) and L11C (vreg_l11c_2p5) on this board revision, not
-L1C/L3C as an earlier version of this patch assumed from the vendor
-devicetree's generic "fingerprint_goodix" label without checking which
-LDOs it actually resolved to on this specific unit. Keep both on.
+votes for its supplies. On this board revision it needs L1C
+(vreg_l1c_1p8, I/O) together with L7C (vreg_l7c_3p0) and L11C
+(vreg_l11c_2p5). With L7C and L11C alone the sensor stays silent
+(chip ID error 1043, sensor not available 1064); adding L1C makes
+detection succeed (224x192 image, status 0). Keep all three on.
 
-The sensor reset (TLMM 41) is left to user space, which has to pulse it
+The sensor reset (TLMM 41) is left to user space, which has to drive it
 the way the vendor HAL does.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
 diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
 --- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
-@@ -576,11 +576,20 @@
+@@ -528,11 +528,18 @@
+ 			regulator-initial-mode = <RPMH_REGULATOR_MODE_AUTO>;
+ 		};
+ 
++		/*
++		 * Goodix fingerprint sensor I/O supply (1.8 V), see L7C below:
++		 * without it the sensor does not answer (chip ID 1043, sensor
++		 * not available 1064).
++		 */
+ 		vreg_l1c_1p8: ldo1 {
+ 			regulator-name = "vreg_l1c_1p8";
+ 			regulator-min-microvolt = <1800000>;
+ 			regulator-max-microvolt = <1800000>;
+ 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++			regulator-boot-on;
++			regulator-always-on;
+ 		};
+ 
+ 		vreg_l2c_1p8: ldo2 {
+@@ -576,11 +583,20 @@
  			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
  		};
  
@@ -40,7 +60,7 @@ diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts b/arch/arm64/boot
  		};
  
  		vreg_l8c_1p8: ldo8 {
-@@ -604,11 +613,14 @@
+@@ -604,11 +620,14 @@
  			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
  		};
  
