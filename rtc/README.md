@@ -409,4 +409,43 @@ Réussite : des octets changent dans la partition, et après redémarrage « com
 décalage » donne l'heure juste. Si la TrustZone a besoin d'un listener pour écrire sur l'UFS,
 `dmesg` le dira (`no listener … registered`).
 
+### Résultat : `0x800b` répond « succès » sans rien écrire
+
+`uefivar-test -r -s` : `SyncVarTables` statut `0x0`, partition identique octet pour octet,
+aucune demande de listener. Dans le code, `SyncTable` ne fait rien et répond succès quand la
+table est marquée « en mémoire seulement » (champ `+0x2c`, posé par `FormatTable` quand
+`TzVariableInitialize` n'a pas pu ouvrir le stockage). À l'exécution, sur ce firmware,
+`uefisecapp` ne tient donc ses tables qu'en mémoire : c'est **le bootloader** qui lit
+`uefivarstore` et la réécrit à chaque démarrage (`RunCycles`, génération + 1).
+
+### Écrire la partition nous-mêmes : `outils/uefivarstore.c`
+
+Le format est connu et sans signature : on peut faire comme le bootloader. `uefivarstore` :
+
+- `liste` : tables, bancs (validité : en-tête, CRC, copie de l'en-tête, CRC des données) et
+  variables du banc actif ;
+- `rtcinfo GPS`, `rtcinfo-unix UNIX`, `rtcinfo-auto` : copie le banc actif de la table qui
+  contient `RTCInfo` sur l'autre banc, y change les 4 octets du décalage, génération + 1,
+  recalcule les deux CRC, écrit dans l'ordre de `DataMgrWrite` (en-tête, données, copie de
+  l'en-tête) avec `fsync`, relit et vérifie que le nouveau banc est le banc actif ;
+- sauvegarde la partition entière dans le dossier courant avant toute écriture ;
+- refuse d'écrire si quelque chose ne correspond pas au format attendu.
+
+Essai hors ligne sur l'image du 2026-11-08 : 23 octets modifiés, tous dans le banc haut de la
+table 4 (génération, CRC, `RTCInfo`) ; vérification indépendante des CRC en Python.
+
+Inconnue : le bootloader pourrait comparer la génération à un compteur (`MTC`, table 2, égal
+à 62 comme la génération actuelle). Dans ce cas il ignorerait le nouveau banc et reprendrait
+l'ancien (banc intact), ou dans le pire des cas reformaterait la table : la sauvegarde permet
+de tout remettre.
+
+```sh
+cc -O2 -Wall -o uefivarstore rtc/outils/uefivarstore.c
+sudo ./uefivarstore liste
+sudo ./uefivarstore rtcinfo-auto
+sudo reboot
+sudo ./uefivar-test          # RTCInfo chargé par le bootloader depuis la partition
+sudo ./uefivarstore liste    # le bootloader a réécrit l'autre banc, génération + 1
+```
+
 En attendant, le décalage reste gardé par `diting-rtc` (fichier `/var/lib/diting-rtc/offset`).
