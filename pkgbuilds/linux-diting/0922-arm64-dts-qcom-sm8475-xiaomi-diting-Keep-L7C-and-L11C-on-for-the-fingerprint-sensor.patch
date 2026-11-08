@@ -19,11 +19,10 @@ the way the vendor HAL does.
 diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
 --- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
-@@ -575,11 +575,19 @@
- 			regulator-max-microvolt = <3544000>;
+@@ -576,11 +576,20 @@
  			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
  		};
-
+ 
 +		/*
 +		 * Also the Goodix fingerprint sensor supply. The sensor is
 +		 * driven by the secure world over its own SPI bus, so no
@@ -39,13 +38,12 @@ diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts b/arch/arm64/boot
 +			regulator-boot-on;
 +			regulator-always-on;
  		};
-
+ 
  		vreg_l8c_1p8: ldo8 {
-@@ -603,11 +611,14 @@
- 			regulator-max-microvolt = <2960000>;
+@@ -604,11 +613,14 @@
  			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
  		};
-
+ 
 +		/* Also the Goodix fingerprint sensor supply, see above. */
  		vreg_l11c_2p5: ldo11 {
  			regulator-name = "vreg_l11c_2p5";
@@ -55,7 +53,7 @@ diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts b/arch/arm64/boot
 +			regulator-boot-on;
 +			regulator-always-on;
  		};
-
+ 
  		vreg_l12c_1p8: ldo12 {
---
+-- 
 2.43.0
