@@ -1,0 +1,17 @@
+[Unit]
+Description=Services QSEE pour la TrustZone (RPMB : variables UEFI, RTCInfo)
+Documentation=https://github.com/rakhenmanoa/alarm-xiaomi-diting/blob/main/rtc/README.md
+DefaultDependencies=no
+After=systemd-modules-load.service local-fs.target
+Before=sysinit.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStart=/usr/bin/diting-qseecomd -w
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=sysinit.target

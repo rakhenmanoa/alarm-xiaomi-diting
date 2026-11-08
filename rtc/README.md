@@ -14,6 +14,7 @@ le RTC du PMIC, pourquoi il est en lecture seule, et comment l'heure est gardée
 | `pilote/rtc-pm8xxx.c` | Pilote RTC des PMIC Qualcomm, tel quel dans Linux 7.2.10 (non modifié) | `drivers/rtc/rtc-pm8xxx.c` |
 | `patches/diting-ubuntu/` | Activation du nœud `pmk8350_rtc` dans le device tree (royka1/diting-ubuntu, commit `c68ff47db947`) | `kernel/patches/0028` de diting-ubuntu |
 | `scripts/diting-rtc/` | Démon `diting-rtcd`, service systemd, règle udev, PKGBUILD | `pkgbuilds/diting-rtc/` |
+| `scripts/diting-qseecomd/` | Listener RPMB pour la TrustZone (variables UEFI persistantes) | `pkgbuilds/diting-qseecomd/` |
 | `outils/uefivar-test.c` | Test en lecture seule de l'appli TrustZone `uefisecapp` (variables UEFI) | — |
 
 ## 1. Matériel
@@ -214,10 +215,9 @@ Points à vérifier avant d'aller plus loin :
 3. ❌ **Une écriture ne survit pas au redémarrage.** Testé le 2026-11-08 : `uefivar-test -r`
    écrit `RTCInfo` (statut `0x0`, relecture juste : « compteur + décalage » = heure exacte),
    mais après redémarrage la variable est revenue à zéro. `uefisecapp` garde l'écriture en
-   mémoire et ne la reporte pas dans `uefivarstore`. Sous Android, l'écriture sur le stockage
-   passe probablement par un service (« listener ») de `qseecomd`, absent sous Linux. Sur téléphone, l'écriture dans `uefivarstore`
-   pourrait demander un service (« listener ») côté Linux que seul Android fournit.
-4. (Abandonné tant que le point 3 n'est pas résolu) patch du noyau ajoutant `xiaomi,diting` à
+   mémoire. Sous Android, l'écriture sur le stockage passe par un service (« listener ») de
+   `qseecomd`, absent sous Linux : voir section 7.
+4. Une fois le point 3 résolu : patch du noyau ajoutant `xiaomi,diting` à
    `qcom_scm_qseecom_allowlist`, puis `qcom,uefi-rtc-info` sur `&pmk8350_rtc`.
 
 Sauvegarder `uefivarstore` avant toute écriture :
@@ -226,7 +226,73 @@ Sauvegarder `uefivarstore` avant toute écriture :
 sudo dd if=/dev/disk/by-partlabel/uefivarstore of=uefivarstore.img
 ```
 
-**Conclusion** : la piste TrustZone est arrêtée. Le décalage reste gardé par `diting-rtc`
-(fichier `/var/lib/diting-rtc/offset`). La rouvrir demanderait d'identifier et de servir depuis
-Linux le listener de stockage qu'utilise `uefisecapp` (le pilote TEE `0918` sait servir des
-listeners par le supplicant TEE), sans garantie que ce soit le seul obstacle.
+## 7. Listener RPMB : `diting-qseecomd`
+
+Les variables UEFI non volatiles sont enregistrées par `uefisecapp` dans le **RPMB** de l'UFS
+(Replay Protected Memory Block : zone de la puce UFS où l'on n'écrit qu'avec une clé connue de
+la seule TrustZone). La TrustZone n'accède pas elle-même à l'UFS : elle prépare des trames RPMB
+chiffrées et signées, et demande au monde normal de les transmettre. C'est le listener
+**RPMB, numéro `0x2000`**, servi sous Android par `qseecomd`. Sans lui, l'écriture reste dans
+la mémoire de `uefisecapp`.
+
+Qualcomm a publié ce service en open source (github.com/qualcomm/minkipc,
+`listeners/librpmbservice`, BSD-3-Clause-Clear), pour son nouveau supplicant QTEE. Le protocole
+(`TZ_CM_CMD_RPMB_INIT` `0x101`, `READ` `0x102`, `WRITE` `0x103`, `PARTITION` `0x104`) est celui
+du `qseecomd` d'Android. Un patch de Qualcomm de juillet 2026 (Harshal Dev, « Add TEE based
+client driver for uefisecapp ») confirme que la persistance des variables UEFI passe par ce
+service RPMB.
+
+`diting-qseecomd` (paquet `pkgbuilds/diting-qseecomd`) :
+
+- reprend `rpmb.c` et `rpmb_ufs.c` de minkipc (accès au RPMB par `/dev/bsg/ufs-bsg0` et le LUN
+  RPMB `/dev/bsg/0:0:0:49476`), sans le pilote eMMC, avec deux garde-fous contre une division
+  par zéro ;
+- sert le listener `0x2000` par le pilote TEE `qseecom` du patch `0918` : enregistrement par une
+  session sur `/dev/teeprivN`, puis boucle `TEE_IOC_SUPPL_RECV` / `TEE_IOC_SUPPL_SEND` ;
+- recopie les trames de chaque requête avant de les envoyer (la réponse est écrite dans le même
+  tampon) et vérifie que tout tient dans le tampon ;
+- est **en lecture seule par défaut** : les écritures RPMB sont journalisées et refusées. `-w`
+  les autorise. `-v` détaille chaque commande, `-e ID` enregistre un autre listener seulement
+  pour journaliser ses demandes.
+
+Ce programme ne voit que des trames chiffrées et signées : il ne peut ni lire ni forger le
+contenu du RPMB, et une trame abîmée est refusée par la puce (MAC et compteur d'écritures).
+
+Le service systemd (`diting-qseecomd.service`, avec `-w`) n'est **pas activé** par le paquet :
+tester d'abord à la main.
+
+### Test
+
+Une commande à la fois. Construire et installer :
+
+```sh
+cd pkgbuilds/diting-qseecomd
+makepkg -si
+cd ../..
+```
+
+1. Lecture seule, en arrière-plan sous systemd :
+
+   ```sh
+   sudo systemd-run --unit=qseecomd-test diting-qseecomd -v
+   sudo ./uefivar-test -r
+   journalctl -u qseecomd-test
+   ```
+
+   On attend `RPMB init`, des lectures, puis `écriture … REFUSÉE`.
+
+2. Avec écritures :
+
+   ```sh
+   sudo systemctl stop qseecomd-test
+   sudo systemd-run --unit=qseecomd-test diting-qseecomd -v -w
+   sudo ./uefivar-test -r
+   journalctl -u qseecomd-test
+   sudo reboot
+   sudo ./uefivar-test
+   ```
+
+   Réussite : après le redémarrage, `RTCInfo` garde le décalage et « compteur + décalage »
+   donne l'heure juste.
+
+En attendant, le décalage reste gardé par `diting-rtc` (fichier `/var/lib/diting-rtc/offset`).

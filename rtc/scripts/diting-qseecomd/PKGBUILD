@@ -1,0 +1,29 @@
+# Services (« listeners ») QSEE que les applis TrustZone demandent au monde
+# normal, à la place du qseecomd d'Android : pour l'instant le RPMB (0x2000),
+# nécessaire pour que uefisecapp enregistre les variables UEFI (RTCInfo).
+# Accès RPMB UFS repris de qualcomm/minkipc (BSD-3-Clause-Clear).
+pkgname=diting-qseecomd
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Xiaomi diting : listener RPMB pour la TrustZone (variables UEFI persistantes)"
+arch=(aarch64)
+url="https://github.com/rakhenmanoa/alarm-xiaomi-diting"
+license=(GPL-3.0-or-later BSD-3-Clause-Clear)
+depends=(glibc)
+source=(diting-qseecomd.c
+        rpmb.c rpmb.h rpmb_private.h rpmb_ufs.c rpmb_ufs.h rpmb_service.h rpmb_logging.h
+        LICENSE.minkipc
+        diting-qseecomd.service)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+build() {
+  ${CC:-cc} $CFLAGS $LDFLAGS -I"$srcdir" -o diting-qseecomd \
+    "$srcdir/diting-qseecomd.c" "$srcdir/rpmb.c" "$srcdir/rpmb_ufs.c"
+}
+
+package() {
+  install -Dm755 diting-qseecomd "$pkgdir/usr/bin/diting-qseecomd"
+  # pas activé automatiquement : voir rtc/README.md (tester d'abord à la main)
+  install -Dm644 "$srcdir/diting-qseecomd.service" "$pkgdir/usr/lib/systemd/system/diting-qseecomd.service"
+  install -Dm644 "$srcdir/LICENSE.minkipc" "$pkgdir/usr/share/licenses/$pkgname/LICENSE.minkipc"
+}
