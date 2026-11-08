@@ -1,0 +1,24 @@
+[Unit]
+Description=Heure système tenue par le RTC du PMIC (décalage enregistré)
+Documentation=https://github.com/rakhenmanoa/alarm-xiaomi-diting
+DefaultDependencies=no
+# démarré par udev (60-diting-rtc.rules) dès que /dev/rtc0 apparaît
+After=dev-rtc0.device local-fs.target
+Before=time-set.target systemd-timesyncd.service shutdown.target
+Wants=time-set.target
+Conflicts=shutdown.target
+RequiresMountsFor=/var/lib
+
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStart=/usr/bin/diting-rtcd /var/lib/diting-rtc
+StateDirectory=diting-rtc
+TimeoutStartSec=20
+CapabilityBoundingSet=CAP_SYS_TIME
+DeviceAllow=/dev/rtc0 r
+DevicePolicy=closed
+ProtectSystem=strict
+ProtectHome=yes
+PrivateNetwork=yes
+NoNewPrivileges=yes

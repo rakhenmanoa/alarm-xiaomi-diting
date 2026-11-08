@@ -1,0 +1,2 @@
+# RTC du PMIC (rtc-pm8xxx, en lecture seule) : diting-rtcd applique le décalage
+ACTION=="add", SUBSYSTEM=="rtc", KERNEL=="rtc0", TAG+="systemd", ENV{SYSTEMD_WANTS}+="diting-rtcd.service"

@@ -1,0 +1,25 @@
+# Heure système tenue par le RTC du PMIC (PMK8350, rtc-pm8xxx en lecture seule) :
+# décalage « heure réelle - compteur » gardé dans /var/lib/diting-rtc, comme le
+# time_daemon d'Android. Le PMIC n'est jamais écrit (heure d'Android intacte).
+pkgname=diting-rtc
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Xiaomi diting : heure à l'allumage depuis le RTC du PMIC, sans réseau"
+arch=(aarch64)
+url="https://github.com/rakhenmanoa/alarm-xiaomi-diting"
+license=(GPL-3.0-or-later)
+depends=(glibc systemd)
+source=(diting-rtcd.c
+        diting-rtcd.service
+        60-diting-rtc.rules)
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+build() {
+  ${CC:-cc} $CFLAGS $LDFLAGS -o diting-rtcd "$srcdir/diting-rtcd.c"
+}
+
+package() {
+  install -Dm755 diting-rtcd "$pkgdir/usr/bin/diting-rtcd"
+  install -Dm644 "$srcdir/diting-rtcd.service" "$pkgdir/usr/lib/systemd/system/diting-rtcd.service"
+  install -Dm644 "$srcdir/60-diting-rtc.rules" "$pkgdir/usr/lib/udev/rules.d/60-diting-rtc.rules"
+}
