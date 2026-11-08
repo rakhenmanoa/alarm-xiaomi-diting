@@ -86,6 +86,9 @@ sous Linux) ; sans eux elle prend des valeurs par défaut.
 - Pendant `1002/9`, gfdit ouvre puis ferme `cali_data.so` par `0xa`, puis le
   lit par `0x7000` avec la commande `0` (ancienne lecture à chemin absolu,
   absente de minkipc, qui commence à 4).
+- Avec diting-qseecomd 0.2.1 (`-v -f`) : gfdit lit `cali_data.so` en entier
+  (4 octets d'en-tête, puis 512000 + 12340 octets), sans erreur. Aucun autre
+  fichier pendant `1002/9`.
   Monter d'abord : `mount -o ro,noload /dev/disk/by-partlabel/persist
   /mnt/vendor/persist`.
 
