@@ -19,6 +19,8 @@
  *                         variables modifiées dans uefivarstore (commande
  *                         0x800b, TzSyncVarTables(0), celle qu'utilise le
  *                         bootloader) ; combinable : -r -s, -z -s
+ *   uefivar-test -L       affiche le journal interne de uefisecapp
+ *                         (commande 0x800c, DumpLogBuffer), lecture seule
  *
  * La variable de test a son propre GUID (d17b6a3e-5c2f-4f0e-9a41-7d3c2b8e6f10) :
  * elle ne touche ni RTCInfo ni les variables du bootloader. Elle sert à voir si
@@ -59,10 +61,11 @@
  * (u32 à l'octet 8 : 0 = toutes les tables modifiées), réponse de 12 octets.
  */
 #define CMD_SYNC_TABLES	0x800b
+#define CMD_DUMP_LOG	0x800c	/* DumpLogBuffer : u32 taille à l'octet 8 */
 
 #define GPS_EPOCH	315964800	/* 1980-01-06, origine de RTCInfo */
 #define REQ_MAX		1024	/* requête, puis réponse à cet offset */
-#define RSP_MAX		1024
+#define RSP_MAX		16384
 
 /* GUID de RTCInfo (rtc-pm8xxx), au format EFI : 3 champs petit-boutistes */
 static const uint8_t rtc_guid[16] = {
@@ -405,6 +408,31 @@ static void ecrire_rtcinfo(int zero)
 	set_var(rtc_guid, "RTCInfo", d, 12);
 }
 
+static void journal(void)
+{
+	uint32_t taille = RSP_MAX - 0x14 - 16;
+
+	memset(buf, 0, REQ_MAX);
+	wr32(buf + 0, CMD_DUMP_LOG);
+	wr32(buf + 4, 12);
+	wr32(buf + 8, taille);
+	if (envoyer(12, 0x14 + taille))
+		return;
+	uint8_t *r = buf + REQ_MAX;
+
+	printf("\nJournal de uefisecapp : commande 0x%x, statut 0x%x, longueurs %u %u %u\n",
+	       rd32(r), rd32(r + 8), rd32(r + 4), rd32(r + 0xc), rd32(r + 0x10));
+	for (uint32_t i = 0; i < taille; i++) {
+		uint8_t c = r[0x14 + i];
+
+		if (c == '\n' || (c >= 0x20 && c < 0x7f))
+			putchar(c);
+		else if (c == 0 && i + 1 < taille && r[0x15 + i])
+			putchar('\n');
+	}
+	putchar('\n');
+}
+
 static void sync_tables(void)
 {
 	memset(buf, 0, REQ_MAX);
@@ -427,6 +455,10 @@ int main(int argc, char **argv)
 
 	if (argc > 1 && !strcmp(argv[1], "-s"))
 		sync = 1;
+	if (argc > 1 && !strcmp(argv[1], "-L")) {
+		journal();
+		return 0;
+	}
 	if (argc > 1 && !strcmp(argv[1], "-w")) {
 		uint8_t d[8];
 		uint64_t t = (uint64_t)time(NULL);
