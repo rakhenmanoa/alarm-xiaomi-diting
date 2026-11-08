@@ -77,8 +77,13 @@ sous Linux) ; sans eux elle prend des valeurs par défaut.
   `sudo diting-qseecomd -v -e 0xa:20480 -e 0x7000:516096`, plus de
   plantage ; première demande reçue pendant `1002/9` : service `0xa`,
   commande `0x202` (FILE_OPEN) de `/mnt/vendor/persist/goodix/cali_data.so`.
-- Prochaine étape : servir le service fichiers `0xa` (lecture seule) depuis
-  la partition `persist` montée sur `/mnt/vendor/persist`.
+- `persist` contient bien la calibration d'usine de 2022
+  (`/mnt/vendor/persist/goodix/` : `cali_data.so`, `caliParamsInfo.so`,
+  `chartbase.so`, `highflesh.so`, `midbase.so`, `oemInfo.so`…).
+- diting-qseecomd 0.2.0 : option `-f`, service fichiers `0xa` en lecture
+  seule, limité à `/mnt/vendor/persist/` (écritures refusées avec EROFS).
+  Monter d'abord : `mount -o ro,noload /dev/disk/by-partlabel/persist
+  /mnt/vendor/persist`.
 
 ## Rappels pratiques
 

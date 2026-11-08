@@ -18,6 +18,8 @@
  * Listeners servis :
  *   0x2000  RPMB (protocole et accès UFS repris de qualcomm/minkipc,
  *           listeners/librpmbservice : rpmb.c, rpmb_ufs.c)
+ *   0xa     fichiers, en lecture seule, sous /mnt/vendor/persist/ (option -f,
+ *           fichiers.c) : calibration d'usine du capteur d'empreintes (gfdit)
  *
  * Le contenu du RPMB est chiffré et authentifié par la TrustZone : ce
  * programme ne fait que transporter des trames qu'il ne peut ni lire ni
@@ -33,6 +35,12 @@
  *   -s TAILLE taille du tampon du listener RPMB (0x7000 par défaut)
  * Les tailles sont arrondies au multiple de 4096 supérieur (exigé par la TZ).
  *   -n        ne pas enregistrer le listener RPMB (essais avec -e)
+ *   -f        servir aussi les fichiers (listener 0xa, 20 Ko, lecture seule ;
+ *             monter d'abord la partition persist sur /mnt/vendor/persist)
+ *
+ * Le noyau doit enregistrer les listeners de façon classique : avec le patch
+ * 0924 (smcinvoke, retiré dans linux-diting pkgrel 31), la TrustZone faisait
+ * redémarrer le téléphone dès qu'elle transmettait une demande.
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -51,6 +59,7 @@
 
 #include <linux/tee.h>
 
+#include "fichiers.h"
 #include "rpmb.h"
 #include "rpmb_service.h"
 
@@ -69,7 +78,7 @@
 #define MAX_LISTENERS	8
 
 int qseecomd_verbeux;
-static int ecritures, sans_rpmb;
+static int ecritures, sans_rpmb, avec_fichiers;
 static size_t rpmb_tampon = RPMB_TAMPON;
 static int fd = -1;
 
@@ -228,6 +237,11 @@ static int servir_journal(struct listener *l)
 	snprintf(t, sizeof(t), "listener 0x%x : demande refusée", l->id);
 	vidage(t, l->va, 64);
 	return -1;
+}
+
+static int servir_fichiers_l(struct listener *l)
+{
+	return servir_fichiers(l->va, l->taille);
 }
 
 /* ---- pilote TEE ---------------------------------------------------------- */
@@ -399,7 +413,7 @@ int main(int argc, char **argv)
 	rpmb_init_info_t info = { 0 };
 
 	setvbuf(stderr, NULL, _IOLBF, 0);
-	while ((opt = getopt(argc, argv, "wvns:e:")) != -1) {
+	while ((opt = getopt(argc, argv, "wvnfs:e:")) != -1) {
 		switch (opt) {
 		case 'w':
 			ecritures = 1;
@@ -409,6 +423,9 @@ int main(int argc, char **argv)
 			break;
 		case 'n':
 			sans_rpmb = 1;
+			break;
+		case 'f':
+			avec_fichiers = 1;
 			break;
 		case 's':
 			rpmb_tampon = strtoul(optarg, NULL, 0);
@@ -424,7 +441,7 @@ int main(int argc, char **argv)
 			}
 			break;
 		default:
-			fprintf(stderr, "usage : %s [-w] [-v] [-n] [-s TAILLE] [-e ID[:TAILLE]]...\n", argv[0]);
+			fprintf(stderr, "usage : %s [-w] [-v] [-n] [-f] [-s TAILLE] [-e ID[:TAILLE]]...\n", argv[0]);
 			return 2;
 		}
 	}
@@ -440,6 +457,8 @@ int main(int argc, char **argv)
 		return 1;
 	if (!sans_rpmb && enregistrer(RPMB_SERVICE_ID, rpmb_tampon, servir_rpmb))
 		return 1;
+	if (avec_fichiers)
+		enregistrer(FICHIERS_SERVICE_ID, FICHIERS_TAMPON, servir_fichiers_l);
 	for (int i = 0; i < nb_extra; i++)
 		enregistrer(extra[i], extra_taille[i], servir_journal);
 	if (!nb_listeners) {
