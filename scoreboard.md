@@ -17,6 +17,7 @@ même noyau, pas encore revérifiées ici.
 | Démarrage, slots A/B | ✅ | `diting-boot-successful` obligatoire, sinon le slot tombe après 7 démarrages |
 | Redémarrage vers fastboot | ✅ | `diting-reboot-bootloader` (diting-ubuntu) |
 | Veille | 🟡 | s2idle et deep fonctionnent, mais pas d'effondrement complet du SoC (CX/AOSD/DDR) : consommation en veille à réduire |
+| Horloge (RTC du PMIC) | ⬜ | `rtc-pm8xxx` en lecture seule (comme sous Android) ; `diting-rtc` garde le décalage heure réelle − compteur dans `/var/lib/diting-rtc` et remet l'heure à l'allumage sans réseau. Réveils par alarme RTC déjà vérifiés (diting-ubuntu). Voir [rtc](rtc/README.md) |
 | Gestion thermique | 🟡 | zones thermiques du PMIC (alerte à 95 °C) ; thermistances de la carte (patch `0914` : peau, flash, poche, connecteur USB, chargeur, PA, Wi-Fi) lues correctement (33 à 37 °C au repos) ; pas de régulation sur ces zones ni de limitation de courant BCL (pas de pilote) |
 | **Affichage** | | |
 | Écran (dalles 36 02 0b et 42 02 0a) | ✅ | 60, 90 et 120 Hz, DSC |
