@@ -113,6 +113,17 @@ sous Linux) ; sans eux elle prend des valeurs par défaut.
   inscrits : toujours `invoke : Invalid argument` (refus de la TZ avant
   l'appli), et **aucune** demande de fichier en plus. Le mur de
   l'enrôlement ne vient donc pas d'un listener manquant.
+- Analyse de `gf_algo_enroll` (gfdit 0x5ba8) : rejette tout de suite avec
+  1024 (`INVALID_DATA`) si la requête fait moins de 44 octets, sinon envoie
+  l'évènement 18 (`validate_token`). Confirmé sur le téléphone : `1001/1` à
+  40 o → 1024 (contrôle interne), à 44 et 48 o → `Invalid argument` (refus de
+  la TZ en amont). Les deux contraintes sont **incompatibles** par ce chemin.
+- Conclusion : `1001/1` (`enrollImage`) ne se pilote pas seul. L'enrôlement
+  réel est une séquence `1000/2` (preEnroll) → `1000/3` (enroll, jeton
+  `hw_auth_token_t`) → capture → `1001/1`, et `1000/3` ouvre la session ;
+  sans elle, la TZ refuse `1001/1`. `1000/3` exige le jeton signé par
+  keymaster (produit sous Android). Mur keymaster confirmé, pas un détail de
+  taille ni un listener manquant.
 
 ## Rappels pratiques
 
