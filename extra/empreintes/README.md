@@ -107,9 +107,8 @@ sous Linux) ; sans eux elle prend des valeurs par défaut.
   qui débloque la capture normale : diting-qseecomd `-f` est indispensable.
 - diting-qseecomd 0.3.0 : `mnt-vendor-persist.mount` (persist en lecture
   seule) et service `diting-qseecomd -f` (sans `-w`), à activer avec
-  `systemctl enable --now diting-qseecomd`.
-  Monter d'abord : `mount -o ro,noload /dev/disk/by-partlabel/persist
-  /mnt/vendor/persist`.
+  `systemctl enable --now diting-qseecomd`. Vérifié : `1002/3` mode 1 donne
+  0 avec le service lancé par systemd.
 
 ## Rappels pratiques
 
@@ -117,6 +116,10 @@ sous Linux) ; sans eux elle prend des valeurs par défaut.
   capteur), sinon 1012/2038 sur les commandes d'usine.
 - Chargement de `gfdit` : ~15 Mo contigus ; si « Cannot allocate memory »,
   redémarrer ou ajouter `cma=128M` à `/etc/diting/cmdline`.
+- Après des heures de marche, le tampon de 4 Mo (`--goodix-carveout`) peut
+  être refusé (mémoire fragmentée, rapport « Node 0 Normal: … 0*4096kB »
+  dans `dmesg`) : `sync`, `echo 3 > /proc/sys/vm/drop_caches`,
+  `echo 1 > /proc/sys/vm/compact_memory`, puis relancer.
 - Changement d'initramfs ou de DT : `mkinitcpio -P` **puis**
   `diting-install-bootimg` (les deux).
 - Autres chantiers ouverts, sans lien : recharge limitée (retest 50–70 %),

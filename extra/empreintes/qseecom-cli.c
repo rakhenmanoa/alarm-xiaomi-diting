@@ -65,8 +65,16 @@ static int shm_alloc(int fd, size_t size, struct shm *s)
 	struct tee_ioctl_shm_alloc_data d = { .size = size };
 
 	s->fd = ioctl(fd, TEE_IOC_SHM_ALLOC, &d);
-	if (s->fd < 0)
+	if (s->fd < 0) {
+		/*
+		 * Souvent ENOMEM après des heures de marche : plus de bloc
+		 * contigu assez grand (le tampon de 4 Mo). Remède : sync,
+		 * drop_caches = 3, compact_memory = 1, ou redémarrer.
+		 */
+		fprintf(stderr, "  mémoire partagée de %zu octets refusée : %s\n",
+			size, strerror(errno));
 		return -1;
+	}
 	s->id = d.id;
 	s->size = d.size;
 	s->va = mmap(NULL, s->size, PROT_READ | PROT_WRITE, MAP_SHARED, s->fd, 0);
