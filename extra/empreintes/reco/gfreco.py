@@ -58,9 +58,52 @@ def flat(img, ref):
     return np.log(i / r)
 
 
+def build_notch(ref):
+    """Filtre coupe-bande appris sur le cliché SANS doigt.
+
+    La référence ne contient que la grille régulière du capteur (plus
+    l'éclairage global). Dans le spectre de Fourier, cette grille forme des
+    pics nets et isolés, alors que les crêtes d'un doigt forment un anneau
+    diffus : on peut donc annuler les pics sans toucher aux crêtes. Renvoie
+    un masque fréquentiel (1 = garder, 0 = couper), centré (fftshift)."""
+    r = (ref - ref.mean()) * (np.hanning(H)[:, None] * np.hanning(W)[None, :])
+    P = np.abs(np.fft.fftshift(np.fft.fft2(r)))
+    cy, cx = H // 2, W // 2
+    yy, xx = np.ogrid[:H, :W]
+    rad = np.hypot(yy - cy, xx - cx)
+    out = rad >= 6                       # on ignore le centre (éclairage global)
+    # un pic = nettement au-dessus du voisinage (médiane locale large)
+    bg = cv2.GaussianBlur(P, (0, 0), 3.0)
+    peaks = out & (P > 6.0 * bg)
+    peaks = cv2.dilate(peaks.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+    mask = np.ones((H, W), np.float32)
+    mask[peaks] = 0.0
+    mask[rad < 6] = 1.0                  # on garde toujours les basses fréquences
+    return mask
+
+
+_notch_cache = {}
+
+
+def get_notch(ref):
+    key = id(ref)
+    n = _notch_cache.get(key)
+    if n is None:
+        _notch_cache.clear()
+        n = _notch_cache[key] = build_notch(ref)
+    return n
+
+
+def denotch(x, mask):
+    """Retire la grille de l'image x avec le masque fréquentiel donné."""
+    F = np.fft.fftshift(np.fft.fft2(x))
+    return np.real(np.fft.ifft2(np.fft.ifftshift(F * mask))).astype(np.float32)
+
+
 def ridge_image(path, ref):
     """Image de crêtes normalisée, et masque de validité."""
     x = flat(mean_frame(path), ref)
+    x = denotch(x, get_notch(ref))       # retire la grille périodique du capteur
     x = x - cv2.GaussianBlur(x, (0, 0), 7)
     sd = np.sqrt(cv2.GaussianBlur(x * x, (0, 0), 12)) + 1e-6
     x = x / sd

@@ -154,6 +154,21 @@ dossier continue la numérotation.
 `eval` affiche les distributions authentiques/imposteurs, l'EER et le seuil
 pour FAR ≤ 1 % et 0,1 %. Fixer ensuite `GFRECO_THRESH`.
 
+## Suppression de la grille du capteur (2026-11-10)
+
+La capture brute est dominée par la grille régulière de points du capteur,
+dans la même bande de fréquences que les crêtes. `gfreco.py` apprend
+maintenant un filtre coupe-bande (notch FFT) sur la référence sans doigt —
+qui ne contient que cette grille — et le retire de chaque image avant
+l'extraction des crêtes (`build_notch`, `denotch`).
+
+Validé sur images synthétiques (grille large bande déphasée à chaque appui,
+le cas réaliste) : sans filtre EER ≈ 53 % (imposteurs au-dessus des vrais,
+pire que le hasard) ; avec filtre EER ≈ 36 % et séparation du bon côté. Pas
+encore utilisable, mais la direction est bonne ; le reste se joue à la
+capture (variabilité d'un appui à l'autre). **À confirmer sur un vrai jeu**
+avec `diag` puis `eval`.
+
 ## Pistes si les scores restent trop proches
 
 - passer à la capture normale `1002/3` (mode 7, moins de grille) ;
