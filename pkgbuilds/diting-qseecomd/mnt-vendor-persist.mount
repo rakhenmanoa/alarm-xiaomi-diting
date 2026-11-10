@@ -1,0 +1,11 @@
+[Unit]
+Description=Partition persist d'Android (calibrations d'usine), lecture seule
+Documentation=https://github.com/rakhenmanoa/alarm-xiaomi-diting/blob/main/extra/empreintes/README.md
+
+[Mount]
+What=/dev/disk/by-partlabel/persist
+Where=/mnt/vendor/persist
+Type=ext4
+# noload : ne pas rejouer le journal, rien n'est écrit sur la partition
+Options=ro,noload,nodev,nosuid,noexec
+DirectoryMode=0755

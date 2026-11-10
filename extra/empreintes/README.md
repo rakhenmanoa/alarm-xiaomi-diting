@@ -102,8 +102,12 @@ sous Linux) ; sans eux elle prend des valeurs par défaut.
   la calibration ne s'applique pas aux commandes d'usine.
 - **`1002/3` en mode 1** (`GF_CAP_OP=1`, mode de l'enrôlement Android) après
   la chaîne de `gf-capture.sh` : **statut 0**, alors qu'il donnait toujours
-  1028 le 2026-11-04 (sans calibration). À confirmer : même chaîne sans
-  diting-qseecomd.
+  1028 le 2026-11-04 (sans calibration). Même chaîne **sans**
+  diting-qseecomd (2026-11-10) : **1028**. C'est donc la calibration d'usine
+  qui débloque la capture normale : diting-qseecomd `-f` est indispensable.
+- diting-qseecomd 0.3.0 : `mnt-vendor-persist.mount` (persist en lecture
+  seule) et service `diting-qseecomd -f` (sans `-w`), à activer avec
+  `systemctl enable --now diting-qseecomd`.
   Monter d'abord : `mount -o ro,noload /dev/disk/by-partlabel/persist
   /mnt/vendor/persist`.
 

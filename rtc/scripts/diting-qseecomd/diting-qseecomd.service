@@ -1,17 +1,19 @@
 [Unit]
-Description=Services QSEE pour la TrustZone (RPMB : variables UEFI, RTCInfo)
-Documentation=https://github.com/rakhenmanoa/alarm-xiaomi-diting/blob/main/rtc/README.md
-DefaultDependencies=no
-After=systemd-modules-load.service local-fs.target
-Before=sysinit.target shutdown.target
-Conflicts=shutdown.target
+Description=Services QSEE pour la TrustZone (RPMB, fichiers de calibration du capteur d'empreintes)
+Documentation=https://github.com/rakhenmanoa/alarm-xiaomi-diting/blob/main/extra/empreintes/README.md
+# La partition persist (calibration d'usine Goodix) est montée en lecture
+# seule par mnt-vendor-persist.mount.
+RequiresMountsFor=/mnt/vendor/persist
+After=systemd-modules-load.service
 
 [Service]
 Type=notify
 NotifyAccess=main
-ExecStart=/usr/bin/diting-qseecomd -w
+# -f : fichiers en lecture seule sous /mnt/vendor/persist (gfdit) ;
+# pas de -w : le RPMB reste en lecture seule.
+ExecStart=/usr/bin/diting-qseecomd -f
 Restart=on-failure
 RestartSec=2
 
 [Install]
-WantedBy=sysinit.target
+WantedBy=multi-user.target

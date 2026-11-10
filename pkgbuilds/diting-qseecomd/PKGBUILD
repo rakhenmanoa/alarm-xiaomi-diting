@@ -4,7 +4,7 @@
 # capteur d'empreintes).
 # Accès RPMB UFS repris de qualcomm/minkipc (BSD-3-Clause-Clear).
 pkgname=diting-qseecomd
-pkgver=0.2.1
+pkgver=0.3.0
 pkgrel=1
 pkgdesc="Xiaomi diting : listeners RPMB et fichiers pour la TrustZone"
 arch=(aarch64)
@@ -14,8 +14,8 @@ depends=(glibc)
 source=(diting-qseecomd.c fichiers.c fichiers.h
         rpmb.c rpmb.h rpmb_private.h rpmb_ufs.c rpmb_ufs.h rpmb_service.h rpmb_logging.h
         LICENSE.minkipc
-        diting-qseecomd.service)
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+        diting-qseecomd.service mnt-vendor-persist.mount)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 build() {
   ${CC:-cc} $CFLAGS $LDFLAGS -I"$srcdir" -o diting-qseecomd \
@@ -24,7 +24,8 @@ build() {
 
 package() {
   install -Dm755 diting-qseecomd "$pkgdir/usr/bin/diting-qseecomd"
-  # pas activé automatiquement : voir rtc/README.md (tester d'abord à la main)
+  # pas activé automatiquement : systemctl enable --now diting-qseecomd
   install -Dm644 "$srcdir/diting-qseecomd.service" "$pkgdir/usr/lib/systemd/system/diting-qseecomd.service"
+  install -Dm644 "$srcdir/mnt-vendor-persist.mount" "$pkgdir/usr/lib/systemd/system/mnt-vendor-persist.mount"
   install -Dm644 "$srcdir/LICENSE.minkipc" "$pkgdir/usr/share/licenses/$pkgname/LICENSE.minkipc"
 }
