@@ -109,6 +109,10 @@ sous Linux) ; sans eux elle prend des valeurs par défaut.
   seule) et service `diting-qseecomd -f` (sans `-w`), à activer avec
   `systemctl enable --now diting-qseecomd`. Vérifié : `1002/3` mode 1 donne
   0 avec le service lancé par systemd.
+- `1001/1` (enrollImage, 48 octets) juste après cette capture, services
+  inscrits : toujours `invoke : Invalid argument` (refus de la TZ avant
+  l'appli), et **aucune** demande de fichier en plus. Le mur de
+  l'enrôlement ne vient donc pas d'un listener manquant.
 
 ## Rappels pratiques
 
