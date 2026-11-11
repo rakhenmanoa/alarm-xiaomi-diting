@@ -1,8 +1,14 @@
 # SPDX-License-Identifier: CC0-1.0
 # Xiaomi diting, caméra principale S5KHP1 (actionneur AK7314) : réglages du
-# software ISP de libcamera. Autofocus par contraste : une mesure toutes
-# les 4 images, passe grossière par pas de 10 (sur 0..100), puis deux
-# mesures à +-4 et sommet de parabole.
+# software ISP de libcamera. Autofocus par contraste (patch libcamera-diting
+# 0016), positions de lentille sur 0..100 (0 = infini) :
+# - premier démarrage ou toucher sur l'aperçu : balayage complet par pas de
+#   coarseStep depuis le côté proche (le sujet le plus proche gagne) ;
+# - ensuite : recherche autour de la position courante (pas de climbStep qui
+#   grandissent), jusqu'à trouver de part et d'autre du meilleur point une
+#   mesure plus basse de climbMargin ;
+# - dans les deux cas, mesures à +-fineRange, sommet de parabole, puis
+#   vérification de la netteté obtenue.
 %YAML 1.1
 ---
 version: 1
@@ -25,7 +31,21 @@ algorithms:
       # images de 50 ms au plus en basse lumière (20 i/s), le gain fait le reste
       maxFrameDuration: 50000
   - Af:
-      settleFrames: 0
+      # images à laisser passer après chaque déplacement de la lentille.
+      # 3 = même cadence que l'ancien réglage (sûr) ; 2 est plus rapide, à
+      # garder seulement si la mise au point reste aussi nette.
+      settleFrames: 3
       coarseStep: 10
       fineRange: 4
+      climbStep: 4
+      climbMargin: 0.1
+      # relance en mode continu : netteté changée de plus de changeThreshold
+      # pendant changeFrames statistiques (une toutes les 4 images), puis
+      # scène stable pendant stableFrames statistiques
+      changeThreshold: 0.4
+      changeFrames: 4
+      stableFrames: 2
+      # basse lumière : au-delà de ce gain, lowLightMeasures mesures par position
+      lowLightGain: 8.0
+      lowLightMeasures: 2
 ...

@@ -1,0 +1,335 @@
+From 43f4d12a59be4176dbadbbaecf3a481f5cb32169 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 08:37:44 +0300
+Subject: [PATCH] Tap to focus (diting)
+
+Tap on the viewfinder to focus on a subject (AfMetering/AfWindows), press
+and hold to go back to the automatic choice.
+---
+ src/contents/ui/camera/Viewfinder.qml | 49 ++++++++++++++++++++++
+ src/plasmacamera.cpp                  | 59 +++++++++++++++++++++++++++
+ src/plasmacamera.h                    | 30 ++++++++++++++
+ src/plasmacamera/settings.cpp         | 51 +++++++++++++++++++++--
+ src/plasmacamera/settings.h           | 13 ++++++
+ 5 files changed, 199 insertions(+), 3 deletions(-)
+
+diff --git a/src/contents/ui/camera/Viewfinder.qml b/src/contents/ui/camera/Viewfinder.qml
+index 405c20e..b646b8b 100644
+--- a/src/contents/ui/camera/Viewfinder.qml
++++ b/src/contents/ui/camera/Viewfinder.qml
+@@ -34,5 +34,54 @@ Rectangle {
+         visible: root.camera.available
+         width: parent.width
+         height: parent.height
++
++        // Tap to focus on a subject, press and hold to go back to the
++        // automatic choice (centre of the image)
++        MouseArea {
++            anchors.fill: parent
++            enabled: root.camera.available && root.camera.focusPointAvailable
++
++            onClicked: (mouse) => {
++                const rect = viewfinder.contentRect;
++                if (rect.width <= 0 || rect.height <= 0) {
++                    return;
++                }
++                root.camera.focusAt((mouse.x - rect.x) / rect.width, (mouse.y - rect.y) / rect.height);
++                focusMark.flash();
++            }
++            onPressAndHold: root.camera.resetFocusPoint()
++        }
++
++        // Where the focus was asked
++        Rectangle {
++            id: focusMark
++
++            function flash() {
++                focusMarkAnimation.restart();
++            }
++
++            visible: root.camera.available && root.camera.focusPointSet
++            x: viewfinder.contentRect.x + root.camera.focusPoint.x * viewfinder.contentRect.width - width / 2
++            y: viewfinder.contentRect.y + root.camera.focusPoint.y * viewfinder.contentRect.height - height / 2
++            width: Kirigami.Units.gridUnit * 4
++            height: width
++            radius: Kirigami.Units.cornerRadius
++
++            color: "transparent"
++            border.color: "white"
++            border.width: 2
++            opacity: 0.5
++
++            SequentialAnimation {
++                id: focusMarkAnimation
++
++                ParallelAnimation {
++                    NumberAnimation { target: focusMark; property: "scale"; from: 1.4; to: 1.0; duration: Kirigami.Units.longDuration; easing.type: Easing.OutCubic }
++                    NumberAnimation { target: focusMark; property: "opacity"; from: 1.0; to: 1.0; duration: Kirigami.Units.longDuration }
++                }
++                PauseAnimation { duration: 1200 }
++                NumberAnimation { target: focusMark; property: "opacity"; to: 0.5; duration: Kirigami.Units.longDuration }
++            }
++        }
+     }
+ }
+\ No newline at end of file
+diff --git a/src/plasmacamera.cpp b/src/plasmacamera.cpp
+index c67502c..f5f9589 100644
+--- a/src/plasmacamera.cpp
++++ b/src/plasmacamera.cpp
+@@ -192,6 +192,64 @@ QSize PlasmaCamera::afWindow() const
+     return m_settings.getAfWindow();
+ }
+ 
++bool PlasmaCamera::focusPointAvailable() const
++{
++    return m_settings.canSetAfWindow();
++}
++
++bool PlasmaCamera::focusPointSet() const
++{
++    return m_settings.afPointSet();
++}
++
++QPointF PlasmaCamera::focusPoint() const
++{
++    return m_focusPoint;
++}
++
++void PlasmaCamera::focusAt(const qreal x, const qreal y)
++{
++    if (x < 0.0 || x > 1.0 || y < 0.0 || y > 1.0) {
++        return;
++    }
++
++    // From the displayed image back to the image of the sensor: undo the
++    // mirroring, then the clockwise rotation of the display
++    const qreal u = m_mirrorOutput ? 1.0 - x : x;
++    QPointF point;
++    switch (m_softwareRotationDegrees) {
++    case 90:
++        point = QPointF(y, 1.0 - u);
++        break;
++    case 180:
++        point = QPointF(1.0 - u, 1.0 - y);
++        break;
++    case 270:
++        point = QPointF(1.0 - y, u);
++        break;
++    default:
++        point = QPointF(u, y);
++        break;
++    }
++
++    if (m_settings.trySetAfPoint(point)) {
++        m_focusPoint = QPointF(x, y);
++        Q_EMIT settingsChanged(m_settings);
++        Q_EMIT focusPointChanged();
++    }
++}
++
++void PlasmaCamera::resetFocusPoint()
++{
++    if (!m_settings.afPointSet()) {
++        return;
++    }
++
++    m_settings.unSetAfWindow();
++    Q_EMIT settingsChanged(m_settings);
++    Q_EMIT focusPointChanged();
++}
++
+ int PlasmaCamera::iso() const
+ {
+     return static_cast<int>(m_settings.getGain() * 100);
+@@ -606,6 +664,7 @@ bool PlasmaCamera::acquire()
+     // m_camera->controls() is constant through the lifetime of m_camera, so we don't need to reload.
+     m_settings.load(m_camera->controls());
+     Q_EMIT settingsChanged(m_settings);
++    Q_EMIT focusPointChanged();
+ 
+     // Find the amount of degrees needed to rotate the camera output by and populate m_softwareRotationDegrees
+     std::optional<int> cameraRotation = m_camera->properties().get(libcamera::properties::Rotation);
+diff --git a/src/plasmacamera.h b/src/plasmacamera.h
+index 86af1af..6e4ffe4 100644
+--- a/src/plasmacamera.h
++++ b/src/plasmacamera.h
+@@ -57,6 +57,9 @@ class PlasmaCamera : public QObject
+ 
+     // Focus
+     // Q_PROPERTY(QSize afWindow READ afWindow WRITE setAfWindow RESET resetAfWindow NOTIFY afWindowChanged)
++    Q_PROPERTY(bool focusPointAvailable READ focusPointAvailable NOTIFY settingsChanged)
++    Q_PROPERTY(bool focusPointSet READ focusPointSet NOTIFY focusPointChanged)
++    Q_PROPERTY(QPointF focusPoint READ focusPoint NOTIFY focusPointChanged)
+ 
+     // Brightness
+     // Q_PROPERTY(int iso READ iso WRITE setIso RESET resetIso NOTIFY settingsChanged)
+@@ -145,6 +148,29 @@ public:
+     // Focus
+     QSize afWindow() const;
+ 
++    /*!
++     * Whether the camera can focus on a point chosen by the user.
++     */
++    bool focusPointAvailable() const;
++
++    /*!
++     * Whether a focus point is set, and where: fractions (0..1) of the
++     * image as it is displayed (rotated and mirrored).
++     */
++    bool focusPointSet() const;
++    QPointF focusPoint() const;
++
++    /*!
++     * Focus on a point of the displayed image (fractions of its width
++     * and height).
++     */
++    Q_INVOKABLE void focusAt(qreal x, qreal y);
++
++    /*!
++     * Back to the automatic choice of the subject (centre of the image).
++     */
++    Q_INVOKABLE void resetFocusPoint();
++
+     // Brightness
+     int iso() const;
+     int exposureTime() const;
+@@ -185,6 +211,7 @@ Q_SIGNALS:
+ 
+     // Focus
+     void afWindowChanged(const QSize &newAfWindow);
++    void focusPointChanged();
+ 
+     // Settings
+     void settingsChanged(const Settings &settings);
+@@ -275,6 +302,9 @@ private:
+ 
+     float m_fps = 30.0f;
+ 
++    // Focus point chosen by the user, in the displayed image
++    QPointF m_focusPoint;
++
+     // The amount of degrees to rotate captured input by.
+     int m_softwareRotationDegrees = 0;
+ 
+diff --git a/src/plasmacamera/settings.cpp b/src/plasmacamera/settings.cpp
+index 5cdb68e..e199af1 100644
+--- a/src/plasmacamera/settings.cpp
++++ b/src/plasmacamera/settings.cpp
+@@ -4,6 +4,8 @@
+ 
+ #include "settings.h"
+ 
++#include <algorithm>
++
+ Settings::Settings() {}
+ 
+ Settings::~Settings() {}
+@@ -37,9 +39,16 @@ void Settings::load(const libcamera::ControlInfoMap &infoMap)
+             break;
+ 
+         case libcamera::controls::AF_WINDOWS:
+-            // TODO: should we check for AF_METERING instead?
+-            // TODO: how to convert Span<const Rectangle> to QSize?
+-            m_afWindowAvailable = true;
++            // The upper limit of the control is the rectangle the windows are
++            // expressed in (libcamera-diting: 1/10000 of the image)
++            if (controlInfo.max().type() == libcamera::ControlTypeRectangle && !controlInfo.max().isArray()) {
++                m_afWindowSpace = controlInfo.max().get<libcamera::Rectangle>();
++            }
++            m_afWindowAvailable = m_afWindowSpace.width > 0 && m_afWindowSpace.height > 0;
++            break;
++
++        case libcamera::controls::AF_METERING:
++            m_afMeteringAvailable = true;
+             break;
+ 
+         case libcamera::controls::AWB_MODE:
+@@ -117,6 +126,24 @@ void Settings::set(libcamera::ControlList &controlMap)
+         controlMap.set(libcamera::controls::ExposureTime, m_exposureTime);
+     }
+ 
++    if (m_afWindowAvailable && m_afMeteringAvailable) {
++        if (m_afWindow) {
++            // Focus window around the point chosen by the user
++            const double side = 0.18;
++            const double x = std::clamp(m_afPoint.x() - side / 2, 0.0, 1.0 - side);
++            const double y = std::clamp(m_afPoint.y() - side / 2, 0.0, 1.0 - side);
++            const libcamera::Rectangle window(m_afWindowSpace.x + static_cast<int>(x * m_afWindowSpace.width),
++                                              m_afWindowSpace.y + static_cast<int>(y * m_afWindowSpace.height),
++                                              static_cast<unsigned int>(side * m_afWindowSpace.width),
++                                              static_cast<unsigned int>(side * m_afWindowSpace.height));
++
++            controlMap.set(libcamera::controls::AfMetering, libcamera::controls::AfMeteringWindows);
++            controlMap.set(libcamera::controls::AfWindows, libcamera::Span<const libcamera::Rectangle>(&window, 1));
++        } else {
++            controlMap.set(libcamera::controls::AfMetering, libcamera::controls::AfMeteringAuto);
++        }
++    }
++
+     // TODO: implement the rest of the settings
+ }
+ 
+@@ -250,6 +277,24 @@ void Settings::unSetAfWindow()
+     m_afWindow = false;
+ }
+ 
++bool Settings::trySetAfPoint(const QPointF &point)
++{
++    if (!canSetAfWindow()) {
++        return false;
++    }
++
++    m_afWindowUseDefault = false;
++    m_afWindow = true;
++    m_afPoint = QPointF(std::clamp(point.x(), 0.0, 1.0), std::clamp(point.y(), 0.0, 1.0));
++
++    return true;
++}
++
++bool Settings::afPointSet() const
++{
++    return m_afWindow;
++}
++
+ QSize Settings::getAfWindow() const
+ {
+     if (m_afWindowUseDefault) {
+diff --git a/src/plasmacamera/settings.h b/src/plasmacamera/settings.h
+index e09a764..d1e06a7 100644
+--- a/src/plasmacamera/settings.h
++++ b/src/plasmacamera/settings.h
+@@ -5,6 +5,7 @@
+ 
+ #include <QImage>
+ #include <QDebug>
++#include <QPointF>
+ 
+ #include <libcamera/libcamera.h>
+ 
+@@ -63,6 +64,14 @@ public:
+     void unSetAfWindow();
+     QSize getAfWindow() const;
+ 
++    /*
++     * Focus point chosen by the user: centre of the focus window, as a
++     * fraction (0..1) of the image as the sensor delivers it (before the
++     * rotation and mirroring of the display).
++     */
++    bool trySetAfPoint(const QPointF &point);
++    bool afPointSet() const;
++
+ 
+     // White Balance (WB) Settings
+     /*
+@@ -179,6 +188,10 @@ private:
+     bool m_afWindow = false;
+     bool m_afWindowUseDefault = true;
+     bool m_afWindowAvailable = false;
++    bool m_afMeteringAvailable = false;
++    // Coordinate space of the AfWindows control (its upper limit)
++    libcamera::Rectangle m_afWindowSpace;
++    QPointF m_afPoint;
+ 
+     // White Balance (WB) Settings
+     /*

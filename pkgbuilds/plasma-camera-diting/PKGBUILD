@@ -5,7 +5,7 @@
 pkgname=plasma-camera-diting
 _tag=v26.08.2
 pkgver=26.08.2
-pkgrel=3
+pkgrel=4
 pkgdesc="Appareil photo de Plasma Mobile, aperçu réduit et photos en pleine résolution (Xiaomi diting)"
 arch=(aarch64)
 url="https://invent.kde.org/plasma-mobile/plasma-camera"
@@ -16,12 +16,16 @@ makedepends=(git extra-cmake-modules qt6-tools)
 provides=(plasma-camera=${pkgver})
 conflicts=(plasma-camera)
 source=("plasma-camera::git+https://github.com/KDE/plasma-camera.git#tag=${_tag}"
-        0001-Reduced-viewfinder-full-resolution-still-capture-dit.patch)
-sha256sums=('SKIP' 'SKIP')
+        0001-Reduced-viewfinder-full-resolution-still-capture-dit.patch
+        0002-Tap-to-focus-diting.patch)
+sha256sums=('SKIP' 'SKIP' 'SKIP')
 
 prepare() {
   cd plasma-camera
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0001-Reduced-viewfinder-full-resolution-still-capture-dit.patch"
+  # toucher l'aperçu pour faire le point sur un sujet, appui long pour revenir au centre
+  # (demande libcamera-diting >= 0.7.0-12, patch 0016)
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0002-Tap-to-focus-diting.patch"
 }
 
 build() {

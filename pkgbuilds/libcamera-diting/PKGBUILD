@@ -6,7 +6,7 @@ pkgname=libcamera-diting
 _tag=v0.7.0
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=0.7.0
-pkgrel=11
+pkgrel=12
 pkgdesc="libcamera avec la prise en charge des caméras du Xiaomi diting"
 arch=(aarch64)
 url="https://libcamera.org"
@@ -30,8 +30,9 @@ source=("libcamera::git+https://github.com/libcamera-org/libcamera.git#tag=${_ta
         0012-software_isp-Leave-saturated-samples-out-of-the-whit.patch
         0013-software_isp-Back-to-statistics-every-fourth-frame.patch
         0014-ipa-simple-Keep-the-white-balance-gains-and-the-focu.patch
-        0015-pipeline-simple-Prefer-sensor-modes-with-the-aspect-.patch)
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+        0015-pipeline-simple-Prefer-sensor-modes-with-the-aspect-.patch
+        0016-ipa-simple-af-Local-search-steadier-continuous-mode-.patch)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 prepare() {
   cd libcamera
@@ -62,6 +63,10 @@ prepare() {
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0014-ipa-simple-Keep-the-white-balance-gains-and-the-focu.patch"
   # mode capteur au rapport de l'image demandée (aperçu 4:3 réduit sans recadrage)
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0015-pipeline-simple-Prefer-sensor-modes-with-the-aspect-.patch"
+  # autofocus : recherche locale au lieu du balayage complet, attente d'une scène
+  # stable, résultat vérifié, exposition figée et mesure à chaque image pendant la
+  # recherche, zone de mise au point choisie par l'application (AfWindows)
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0016-ipa-simple-af-Local-search-steadier-continuous-mode-.patch"
 }
 build() {
   arch-meson libcamera build \
