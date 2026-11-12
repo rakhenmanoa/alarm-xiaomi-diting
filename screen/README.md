@@ -48,6 +48,8 @@ Les deux dalles sont des AMOLED 1220×2712 avec un DDIC Novatek, en DSI **mode c
 | `0015` | diting-ubuntu | Lien DSI à 1,1 Gbit/s par lane pour toutes les fréquences (le porche avant fixe le débit en mode commande), ajout des modes 90 et 120 Hz. |
 | `0901` | ce dépôt | **Dalle 42 02 0a** : séquence d'init et commandes de fréquence du DT vendeur, table DSC 1.1 standard (avant SCR), `first_line_bpg_offset` 12. Le pilote choisit la variante d'après `msm_drm.dsi_display0=` du bootloader. Ajoute les paramètres `dsc_rc` et `dsc_fl`. |
 | `0902` | ce dépôt | msm/dsi : paramètre `msm.dsc_slice_per_pkt`. En amont, une seule tranche DSC part par paquet DSI ; la 42 02 0a veut les deux tranches d'une ligne dans le même paquet (vendeur : `qcom,mdss-dsc-slice-per-pkt = 2`). |
+| `0924` | ce dépôt | Verrou sur tous les accès DSI de la dalle (init, luminosité, HBM local) ; rien n'est envoyé dalle éteinte ; après l'init, lecture du power mode (0x0a) et nouvelle init si l'affichage n'est pas allumé. |
+| `0925` | ce dépôt | D'après le `dtbo` vendeur : ligne ESD `esd-gpios` (TLMM 116, active basse, `mi,esd-err-irq-gpio`) avec relance de la dalle, abandon après 3 erreurs en 10 s ; luminosité envoyée 50 ms après l'allumage (`delay_until_first_frame`) ; dimming `0x53 0x28` 120 ms après l'allumage (`mi,panel-on-dimming-delay`), coupé pendant le HBM local. Paramètres `esd=0` et `dimming=0` du module. |
 
 ### Réglages installés
 - `scripts/diting-dsc.conf` → `/usr/lib/modprobe.d/` : `options msm dsc_slice_per_pkt=2`.

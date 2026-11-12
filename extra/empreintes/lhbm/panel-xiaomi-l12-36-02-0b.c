@@ -19,6 +19,8 @@
 #include <linux/backlight.h>
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
+#include <linux/interrupt.h>
+#include <linux/jiffies.h>
 #include <linux/math64.h>
 #include <linux/minmax.h>
 #include <linux/module.h>
@@ -26,6 +28,7 @@
 #include <linux/of.h>
 #include <linux/property.h>
 #include <linux/string.h>
+#include <linux/workqueue.h>
 #include <linux/regulator/consumer.h>
 
 #include <video/mipi_display.h>
@@ -54,6 +57,26 @@ MODULE_PARM_DESC(dsc_rc, "DSC RC table: -1 auto, 0 DSC 1.1, 1 Novatek, 2 DSC 1.1
 static int dsc_fl;
 module_param(dsc_fl, int, 0444);
 MODULE_PARM_DESC(dsc_fl, "DSC first_line_bpg_offset (0 = auto)");
+
+/*
+ * Vendor mi,mdss-dsi-dimmingon-command (0x53 0x28), sent
+ * mi,panel-on-dimming-delay (120 ms) after the panel comes up: the DDIC
+ * then fades between brightness levels instead of jumping.
+ */
+static bool dimming = true;
+module_param(dimming, bool, 0644);
+MODULE_PARM_DESC(dimming, "Smooth brightness changes (DDIC dimming), from the next panel power-on");
+
+/* ESD line (esd-gpios in the DT): reset and re-initialise the panel on error */
+static bool esd = true;
+module_param(esd, bool, 0644);
+MODULE_PARM_DESC(esd, "Recover the panel when it signals an error on its ESD line");
+
+/* vendor qcom,bl-update-flag = "delay_until_first_frame" */
+#define XIAOMI_L12_FIRST_FRAME_MS	50
+#define XIAOMI_L12_DIMMING_DELAY_MS	120
+/* give up on the ESD line after this many recoveries less than 10 s apart */
+#define XIAOMI_L12_ESD_MAX_RETRIES	3
 
 /* Vendor normal range; 2048..4095 is the high-brightness (HBM) range. */
 #define XIAOMI_L12_MAX_BRIGHTNESS	2047
@@ -91,6 +114,19 @@ struct xiaomi_l12 {
 	 */
 	struct mutex lock;
 	bool on;		/* panel initialised, commands accepted */
+	bool bl_ready;		/* first frame out: brightness may be sent */
+	bool dimming_on;	/* 0x53 0x28 sent */
+
+	/* vendor mi,esd-err-irq-gpio: the DDIC pulls it low when it fails */
+	struct gpio_desc *esd_gpio;
+	int esd_irq;
+	bool esd_irq_enabled;
+	unsigned long esd_last;		/* jiffies of the last recovery */
+	unsigned int esd_count;		/* recoveries in a row */
+	struct work_struct esd_work;
+
+	struct delayed_work bl_work;	/* first brightness after enable */
+	struct delayed_work dim_work;	/* dimming on after enable */
 };
 
 /* local_hbm attribute (42 02 0a): 0 off, 1..3 disc on */
@@ -604,29 +640,46 @@ static int xiaomi_l12_42_set_rate(struct xiaomi_l12 *ctx,
 	return dsi_ctx.accum_err;
 }
 
-static int xiaomi_l12_prepare(struct drm_panel *panel)
+static int xiaomi_l12_send_brightness(struct xiaomi_l12 *ctx,
+				     struct backlight_device *bl);
+
+/* 0x53: 0x28 = brightness dimming on, 0x20 = off (vendor, HS mode). Lock held. */
+static int xiaomi_l12_set_dimming(struct xiaomi_l12 *ctx, bool on)
 {
-	struct xiaomi_l12 *ctx = to_xiaomi_l12(panel);
+	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
+	struct mipi_dsi_device *dsi = ctx->dsi;
+	const u8 cmd[] = { MIPI_DCS_WRITE_CONTROL_DISPLAY, on ? 0x28 : 0x20 };
+
+	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+	mipi_dsi_dcs_write_buffer_multi(&dsi_ctx, cmd, sizeof(cmd));
+	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+
+	if (!dsi_ctx.accum_err)
+		ctx->dimming_on = on;
+	return dsi_ctx.accum_err;
+}
+
+/*
+ * Reset and initialise a powered panel: init sequence, power mode check,
+ * PPS, compression and refresh rate. Used by prepare() and ESD recovery.
+ * Lock held.
+ */
+static int xiaomi_l12_init(struct xiaomi_l12 *ctx)
+{
 	struct device *dev = &ctx->dsi->dev;
 	struct drm_dsc_picture_parameter_set pps;
 	const struct xiaomi_l12_mode *mode;
 	u8 power_mode;
 	int ret;
 
-	mutex_lock(&ctx->lock);
-
-	ret = xiaomi_l12_power_on(ctx);
-	if (ret) {
-		dev_err(dev, "failed to enable supplies: %d\n", ret);
-		goto err_unlock;
-	}
+	ctx->dimming_on = false;	/* the init sequence sends 0x53 0x20 */
 
 	xiaomi_l12_reset(ctx);
 
 	ret = ctx->desc->on(ctx);
 	if (ret < 0) {
 		dev_err(dev, "failed to initialize panel: %d\n", ret);
-		goto err_off;
+		return ret;
 	}
 
 	/*
@@ -645,7 +698,7 @@ static int xiaomi_l12_prepare(struct drm_panel *panel)
 		ret = ctx->desc->on(ctx);
 		if (ret < 0) {
 			dev_err(dev, "failed to initialize panel: %d\n", ret);
-			goto err_off;
+			return ret;
 		}
 		if (!mipi_dsi_dcs_get_power_mode(ctx->dsi, &power_mode))
 			dev_info(dev, "power mode 0x%02x after retry\n",
@@ -659,13 +712,13 @@ static int xiaomi_l12_prepare(struct drm_panel *panel)
 	ret = mipi_dsi_picture_parameter_set(ctx->dsi, &pps);
 	if (ret < 0) {
 		dev_err(dev, "failed to transmit PPS: %d\n", ret);
-		goto err_off;
+		return ret;
 	}
 
 	ret = mipi_dsi_compression_mode(ctx->dsi, true);
 	if (ret < 0) {
 		dev_err(dev, "failed to enable compression mode: %d\n", ret);
-		goto err_off;
+		return ret;
 	}
 
 	/* on() sets up 60 Hz; switch like the vendor driver does at runtime */
@@ -674,13 +727,155 @@ static int xiaomi_l12_prepare(struct drm_panel *panel)
 		ret = ctx->desc->set_rate(ctx, mode);
 		if (ret < 0) {
 			dev_err(dev, "failed to set refresh rate: %d\n", ret);
-			goto err_off;
+			return ret;
 		}
 	}
 
 	msleep(28);
 
+	return 0;
+}
+
+/* Lock held */
+static void xiaomi_l12_esd_enable(struct xiaomi_l12 *ctx)
+{
+	struct device *dev = &ctx->dsi->dev;
+
+	if (!ctx->esd_gpio || ctx->esd_irq_enabled || !esd)
+		return;
+
+	/* the line must be idle once the panel runs, or it is not an ESD line */
+	if (gpiod_get_value_cansleep(ctx->esd_gpio) > 0) {
+		dev_warn(dev, "ESD line active with the panel running, ESD recovery disabled\n");
+		ctx->esd_gpio = NULL;
+		return;
+	}
+
+	enable_irq(ctx->esd_irq);
+	ctx->esd_irq_enabled = true;
+}
+
+/* Lock held */
+static void xiaomi_l12_esd_disable(struct xiaomi_l12 *ctx)
+{
+	if (!ctx->esd_irq_enabled)
+		return;
+
+	disable_irq(ctx->esd_irq);
+	ctx->esd_irq_enabled = false;
+}
+
+static irqreturn_t xiaomi_l12_esd_irq(int irq, void *data)
+{
+	struct xiaomi_l12 *ctx = data;
+
+	/* edge triggered: no storm; the work checks the line level */
+	schedule_work(&ctx->esd_work);
+
+	return IRQ_HANDLED;
+}
+
+static void xiaomi_l12_esd_work(struct work_struct *work)
+{
+	struct xiaomi_l12 *ctx = container_of(work, struct xiaomi_l12, esd_work);
+	struct device *dev = &ctx->dsi->dev;
+	int ret;
+
+	mutex_lock(&ctx->lock);
+	/* unprepare() may already have run */
+	if (!ctx->on || !ctx->esd_gpio || !ctx->esd_irq_enabled)
+		goto out;
+	/*
+	 * A real error holds the line low (the vendor triggers on the level).
+	 * A short pulse, or an edge latched while the panel was being reset,
+	 * is not one.
+	 */
+	if (gpiod_get_value_cansleep(ctx->esd_gpio) <= 0) {
+		dev_dbg(dev, "ESD line glitch ignored\n");
+		goto out;
+	}
+
+	if (time_before(jiffies, ctx->esd_last + 10 * HZ))
+		ctx->esd_count++;
+	else
+		ctx->esd_count = 1;
+	ctx->esd_last = jiffies;
+
+	if (ctx->esd_count > XIAOMI_L12_ESD_MAX_RETRIES) {
+		dev_err(dev, "ESD error %u times in a row, ESD recovery disabled\n",
+			ctx->esd_count - 1);
+		xiaomi_l12_esd_disable(ctx);
+		ctx->esd_gpio = NULL;
+		goto out;
+	}
+
+	dev_warn(dev, "ESD error signalled by the panel, re-initialising\n");
+	xiaomi_l12_esd_disable(ctx);
+	xiaomi_l12_lhbm_state = 0;
+	ret = xiaomi_l12_init(ctx);
+	if (ret < 0) {
+		dev_err(dev, "ESD recovery failed: %d\n", ret);
+		goto out;
+	}
+
+	if (ctx->bl_ready && ctx->panel.backlight)
+		xiaomi_l12_send_brightness(ctx, ctx->panel.backlight);
+	if (ctx->bl_ready && dimming)
+		xiaomi_l12_set_dimming(ctx, true);
+
+	xiaomi_l12_esd_enable(ctx);
+out:
+	mutex_unlock(&ctx->lock);
+}
+
+static void xiaomi_l12_bl_work(struct work_struct *work)
+{
+	struct xiaomi_l12 *ctx = container_of(to_delayed_work(work),
+					      struct xiaomi_l12, bl_work);
+
+	mutex_lock(&ctx->lock);
+	if (ctx->on && !ctx->bl_ready) {
+		ctx->bl_ready = true;
+		if (ctx->panel.backlight)
+			xiaomi_l12_send_brightness(ctx, ctx->panel.backlight);
+	}
+	mutex_unlock(&ctx->lock);
+}
+
+static void xiaomi_l12_dim_work(struct work_struct *work)
+{
+	struct xiaomi_l12 *ctx = container_of(to_delayed_work(work),
+					      struct xiaomi_l12, dim_work);
+
+	mutex_lock(&ctx->lock);
+	/* not while the local HBM disc is lit: it must not fade */
+	if (ctx->on && dimming && !xiaomi_l12_lhbm_state)
+		xiaomi_l12_set_dimming(ctx, true);
+	mutex_unlock(&ctx->lock);
+}
+
+static int xiaomi_l12_prepare(struct drm_panel *panel)
+{
+	struct xiaomi_l12 *ctx = to_xiaomi_l12(panel);
+	struct device *dev = &ctx->dsi->dev;
+	int ret;
+
+	mutex_lock(&ctx->lock);
+
+	ret = xiaomi_l12_power_on(ctx);
+	if (ret) {
+		dev_err(dev, "failed to enable supplies: %d\n", ret);
+		goto err_unlock;
+	}
+
+	ret = xiaomi_l12_init(ctx);
+	if (ret < 0)
+		goto err_off;
+
 	ctx->on = true;
+	ctx->bl_ready = false;
+	ctx->esd_count = 0;
+	xiaomi_l12_esd_enable(ctx);
 	mutex_unlock(&ctx->lock);
 
 	return 0;
@@ -693,6 +888,24 @@ err_unlock:
 	return ret;
 }
 
+/*
+ * The DPU sends the first frame right after this. Like the vendor
+ * (qcom,bl-update-flag = "delay_until_first_frame"), hold the brightness
+ * back until then: backlight_enable(), which drm_panel_enable() calls next,
+ * only records the level. Dimming follows after mi,panel-on-dimming-delay.
+ */
+static int xiaomi_l12_enable(struct drm_panel *panel)
+{
+	struct xiaomi_l12 *ctx = to_xiaomi_l12(panel);
+
+	schedule_delayed_work(&ctx->bl_work,
+			      msecs_to_jiffies(XIAOMI_L12_FIRST_FRAME_MS));
+	schedule_delayed_work(&ctx->dim_work,
+			      msecs_to_jiffies(XIAOMI_L12_DIMMING_DELAY_MS));
+
+	return 0;
+}
+
 static int xiaomi_l12_unprepare(struct drm_panel *panel)
 {
 	struct xiaomi_l12 *ctx = to_xiaomi_l12(panel);
@@ -701,6 +914,16 @@ static int xiaomi_l12_unprepare(struct drm_panel *panel)
 
 	mutex_lock(&ctx->lock);
 	ctx->on = false;
+	ctx->bl_ready = false;
+	xiaomi_l12_esd_disable(ctx);
+	mutex_unlock(&ctx->lock);
+
+	/* the works take the lock and bail out once ctx->on is false */
+	cancel_delayed_work_sync(&ctx->bl_work);
+	cancel_delayed_work_sync(&ctx->dim_work);
+	cancel_work_sync(&ctx->esd_work);
+
+	mutex_lock(&ctx->lock);
 	/* the disc goes out with the panel */
 	xiaomi_l12_lhbm_state = 0;
 
@@ -741,6 +964,7 @@ static int xiaomi_l12_get_modes(struct drm_panel *panel,
 
 static const struct drm_panel_funcs xiaomi_l12_panel_funcs = {
 	.prepare = xiaomi_l12_prepare,
+	.enable = xiaomi_l12_enable,
 	.unprepare = xiaomi_l12_unprepare,
 	.get_modes = xiaomi_l12_get_modes,
 };
@@ -818,11 +1042,11 @@ static int xiaomi_l12_bl_update_status(struct backlight_device *bl)
 
 	/*
 	 * Panel off: nothing to send (it would time out on a sleeping DDIC).
-	 * drm_panel_enable() calls backlight_enable() once the panel is up,
-	 * which applies the current level.
+	 * Before the first frame: the level is kept by the backlight core
+	 * and sent by xiaomi_l12_bl_work().
 	 */
 	mutex_lock(&ctx->lock);
-	if (ctx->on)
+	if (ctx->on && ctx->bl_ready)
 		ret = xiaomi_l12_send_brightness(ctx, bl);
 	mutex_unlock(&ctx->lock);
 
@@ -853,6 +1077,10 @@ static int xiaomi_l12_42_local_hbm(struct xiaomi_l12 *ctx, unsigned int mode)
 	struct mipi_dsi_device *dsi = ctx->dsi;
 
 	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+	/* the disc must light at once, not fade in: dimming off first */
+	if (mode && ctx->dimming_on)
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, MIPI_DCS_WRITE_CONTROL_DISPLAY,
+					     0x20);
 	if (mode) {
 		u8 d0[7] = { 0xd0 };
 
@@ -885,10 +1113,19 @@ static int xiaomi_l12_42_local_hbm(struct xiaomi_l12 *ctx, unsigned int mode)
 
 	if (dsi_ctx.accum_err)
 		return dsi_ctx.accum_err;
+	/* both directions leave 0x53 at 0x20 */
+	ctx->dimming_on = false;
 
-	/* Back to the user's brightness (the vendor resends DBV here too). */
-	if (!mode && ctx->panel.backlight)
-		return xiaomi_l12_send_brightness(ctx, ctx->panel.backlight);
+	if (!mode) {
+		int ret = 0;
+
+		/* Back to the user's brightness (the vendor resends DBV here too). */
+		if (ctx->panel.backlight)
+			ret = xiaomi_l12_send_brightness(ctx, ctx->panel.backlight);
+		if (!ret && dimming && ctx->bl_ready)
+			ret = xiaomi_l12_set_dimming(ctx, true);
+		return ret;
+	}
 
 	return 0;
 }
@@ -1060,6 +1297,15 @@ static const struct xiaomi_l12_desc *xiaomi_l12_detect(struct device *dev,
 	return desc;
 }
 
+static void xiaomi_l12_cancel_works(void *data)
+{
+	struct xiaomi_l12 *ctx = data;
+
+	cancel_work_sync(&ctx->esd_work);
+	cancel_delayed_work_sync(&ctx->bl_work);
+	cancel_delayed_work_sync(&ctx->dim_work);
+}
+
 static int xiaomi_l12_probe(struct mipi_dsi_device *dsi)
 {
 	struct device *dev = &dsi->dev;
@@ -1095,6 +1341,32 @@ static int xiaomi_l12_probe(struct mipi_dsi_device *dsi)
 	ret = devm_mutex_init(dev, &ctx->lock);
 	if (ret)
 		return ret;
+
+	INIT_WORK(&ctx->esd_work, xiaomi_l12_esd_work);
+	INIT_DELAYED_WORK(&ctx->bl_work, xiaomi_l12_bl_work);
+	INIT_DELAYED_WORK(&ctx->dim_work, xiaomi_l12_dim_work);
+	/* devm order: runs after the ESD irq below is freed */
+	ret = devm_add_action_or_reset(dev, xiaomi_l12_cancel_works, ctx);
+	if (ret)
+		return ret;
+
+	/* Optional: vendor mi,esd-err-irq-gpio (TLMM 116, active low) */
+	ctx->esd_gpio = devm_gpiod_get_optional(dev, "esd", GPIOD_IN);
+	if (IS_ERR(ctx->esd_gpio))
+		return dev_err_probe(dev, PTR_ERR(ctx->esd_gpio),
+				     "failed to get esd-gpios\n");
+	if (ctx->esd_gpio) {
+		ctx->esd_irq = gpiod_to_irq(ctx->esd_gpio);
+		if (ctx->esd_irq < 0)
+			return dev_err_probe(dev, ctx->esd_irq,
+					     "no interrupt for esd-gpios\n");
+		/* edge: a stuck line must not storm; armed while the panel runs */
+		ret = devm_request_irq(dev, ctx->esd_irq, xiaomi_l12_esd_irq,
+				       IRQF_TRIGGER_FALLING | IRQF_NO_AUTOEN,
+				       "panel-esd", ctx);
+		if (ret)
+			return dev_err_probe(dev, ret, "failed to request ESD irq\n");
+	}
 
 	dsi->lanes = 4;
 	dsi->format = MIPI_DSI_FMT_RGB101010;
