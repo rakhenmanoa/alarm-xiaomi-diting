@@ -1,0 +1,1440 @@
+From 1c0035fae2926d206073c5cbb2765f98d6e616c0 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 11 Nov 2026 08:37:44 +0300
+Subject: [PATCH] ipa: simple: af: Local search, steadier continuous mode,
+ focus window
+
+Refocus with a search around the current lens position instead of a scan
+of the whole range, wait for a steady scene before searching, check the
+result, hold the exposure and gather the focus measure on every frame
+while searching, and let the application choose the focus window
+(AfMetering, AfWindows). The full scan starts from the near end.
+---
+ .../internal/software_isp/debayer_params.h    |   8 +
+ .../internal/software_isp/swisp_stats.h       |   9 +
+ .../internal/software_isp/swstats_cpu.h       |  26 +-
+ src/ipa/simple/algorithms/af.cpp              | 764 +++++++++++++++---
+ src/ipa/simple/algorithms/af.h                | 116 ++-
+ src/ipa/simple/algorithms/agc.cpp             |   6 +-
+ src/ipa/simple/ipa_context.h                  |  18 +-
+ src/libcamera/software_isp/debayer_cpu.cpp    |   1 +
+ src/libcamera/software_isp/debayer_egl.cpp    |   1 +
+ src/libcamera/software_isp/swstats_cpu.cpp    |  66 +-
+ 10 files changed, 855 insertions(+), 160 deletions(-)
+
+diff --git a/include/libcamera/internal/software_isp/debayer_params.h b/include/libcamera/internal/software_isp/debayer_params.h
+index 1c0412d..62e29ff 100644
+--- a/include/libcamera/internal/software_isp/debayer_params.h
++++ b/include/libcamera/internal/software_isp/debayer_params.h
+@@ -10,6 +10,7 @@
+ 
+ #pragma once
+ 
++#include <array>
+ #include <stdint.h>
+ 
+ #include "libcamera/internal/matrix.h"
+@@ -23,6 +24,13 @@ struct DebayerParams {
+ 	float gamma;
+ 	float contrastExp;
+ 	RGB<float> gains;
++	/*
++	 * Autofocus (diting): focus measure on every frame instead of every
++	 * statistics period, and focus window as fractions of the statistics
++	 * window (x, y, width, height).
++	 */
++	bool focusEveryFrame = false;
++	std::array<float, 4> focusWindow = { { 1.0f / 3, 1.0f / 3, 1.0f / 3, 1.0f / 3 } };
+ };
+ 
+ } /* namespace libcamera */
+diff --git a/include/libcamera/internal/software_isp/swisp_stats.h b/include/libcamera/internal/software_isp/swisp_stats.h
+index d587494..6b4cc87 100644
+--- a/include/libcamera/internal/software_isp/swisp_stats.h
++++ b/include/libcamera/internal/software_isp/swisp_stats.h
+@@ -53,6 +53,15 @@ struct SwIspStats {
+ 	 * sampled lines in the centre of the window (focus measure)
+ 	 */
+ 	uint64_t sharpness;
++	/**
++	 * \brief Sum of the green samples the focus measure was computed on
++	 */
++	uint64_t sharpnessNorm;
++	/**
++	 * \brief True if the focus measure is valid for this frame (it can be
++	 * gathered on frames the other statistics skip)
++	 */
++	bool focusValid;
+ };
+ 
+ } /* namespace libcamera */
+diff --git a/include/libcamera/internal/software_isp/swstats_cpu.h b/include/libcamera/internal/software_isp/swstats_cpu.h
+index c3a47db..b2e93e7 100644
+--- a/include/libcamera/internal/software_isp/swstats_cpu.h
++++ b/include/libcamera/internal/software_isp/swstats_cpu.h
+@@ -11,6 +11,7 @@
+ 
+ #pragma once
+ 
++#include <array>
+ #include <stdint.h>
+ 
+ #include <libcamera/base/signal.h>
+@@ -53,13 +54,14 @@ public:
+ 
+ 	int configure(const StreamConfiguration &inputCfg);
+ 	void setWindow(const Rectangle &window);
++	void setFocusParams(bool everyFrame, const std::array<float, 4> &window);
+ 	void startFrame(uint32_t frame);
+ 	void finishFrame(uint32_t frame, uint32_t bufferId);
+ 	void processFrame(uint32_t frame, uint32_t bufferId, FrameBuffer *input);
+ 
+ 	void processLine0(uint32_t frame, unsigned int y, const uint8_t *src[])
+ 	{
+-		if (frame % kStatPerNumFrames)
++		if (skipFrame(frame))
+ 			return;
+ 
+ 		if ((y & ySkipMask_) || y < static_cast<unsigned int>(window_.y) ||
+@@ -72,7 +74,7 @@ public:
+ 
+ 	void processLine2(uint32_t frame, unsigned int y, const uint8_t *src[])
+ 	{
+-		if (frame % kStatPerNumFrames)
++		if (skipFrame(frame))
+ 			return;
+ 
+ 		if ((y & ySkipMask_) || y < static_cast<unsigned int>(window_.y) ||
+@@ -101,12 +103,24 @@ private:
+ 
+ 	void processBayerFrame2(MappedFrameBuffer &in);
+ 
+-	/* The focus measure covers the centre third of the window */
++	/*
++	 * Statistics every kStatPerNumFrames frames, or on every frame while
++	 * the autofocus scans (the frames in between then only carry a valid
++	 * focus measure).
++	 */
++	bool skipFrame(uint32_t frame) const
++	{
++		return (frame % kStatPerNumFrames) && !focusEveryFrame_;
++	}
++
++	/* The focus measure covers the focus window (centre third by default) */
+ 	void setSharpnessLine(unsigned int y)
+ 	{
+-		sharpLine_ = y >= window_.height / 3 && y < window_.height * 2 / 3;
++		sharpLine_ = y >= sharpY0_ && y < sharpY1_;
+ 	}
+ 
++	void updateFocusWindow();
++
+ 	processFrameFn processFrame_;
+ 
+ 	/* Variables set by configure(), used every line */
+@@ -114,6 +128,10 @@ private:
+ 	statsProcessFn stats2_;
+ 	bool swapLines_;
+ 	bool sharpLine_ = false;
++	bool focusEveryFrame_ = false;
++	std::array<float, 4> focusWindow_ = { { 1.0f / 3, 1.0f / 3, 1.0f / 3, 1.0f / 3 } };
++	unsigned int sharpX0_ = 0, sharpX1_ = 0;
++	unsigned int sharpY0_ = 0, sharpY1_ = 0;
+ 
+ 	unsigned int ySkipMask_;
+ 
+diff --git a/src/ipa/simple/algorithms/af.cpp b/src/ipa/simple/algorithms/af.cpp
+index 9b90439..25f9899 100644
+--- a/src/ipa/simple/algorithms/af.cpp
++++ b/src/ipa/simple/algorithms/af.cpp
+@@ -4,28 +4,48 @@
+  *
+  * Auto focus
+  *
+- * Contrast detection autofocus on the software ISP's focus measure (the
+- * absolute second derivative of green in the centre of the image, divided
+- * by the green level so that exposure changes do not count as focus
+- * changes). A scan visits the lens range in coarse steps, then the
+- * neighbourhood of the best coarse position (see below), waiting a few
+- * statistics periods after every lens move (the statistics are gathered on
+- * every fourth frame, which is enough for a voice coil lens to settle). In continuous mode a scan is started at
+- * the beginning and again when the measure at the chosen position changes
+- * for several frames (scene change). Lens positions are on a 0..100 scale
+- * mapped linearly onto the lens driver's focus range.
++ * Contrast detection autofocus on the software ISP's focus measure: the
++ * absolute second derivative of green in the focus window, divided by the
++ * green level of the same samples so that neither the exposure nor the rest
++ * of the image count as focus changes. Lens positions are on a 0..100 scale
++ * mapped linearly onto the lens driver's focus range (0 = infinity end).
+  *
+- * Faster scans (diting): the coarse pass stops as soon as the measure has
+- * fallen well below its peak for a few steps (the peak has been passed),
+- * the fine pass only covers +-fineRange around the coarse peak, the lens
+- * range can be limited (rangeMin, rangeMax: positions the module can
+- * focus at), and continuous mode waits for a larger and longer change
+- * before rescanning.
++ * Two searches (diting):
+  *
+- * The fine pass only measures two positions, fineRange on either side of
+- * the coarse peak, and the lens goes to the vertex of the parabola through
+- * the best measure and its two neighbours (in position order, over both
+- * passes): about half the measures of a fine grid, with a finer result.
++ * - Full scan, when nothing is known (first start, local search without a
++ *   result): the lens range in coarse steps, from the near end so that the
++ *   first peak met, where the scan stops, is the closest subject.
++ *
++ * - Local search, for every later refocus: the measure at the current
++ *   position, then on either side of it, further and further out (growing
++ *   steps, the rising side first) until the best measure has a clearly
++ *   lower one (climbMargin) on both sides. When the lens is still at the
++ *   peak that takes three measures and the image hardly moves.
++ *
++ * Both end with measures at fineRange on either side of the best one, the
++ * lens goes to the vertex of the parabola through the three, and the measure
++ * there is checked against the best one (the lens goes back to the best
++ * measured position if the fit was wrong).
++ *
++ * While a search runs the software ISP gathers the focus measure on every
++ * frame instead of every fourth, the AGC holds the exposure, and in low
++ * light (high gain) every position is measured more than once. A search
++ * during which the scene changes would mix measures of two scenes: it
++ * starts again when the brightness of the focus window jumps
++ * (sceneThreshold), and the measures the result rests on are taken again
++ * if they are old.
++ *
++ * Continuous mode refocuses when the measure at the chosen position has
++ * changed for a few statistics, but only once the scene and the exposure
++ * are steady again (no search while the phone is being moved), and not at
++ * all if the measure comes back to what it was. After a search without a
++ * result (no texture, too dark) the lens goes back to the last good
++ * position and the next search waits.
++ *
++ * The application can choose the subject: AfMetering = Windows and one
++ * AfWindows rectangle, in units of 1/10000 of the image as announced by the
++ * control's limits (the simple pipeline has no ScalerCropMaximum). A new
++ * window starts a full scan: the closest subject in it wins.
+  */
+ 
+ #include "af.h"
+@@ -37,6 +57,7 @@
+ #include <libcamera/base/log.h>
+ 
+ #include <libcamera/control_ids.h>
++#include <libcamera/geometry.h>
+ 
+ namespace libcamera {
+ 
+@@ -44,26 +65,67 @@ LOG_DEFINE_CATEGORY(IPASoftAutoFocus)
+ 
+ namespace ipa::soft::algorithms {
+ 
++namespace {
++
++/* AfWindows coordinates: fractions of the image, in 1/kWindowScale */
++constexpr int kWindowScale = 10000;
++constexpr float kWindowMin = 0.05f;
++constexpr std::array<float, 4> kDefaultWindow = { { 1.0f / 3, 1.0f / 3, 1.0f / 3, 1.0f / 3 } };
++
++/* Bounds on a search, in measures */
++constexpr unsigned int kMaxSteps = 60;
++constexpr unsigned int kMaxFineSteps = 6;
++constexpr unsigned int kMaxRestarts = 2;
++constexpr unsigned int kMaxRechecks = 3;
++
++/* A measure this many measures old is taken again before it is trusted */
++constexpr unsigned int kStaleMeasures = 2;
++
++/* Two lens positions closer than this are the same */
++constexpr double kSamePosition = 0.5;
++
++} /* namespace */
++
+ Af::Af()
++	: window_(kDefaultWindow)
+ {
+ }
+ 
+ int Af::init(IPAContext &context, const YamlObject &tuningData)
+ {
+-	settleFrames_ = tuningData["settleFrames"].get<unsigned int>(0);
+-	coarseStep_ = tuningData["coarseStep"].get<double>(10.0);
+-	fineRange_ = tuningData["fineRange"].get<double>(coarseStep_ * 0.4);
++	settleFrames_ = tuningData["settleFrames"].get<unsigned int>(3);
++	coarseStep_ = std::max(tuningData["coarseStep"].get<double>(10.0), 1.0);
++	fineRange_ = std::max(tuningData["fineRange"].get<double>(coarseStep_ * 0.4), 0.5);
++	climbStep_ = std::max(tuningData["climbStep"].get<double>(fineRange_), 0.5);
++	climbMargin_ = std::clamp(tuningData["climbMargin"].get<double>(0.1), 0.01, 0.5);
+ 	rangeMin_ = std::clamp(tuningData["rangeMin"].get<double>(0.0), 0.0, 100.0);
+ 	rangeMax_ = std::clamp(tuningData["rangeMax"].get<double>(100.0), rangeMin_, 100.0);
++	defaultPosition_ = std::clamp(tuningData["defaultPosition"].get<double>(20.0),
++				      rangeMin_, rangeMax_);
++	nearFirst_ = tuningData["nearFirst"].get<bool>(true);
+ 	peakDrop_ = tuningData["peakDrop"].get<double>(0.7);
+ 	peakDropSteps_ = tuningData["peakDropSteps"].get<unsigned int>(2);
+-	changeThreshold_ = tuningData["changeThreshold"].get<double>(0.5);
+-	changeFrames_ = tuningData["changeFrames"].get<unsigned int>(10);
++	peakRatio_ = std::max(tuningData["peakRatio"].get<double>(1.15), 1.0);
++	verifyDrop_ = tuningData["verifyDrop"].get<double>(0.9);
++	changeThreshold_ = tuningData["changeThreshold"].get<double>(0.4);
++	changeFrames_ = tuningData["changeFrames"].get<unsigned int>(4);
++	stableThreshold_ = tuningData["stableThreshold"].get<double>(0.2);
++	stableFrames_ = std::max(tuningData["stableFrames"].get<unsigned int>(2), 1U);
++	waitFrames_ = tuningData["waitFrames"].get<unsigned int>(12);
++	retryFrames_ = tuningData["retryFrames"].get<unsigned int>(25);
++	lowLightGain_ = tuningData["lowLightGain"].get<double>(8.0);
++	lowLightMeasures_ = std::max(tuningData["lowLightMeasures"].get<unsigned int>(2), 1U);
++	sceneThreshold_ = tuningData["sceneThreshold"].get<double>(0.25);
+ 
+ 	context.ctrlMap[&controls::LensPosition] = ControlInfo(0.0f, 100.0f, 50.0f);
+ 	context.ctrlMap[&controls::AfMode] =
+ 		ControlInfo(controls::AfModeValues, ControlValue(controls::AfModeContinuous));
+ 	context.ctrlMap[&controls::AfTrigger] = ControlInfo(controls::AfTriggerValues);
++	context.ctrlMap[&controls::AfMetering] =
++		ControlInfo(controls::AfMeteringValues, ControlValue(controls::AfMeteringAuto));
++	context.ctrlMap[&controls::AfWindows] =
++		ControlInfo(Rectangle{}, Rectangle(0, 0, kWindowScale, kWindowScale),
++			    Rectangle{});
+ 
+ 	return 0;
+ }
+@@ -76,7 +138,19 @@ int Af::configure(IPAContext &context,
+ 	af = {};
+ 	af.mode = controls::AfModeContinuous;
+ 	af.state = controls::AfStateIdle;
+-	af.position = 50.0;
++	af.position = defaultPosition_;
++	af.window = window_;
++
++	phase_ = Phase::Idle;
++	settle_ = 0;
++	refScore_ = 0.0;
++	changed_ = 0;
++	cooldown_ = 0;
++	restarts_ = 0;
++	stable_ = 0;
++	prevScore_ = 0.0;
++	prevExposure_ = 0.0;
++
+ 	context.activeState.knobs.focus_pos = af.position;
+ 
+ 	/* Without a lens there is nothing to do */
+@@ -86,61 +160,180 @@ int Af::configure(IPAContext &context,
+ 	/*
+ 	 * Reconfigured after a successful scan (diting: switch from the
+ 	 * viewfinder to a still capture and back): keep the focus, the
+-	 * scene change monitor rescans if needed.
++	 * scene change monitor refocuses if needed.
+ 	 */
+ 	if (lastPosition_) {
+ 		af.position = *lastPosition_;
+ 		context.activeState.knobs.focus_pos = af.position;
+ 		af.state = controls::AfStateFocused;
+-		af.settle = settleFrames_ + 2;
+-		af.refScore = 0.0;
++		settle_ = 2;
+ 		return 0;
+ 	}
+ 
+-	startScan(context);
++	/* First start: scan once the exposure has settled */
++	startWait(context, true);
+ 
+ 	return 0;
+ }
+ 
+-void Af::startScan(IPAContext &context)
++/* Lens move: the measures wait for the lens and for the frames under way */
++void Af::moveTo(IPAContext &context, double position, unsigned int extraSettle)
++{
++	context.activeState.af.position = std::clamp(position, rangeMin_, rangeMax_);
++	settle_ = settleFrames_ + extraSettle;
++	accCount_ = 0;
++	accScore_ = 0.0;
++}
++
++void Af::startWait(IPAContext &context, bool fullScan)
++{
++	auto &af = context.activeState.af;
++
++	phase_ = Phase::Wait;
++	fullScan_ = fullScan;
++	back_ = 0;
++	waited_ = 0;
++	af.lockExposure = false;
++	af.fastStats = false;
++}
++
++void Af::startFocus(IPAContext &context)
++{
++	if (fullScan_ || !lastPosition_)
++		startScan(context);
++	else
++		startClimb(context);
++}
++
++void Af::startMeasuring(IPAContext &context)
+ {
+ 	auto &af = context.activeState.af;
+ 
+-	af.scanning = true;
+-	af.fine = false;
+-	af.start = rangeMin_;
+-	af.stop = rangeMax_;
+-	af.step = coarseStep_;
+-	af.drops = 0;
+-	af.position = af.start;
+-	af.bestPosition = af.start;
+-	af.bestScore = 0.0;
+-	af.minScore = INFINITY;
+-	af.settle = settleFrames_ + 2;	/* the first move can be long */
+-	af.changed = 0;
+-	af.samples.clear();
++	samples_.clear();
++	bestScore_ = 0.0;
++	bestPosition_ = af.position;
++	minScore_ = INFINITY;
++	steps_ = 0;
++	fineSteps_ = 0;
++	rechecks_ = 0;
++	searchNorm_ = 0.0;
++	drops_ = 0;
++	changed_ = 0;
++	accCount_ = 0;
++	accScore_ = 0.0;
++
++	af.lockExposure = true;
++	af.fastStats = true;
+ 	af.state = controls::AfStateScanning;
++}
++
++void Af::startScan(IPAContext &context)
++{
++	startMeasuring(context);
++
++	phase_ = Phase::Coarse;
++	fromClimb_ = false;
++	direction_ = nearFirst_ ? -1.0 : 1.0;
++	/* the first move can be long, and the statistics change pace */
++	moveTo(context, nearFirst_ ? rangeMax_ : rangeMin_, 2);
++
++	LOG(IPASoftAutoFocus, Debug) << "Starting full scan";
++}
++
++void Af::startClimb(IPAContext &context)
++{
++	startMeasuring(context);
+ 
+-	LOG(IPASoftAutoFocus, Debug) << "Starting scan";
++	phase_ = Phase::Climb;
++	fromClimb_ = true;
++	climbStarted_ = false;
++	climbOrigin_ = context.activeState.af.position;
++	/* no lens move, but the statistics change pace (and window) */
++	moveTo(context, climbOrigin_, 2);
++
++	LOG(IPASoftAutoFocus, Debug)
++		<< "Starting local search from " << climbOrigin_;
+ }
+ 
+ void Af::stopScan(IPAContext &context, bool found)
+ {
+ 	auto &af = context.activeState.af;
+ 
+-	af.scanning = false;
+-	af.position = af.bestPosition;
+-	af.settle = settleFrames_ + 1;
+-	af.refScore = 0.0;	/* measured once the lens is back */
+-	af.changed = 0;
++	phase_ = Phase::Idle;
++	af.lockExposure = false;
++	af.fastStats = false;
+ 	af.state = found ? controls::AfStateFocused : controls::AfStateFailed;
+-	if (found)
+-		lastPosition_ = af.bestPosition;
++	changed_ = 0;
+ 
+ 	LOG(IPASoftAutoFocus, Debug)
+-		<< "Scan done: position " << af.bestPosition
+-		<< " score " << af.bestScore << " (min " << af.minScore << ")"
++		<< "Search done in " << steps_ << " measures: position "
++		<< af.position << ", best measure " << bestScore_
++		<< " at " << bestPosition_ << " (min " << minScore_ << ")"
+ 		<< (found ? "" : ", no contrast peak");
++
++	if (found) {
++		lastPosition_ = af.position;
++		settle_ = std::max(settle_, 1U);
++		return;
++	}
++
++	/*
++	 * Nothing to focus on: back to the last good position, and no new
++	 * search for a while.
++	 */
++	af.position = lastPosition_.value_or(defaultPosition_);
++	refScore_ = 0.0;
++	cooldown_ = retryFrames_;
++	settle_ = 2;
++}
++
++/* A new measure at a position already measured replaces the old one */
++void Af::addSample(double position, double score)
++{
++	auto same = std::find_if(samples_.begin(), samples_.end(),
++				 [&](const Sample &sample) {
++					 return std::abs(sample.position - position) <= kSamePosition;
++				 });
++	if (same != samples_.end())
++		samples_.erase(same);
++
++	samples_.push_back({ position, score, steps_ });
++
++	bestScore_ = 0.0;
++	minScore_ = INFINITY;
++	for (const Sample &sample : samples_) {
++		if (sample.score > bestScore_) {
++			bestScore_ = sample.score;
++			bestPosition_ = sample.position;
++		}
++		minScore_ = std::min(minScore_, sample.score);
++	}
++}
++
++/*
++ * The best measure and its neighbours in position, the three the result
++ * rests on. Null where the best measure has no neighbour.
++ */
++std::array<const Af::Sample *, 3> Af::peakSamples(std::vector<Sample> &sorted) const
++{
++	sorted = samples_;
++	std::sort(sorted.begin(), sorted.end(),
++		  [](const Sample &a, const Sample &b) { return a.position < b.position; });
++	auto best = std::max_element(sorted.begin(), sorted.end(),
++				     [](const Sample &a, const Sample &b) {
++					     return a.score < b.score;
++				     });
++	if (best == sorted.end())
++		return { { nullptr, nullptr, nullptr } };
++
++	return { { best == sorted.begin() ? nullptr : &*(best - 1), &*best,
++		   best + 1 == sorted.end() ? nullptr : &*(best + 1) } };
++}
++
++/* A flat curve has no focus peak (no texture, too dark) */
++bool Af::hasPeak(double ratio) const
++{
++	return samples_.size() >= 3 && bestScore_ > minScore_ * ratio;
+ }
+ 
+ /*
+@@ -148,21 +341,19 @@ void Af::stopScan(IPAContext &context, bool found)
+  * measure and its neighbours, kept between the midpoints to the neighbours
+  * (the curve is not a parabola far from the peak).
+  */
+-double Af::peakPosition(IPAContext &context)
++double Af::peakPosition() const
+ {
+-	auto samples = context.activeState.af.samples;
++	std::vector<Sample> sorted;
++	auto peak = peakSamples(sorted);
+ 
+-	std::sort(samples.begin(), samples.end());
+-	auto best = std::max_element(samples.begin(), samples.end(),
+-				     [](const auto &a, const auto &b) {
+-					     return a.second < b.second;
+-				     });
+-	if (best == samples.begin() || best + 1 == samples.end())
+-		return best->first;
++	if (!peak[1])
++		return bestPosition_;
++	if (!peak[0] || !peak[2])
++		return peak[1]->position;
+ 
+-	double x0 = (best - 1)->first, y0 = (best - 1)->second;
+-	double x1 = best->first, y1 = best->second;
+-	double x2 = (best + 1)->first, y2 = (best + 1)->second;
++	double x0 = peak[0]->position, y0 = peak[0]->score;
++	double x1 = peak[1]->position, y1 = peak[1]->score;
++	double x2 = peak[2]->position, y2 = peak[2]->score;
+ 
+ 	double num = (x1 - x0) * (x1 - x0) * (y1 - y2) - (x1 - x2) * (x1 - x2) * (y1 - y0);
+ 	double den = (x1 - x0) * (y1 - y2) - (x1 - x2) * (y1 - y0);
+@@ -173,79 +364,290 @@ double Af::peakPosition(IPAContext &context)
+ 	return std::clamp(x, (x0 + x1) / 2.0, (x1 + x2) / 2.0);
+ }
+ 
+-void Af::scanStep(IPAContext &context, double score)
++/*
++ * Next position of the fine pass: fineRange away from the best measure, on a
++ * side where nothing was measured that close. The nearest to the lens first.
++ */
++std::optional<double> Af::nextFinePosition(double current) const
++{
++	std::optional<double> next;
++
++	for (double side : { -1.0, 1.0 }) {
++		double target = bestPosition_ + side * fineRange_;
++		if (target < rangeMin_ - 1e-6 || target > rangeMax_ + 1e-6)
++			continue;
++
++		bool measured = std::any_of(samples_.begin(), samples_.end(),
++					    [&](const Sample &sample) {
++						    double d = side * (sample.position - bestPosition_);
++						    return d > kSamePosition && d <= fineRange_ + 1e-6;
++					    });
++		if (measured)
++			continue;
++
++		if (!next || std::abs(target - current) < std::abs(*next - current))
++			next = target;
++	}
++
++	return next;
++}
++
++/* Count the statistics in a row with the same measure and exposure */
++void Af::trackSteady(double score, double exposure)
++{
++	bool steady = prevScore_ > 0.0 && prevExposure_ > 0.0 &&
++		      std::abs(score - prevScore_) <= prevScore_ * stableThreshold_ &&
++		      std::abs(exposure - prevExposure_) <= prevExposure_ * 0.1;
++
++	stable_ = steady ? stable_ + 1 : 0;
++	prevScore_ = score;
++	prevExposure_ = exposure;
++}
++
++void Af::monitor(IPAContext &context, double score, double exposure)
+ {
+ 	auto &af = context.activeState.af;
+ 
+-	af.samples.emplace_back(af.position, score);
+-	if (score > af.bestScore) {
+-		af.bestScore = score;
+-		af.bestPosition = af.position;
+-		af.drops = 0;
++	trackSteady(score, exposure);
++
++	if (cooldown_)
++		cooldown_--;
++
++	if (af.mode != controls::AfModeContinuous)
++		return;
++
++	if (refScore_ <= 0.0) {
++		refScore_ = score;
++		return;
++	}
++
++	if (std::abs(score - refScore_) <= refScore_ * changeThreshold_) {
++		changed_ = 0;
++		return;
++	}
++
++	if (++changed_ < changeFrames_ || cooldown_)
++		return;
++
++	LOG(IPASoftAutoFocus, Debug)
++		<< "Scene changed (" << score << " vs " << refScore_ << ")";
++	restarts_ = 0;
++	startWait(context, false);
++	waitStep(context, score, exposure, false);
++}
++
++/*
++ * Before a search: wait until the measure and the exposure stop changing
++ * (the phone is being moved, the AGC is converging), for waitFrames
++ * statistics at most.
++ */
++void Af::waitStep(IPAContext &context, double score, double exposure, bool track)
++{
++	if (track)
++		trackSteady(score, exposure);
++
++	/* The scene is back to what the lens is focused on: nothing to do */
++	if (!fullScan_ && refScore_ > 0.0 &&
++	    std::abs(score - refScore_) <= refScore_ * changeThreshold_ / 2) {
++		if (++back_ >= stableFrames_) {
++			LOG(IPASoftAutoFocus, Debug) << "Scene back, no search";
++			phase_ = Phase::Idle;
++			changed_ = 0;
++			return;
++		}
++	} else {
++		back_ = 0;
+ 	}
+-	af.minScore = std::min(af.minScore, score);
++
++	if (stable_ >= stableFrames_ || ++waited_ >= waitFrames_)
++		startFocus(context);
++}
++
++void Af::coarseStep(IPAContext &context, double score)
++{
++	auto &af = context.activeState.af;
++	double previousBest = bestScore_;
++
++	addSample(af.position, score);
++	if (score > previousBest)
++		drops_ = 0;
+ 
+ 	/*
+-	 * Coarse pass: past a clear peak (the measure fell below peakDrop of
+-	 * the best for peakDropSteps steps), the rest of the range is not
+-	 * needed.
++	 * Past a clear peak (the measure fell below peakDrop of the best for
++	 * peakDropSteps steps), the rest of the range is not needed.
+ 	 */
+ 	bool pastPeak = false;
+-	if (!af.fine && score < af.bestScore * peakDrop_ &&
+-	    af.bestScore > af.minScore * 1.15)
+-		pastPeak = ++af.drops >= peakDropSteps_;
++	if (score < bestScore_ * peakDrop_ && bestScore_ > minScore_ * peakRatio_)
++		pastPeak = ++drops_ >= peakDropSteps_;
++
++	if (!pastPeak) {
++		double next = std::clamp(af.position + direction_ * coarseStep_,
++					 rangeMin_, rangeMax_);
++		if (std::abs(next - af.position) > kSamePosition) {
++			moveTo(context, next);
++			return;
++		}
++	}
++
++	phase_ = Phase::Fine;
++	fineStep(context);
++}
++
++/*
++ * Local search. The measures spread out from the origin, one side at a time
++ * with growing steps, until the best one has a measure lower by climbMargin
++ * (or the end of the range) on both sides. The side to extend is one that
++ * is still open, the rising one if both are.
++ */
++void Af::climbStep(IPAContext &context, double score)
++{
++	auto &af = context.activeState.af;
++
++	addSample(af.position, score);
++
++	auto atBound = [&](double position, unsigned int side) {
++		return side ? position >= rangeMax_ - kSamePosition
++			    : position <= rangeMin_ + kSamePosition;
++	};
++
++	if (!climbStarted_) {
++		climbStarted_ = true;
++		for (unsigned int side : { 0U, 1U })
++			sides_[side] = { af.position, score, climbStep_ };
++	} else {
++		ClimbSide &side = sides_[climbSide_];
++		side.position = af.position;
++		side.score = score;
++		side.step = std::min(side.step * 2.0, coarseStep_);
++	}
++
++	/* A wider margin in low light, where the measure is noisy */
++	double margin = lowLight_ ? std::min(climbMargin_ * 1.5, 0.5) : climbMargin_;
++	double limit = bestScore_ * (1.0 - margin);
++
++	bool open[2];
++	for (unsigned int side : { 0U, 1U }) {
++		double sign = side ? 1.0 : -1.0;
++		bool lower = std::any_of(samples_.begin(), samples_.end(),
++					 [&](const Sample &sample) {
++						 return sign * (sample.position - bestPosition_) > kSamePosition &&
++							sample.score <= limit;
++					 });
++		open[side] = !lower && !atBound(sides_[side].position, side);
++	}
+ 
+-	if (!pastPeak && af.position + af.step <= af.stop + 1e-6) {
+-		af.position += af.step;
+-		af.settle = settleFrames_;
++	if (!open[0] && !open[1]) {
++		phase_ = Phase::Fine;
++		fineStep(context);
+ 		return;
+ 	}
+ 
+-	if (!af.fine) {
+-		/* Fine pass: fineRange on either side of the coarse peak */
+-		af.fine = true;
+-		double lo = af.bestPosition - fineRange_;
+-		double hi = af.bestPosition + fineRange_;
+-		af.start = lo >= rangeMin_ - 1e-6 ? lo : hi;
+-		af.stop = hi <= rangeMax_ + 1e-6 ? hi : lo;
+-		af.step = std::max(hi - lo, 1.0);
+-		if (af.start >= rangeMin_ - 1e-6 && af.stop <= rangeMax_ + 1e-6 &&
+-		    af.start <= af.stop + 1e-6) {
+-			af.position = af.start;
+-			af.settle = settleFrames_ + 1;
++	unsigned int next;
++	if (open[0] != open[1]) {
++		next = open[1] ? 1 : 0;
++	} else if (std::abs(sides_[1].score - sides_[0].score) >
++		   0.02 * std::max(sides_[0].score, sides_[1].score)) {
++		next = sides_[1].score > sides_[0].score ? 1 : 0;
++	} else {
++		/* about the same: the side explored the least, the near one first */
++		next = std::abs(sides_[1].position - climbOrigin_) <=
++		       std::abs(sides_[0].position - climbOrigin_) ? 1 : 0;
++	}
++
++	climbSide_ = next;
++	moveTo(context, sides_[next].position + (next ? 1.0 : -1.0) * sides_[next].step);
++}
++
++/*
++ * Fine pass, entered once the peak is bracketed: measures at fineRange on
++ * either side of the best one (again if one of them turns out better), then
++ * the lens goes to the vertex of the parabola.
++ */
++void Af::fineStep(IPAContext &context)
++{
++	auto &af = context.activeState.af;
++
++	if (fineSteps_ < kMaxFineSteps) {
++		if (auto next = nextFinePosition(af.position)) {
++			fineSteps_++;
++			moveTo(context, *next);
+ 			return;
+ 		}
+ 	}
+ 
+-	/* A flat curve has no focus peak (no texture, too dark) */
+-	bool found = af.bestScore > af.minScore * 1.15;
+-	if (found)
+-		af.bestPosition = std::clamp(peakPosition(context), rangeMin_, rangeMax_);
+-	stopScan(context, found);
++	/*
++	 * The measures the result rests on have to be of the same scene: an
++	 * old one is taken again first.
++	 */
++	if (rechecks_ < kMaxRechecks) {
++		std::vector<Sample> sorted;
++		for (const Sample *sample : peakSamples(sorted)) {
++			if (sample && steps_ - sample->step > kStaleMeasures) {
++				rechecks_++;
++				moveTo(context, sample->position);
++				return;
++			}
++		}
++	}
++
++	/*
++	 * A local search ends once the measure falls by climbMargin on either
++	 * side of the best one, or at the ends of the range; a full scan
++	 * wants a clear peak over the whole range.
++	 */
++	double ratio = peakRatio_;
++	if (fromClimb_) {
++		double margin = lowLight_ ? std::min(climbMargin_ * 1.5, 0.5) : climbMargin_;
++		ratio = std::min(ratio, 1.0 / (1.0 - margin) - 1e-3);
++	}
++
++	if (!hasPeak(ratio)) {
++		stopScan(context, false);
++		return;
++	}
++
++	phase_ = Phase::Verify;
++	moveTo(context, peakPosition());
+ }
+ 
+-void Af::monitor(IPAContext &context, double score)
++/*
++ * The measure at the chosen position has to be close to the best one. If
++ * not, the fit was wrong: try the best measured position. If that one fails
++ * too the scene changed during the search, which starts again.
++ */
++void Af::verifyStep(IPAContext &context, double score)
+ {
+ 	auto &af = context.activeState.af;
+ 
+-	if (af.mode != controls::AfModeContinuous)
++	if (score >= bestScore_ * verifyDrop_) {
++		refScore_ = score;
++		restarts_ = 0;
++		settle_ = 1;
++		stopScan(context, true);
+ 		return;
++	}
+ 
+-	if (af.refScore <= 0.0) {
+-		af.refScore = score;
++	if (std::abs(af.position - bestPosition_) > kSamePosition) {
++		LOG(IPASoftAutoFocus, Debug)
++			<< "Measure " << score << " at " << af.position
++			<< " below the best one, trying " << bestPosition_;
++		moveTo(context, bestPosition_);
+ 		return;
+ 	}
+ 
+-	if (std::abs(score - af.refScore) > af.refScore * changeThreshold_) {
+-		if (++af.changed >= changeFrames_) {
+-			LOG(IPASoftAutoFocus, Debug)
+-				<< "Scene changed (" << score << " vs "
+-				<< af.refScore << "), rescanning";
+-			startScan(context);
+-		}
+-	} else {
+-		af.changed = 0;
++	if (restarts_ < kMaxRestarts) {
++		LOG(IPASoftAutoFocus, Debug)
++			<< "Measure " << score << " at " << af.position
++			<< " instead of " << bestScore_ << ", searching again";
++		restarts_++;
++		refScore_ = 0.0;
++		stable_ = 0;
++		startWait(context, fullScan_ || !fromClimb_);
++		return;
+ 	}
++
++	restarts_ = 0;
++	stopScan(context, false);
+ }
+ 
+ void Af::queueRequest(typename Module::Context &context,
+@@ -254,14 +656,19 @@ void Af::queueRequest(typename Module::Context &context,
+ 		      const ControlList &controls)
+ {
+ 	auto &af = context.activeState.af;
++	const auto &focus = context.configuration.focus;
++	bool hasLens = focus.focus_max > focus.focus_min;
+ 
+ 	const auto &mode = controls.get(controls::AfMode);
+ 	if (mode && *mode != af.mode) {
+ 		af.mode = *mode;
+-		af.scanning = false;
++		phase_ = Phase::Idle;
++		af.lockExposure = false;
++		af.fastStats = false;
+ 		af.state = controls::AfStateIdle;
+-		if (af.mode == controls::AfModeContinuous)
+-			startScan(context);
++		refScore_ = 0.0;
++		if (af.mode == controls::AfModeContinuous && hasLens)
++			startWait(context, !lastPosition_);
+ 	}
+ 
+ 	const auto &position = controls.get(controls::LensPosition);
+@@ -270,12 +677,60 @@ void Af::queueRequest(typename Module::Context &context,
+ 		LOG(IPASoftAutoFocus, Debug) << "Lens position " << af.position;
+ 	}
+ 
++	/* Focus window */
++	const auto &metering = controls.get(controls::AfMetering);
++	const auto &windows = controls.get(controls::AfWindows);
++	std::optional<std::array<float, 4>> window;
++
++	if (metering && *metering == controls::AfMeteringAuto) {
++		window = kDefaultWindow;
++	} else if (windows && !windows->empty()) {
++		const Rectangle &r = (*windows)[0];
++		if (r.width && r.height) {
++			float w = std::clamp(static_cast<float>(r.width) / kWindowScale,
++					     kWindowMin, 1.0f);
++			float h = std::clamp(static_cast<float>(r.height) / kWindowScale,
++					     kWindowMin, 1.0f);
++			float x = std::clamp(static_cast<float>(r.x) / kWindowScale,
++					     0.0f, 1.0f - w);
++			float y = std::clamp(static_cast<float>(r.y) / kWindowScale,
++					     0.0f, 1.0f - h);
++			window = { { x, y, w, h } };
++		} else {
++			window = kDefaultWindow;
++		}
++	}
++
++	if (window) {
++		bool same = true;
++		for (unsigned int i = 0; i < 4; i++)
++			same = same && std::abs((*window)[i] - window_[i]) < 1e-4f;
++
++		if (!same) {
++			window_ = *window;
++			af.window = window_;
++			LOG(IPASoftAutoFocus, Debug)
++				<< "Focus window " << window_[0] << "," << window_[1]
++				<< " " << window_[2] << "x" << window_[3];
++
++			/* Another subject: the closest one in the window */
++			if (hasLens && af.mode != controls::AfModeManual) {
++				refScore_ = 0.0;
++				cooldown_ = 0;
++				startScan(context);
++			}
++		}
++	}
++
+ 	const auto &trigger = controls.get(controls::AfTrigger);
+-	if (trigger && af.mode == controls::AfModeAuto) {
++	if (trigger && af.mode == controls::AfModeAuto && hasLens) {
+ 		if (*trigger == controls::AfTriggerStart) {
+-			startScan(context);
++			fullScan_ = false;
++			startFocus(context);
+ 		} else if (*trigger == controls::AfTriggerCancel) {
+-			af.scanning = false;
++			phase_ = Phase::Idle;
++			af.lockExposure = false;
++			af.fastStats = false;
+ 			af.state = controls::AfStateIdle;
+ 		}
+ 	}
+@@ -283,6 +738,17 @@ void Af::queueRequest(typename Module::Context &context,
+ 	context.activeState.knobs.focus_pos = af.position;
+ }
+ 
++void Af::prepare(IPAContext &context,
++		 [[maybe_unused]] const uint32_t frame,
++		 [[maybe_unused]] IPAFrameContext &frameContext,
++		 DebayerParams *params)
++{
++	const auto &af = context.activeState.af;
++
++	params->focusEveryFrame = af.fastStats;
++	params->focusWindow = af.window;
++}
++
+ void Af::process(IPAContext &context,
+ 		 [[maybe_unused]] const uint32_t frame,
+ 		 IPAFrameContext &frameContext,
+@@ -292,17 +758,61 @@ void Af::process(IPAContext &context,
+ 	auto &af = context.activeState.af;
+ 	const auto &focus = context.configuration.focus;
+ 
+-	if (focus.focus_max > focus.focus_min && stats && stats->valid) {
++	if (focus.focus_max > focus.focus_min && stats && stats->focusValid) {
+ 		/* Focus measure independent of the exposure */
+-		double green = std::max<double>(stats->sum_.g(), 1.0);
+-		double score = static_cast<double>(stats->sharpness) * 1e6 / green;
+-
+-		if (af.settle) {
+-			af.settle--;
+-		} else if (af.scanning) {
+-			scanStep(context, score);
++		double norm = std::max<double>(stats->sharpnessNorm, 1.0);
++		double score = static_cast<double>(stats->sharpness) * 1e3 / norm;
++		double exposure = frameContext.sensor.exposure * frameContext.sensor.gain;
++
++		if (settle_) {
++			settle_--;
++		} else if (phase_ == Phase::Idle) {
++			if (stats->valid)
++				monitor(context, score, exposure);
++		} else if (phase_ == Phase::Wait) {
++			if (stats->valid)
++				waitStep(context, score, exposure, true);
+ 		} else {
+-			monitor(context, score);
++			/* More than one measure per position in low light */
++			lowLight_ = frameContext.sensor.gain >= lowLightGain_;
++			unsigned int measures = lowLight_ ? lowLightMeasures_ : 1;
++
++			/*
++			 * The exposure is held: a jump of the brightness of
++			 * the focus window is another scene.
++			 */
++			if (searchNorm_ <= 0.0)
++				searchNorm_ = norm;
++			bool sceneChanged = std::abs(norm - searchNorm_) > searchNorm_ * sceneThreshold_;
++
++			accScore_ += score;
++			if (sceneChanged && restarts_ < kMaxRestarts) {
++				LOG(IPASoftAutoFocus, Debug)
++					<< "Scene changed during the search, starting again";
++				restarts_++;
++				refScore_ = 0.0;
++				stable_ = 0;
++				startWait(context, fullScan_ || !fromClimb_);
++			} else if (++accCount_ >= measures) {
++				score = accScore_ / accCount_;
++				accCount_ = 0;
++				accScore_ = 0.0;
++
++				if (++steps_ > kMaxSteps) {
++					/* should not happen: settle for the best measure */
++					moveTo(context, bestPosition_);
++					stopScan(context, hasPeak(peakRatio_));
++				} else if (phase_ == Phase::Coarse) {
++					coarseStep(context, score);
++				} else if (phase_ == Phase::Climb) {
++					climbStep(context, score);
++				} else if (phase_ == Phase::Fine) {
++					addSample(af.position, score);
++					fineStep(context);
++				} else {
++					verifyStep(context, score);
++				}
++			}
+ 		}
+ 	}
+ 
+diff --git a/src/ipa/simple/algorithms/af.h b/src/ipa/simple/algorithms/af.h
+index 5f0b08f..5897fd0 100644
+--- a/src/ipa/simple/algorithms/af.h
++++ b/src/ipa/simple/algorithms/af.h
+@@ -7,7 +7,10 @@
+ 
+ #pragma once
+ 
++#include <array>
+ #include <optional>
++#include <utility>
++#include <vector>
+ 
+ #include "algorithm.h"
+ 
+@@ -28,27 +31,128 @@ public:
+ 			  typename Module::FrameContext &frameContext,
+ 			  const ControlList &controls)
+ 		override;
++	void prepare(IPAContext &context, const uint32_t frame,
++		     IPAFrameContext &frameContext,
++		     DebayerParams *params) override;
+ 	void process(IPAContext &context, const uint32_t frame,
+ 		     IPAFrameContext &frameContext,
+ 		     const SwIspStats *stats,
+ 		     ControlList &metadata) override;
+ 
+ private:
++	enum class Phase {
++		Idle,	/* focused, failed or manual: watch the scene */
++		Wait,	/* wait for a steady scene and exposure */
++		Coarse,	/* scan of the whole lens range */
++		Climb,	/* search around the current position */
++		Fine,	/* measures on either side of the best one */
++		Verify,	/* check the measure at the computed peak */
++	};
++
++	struct Sample {
++		double position;
++		double score;
++		unsigned int step;	/* measure count when it was taken */
++	};
++
++	void startWait(IPAContext &context, bool fullScan);
++	void startFocus(IPAContext &context);
+ 	void startScan(IPAContext &context);
++	void startClimb(IPAContext &context);
++	void startMeasuring(IPAContext &context);
+ 	void stopScan(IPAContext &context, bool found);
+-	void scanStep(IPAContext &context, double score);
+-	double peakPosition(IPAContext &context);
+-	void monitor(IPAContext &context, double score);
++	void moveTo(IPAContext &context, double position, unsigned int extraSettle = 0);
++
++	void trackSteady(double score, double exposure);
++	void monitor(IPAContext &context, double score, double exposure);
++	void waitStep(IPAContext &context, double score, double exposure, bool track);
++	void coarseStep(IPAContext &context, double score);
++	void climbStep(IPAContext &context, double score);
++	void fineStep(IPAContext &context);
++	void verifyStep(IPAContext &context, double score);
+ 
+-	unsigned int settleFrames_ = 0;
++	void addSample(double position, double score);
++	bool hasPeak(double ratio) const;
++	std::array<const Sample *, 3> peakSamples(std::vector<Sample> &sorted) const;
++	double peakPosition() const;
++	std::optional<double> nextFinePosition(double current) const;
++
++	/* Tuning */
++	unsigned int settleFrames_ = 3;
+ 	double coarseStep_ = 10.0;
+ 	double fineRange_ = 4.0;
++	double climbStep_ = 4.0;
++	double climbMargin_ = 0.1;
+ 	double rangeMin_ = 0.0;
+ 	double rangeMax_ = 100.0;
++	double defaultPosition_ = 20.0;
++	bool nearFirst_ = true;
+ 	double peakDrop_ = 0.7;
+ 	unsigned int peakDropSteps_ = 2;
+-	double changeThreshold_ = 0.5;
+-	unsigned int changeFrames_ = 10;
++	double peakRatio_ = 1.15;
++	double verifyDrop_ = 0.9;
++	double changeThreshold_ = 0.4;
++	unsigned int changeFrames_ = 4;
++	double stableThreshold_ = 0.2;
++	unsigned int stableFrames_ = 2;
++	unsigned int waitFrames_ = 12;
++	unsigned int retryFrames_ = 25;
++	double lowLightGain_ = 8.0;
++	unsigned int lowLightMeasures_ = 2;
++	double sceneThreshold_ = 0.25;
++
++	/* State */
++	Phase phase_ = Phase::Idle;
++	bool fullScan_ = false;		/* the scan wanted after Phase::Wait */
++	bool fromClimb_ = false;	/* Phase::Fine follows a local search */
++	unsigned int settle_ = 0;	/* statistics to skip after a lens move */
++	unsigned int accCount_ = 0;	/* measures averaged at this position */
++	double accScore_ = 0.0;
++	unsigned int steps_ = 0;	/* measures since the scan started */
++	unsigned int restarts_ = 0;	/* searches started again in a row */
++
++	std::vector<Sample> samples_;
++	double bestPosition_ = 0.0;
++	double bestScore_ = 0.0;
++	double minScore_ = 0.0;
++
++	/* Phase::Coarse */
++	double direction_ = 1.0;
++	unsigned int drops_ = 0;
++
++	/* Phase::Climb: outermost measure and next step on either side */
++	struct ClimbSide {
++		double position;
++		double score;
++		double step;
++	};
++	bool climbStarted_ = false;
++	double climbOrigin_ = 0.0;
++	ClimbSide sides_[2] = {};	/* far side, near side */
++	unsigned int climbSide_ = 0;
++	bool lowLight_ = false;
++
++	/* Phase::Fine */
++	unsigned int fineSteps_ = 0;
++	unsigned int rechecks_ = 0;
++
++	/* Brightness of the focus window when the search started */
++	double searchNorm_ = 0.0;
++
++	/* Phase::Idle and Phase::Wait */
++	double refScore_ = 0.0;		/* measure at the chosen position */
++	unsigned int changed_ = 0;	/* statistics that differ from refScore_ */
++	unsigned int cooldown_ = 0;	/* statistics before the next scan */
++	double prevScore_ = 0.0;
++	double prevExposure_ = 0.0;
++	unsigned int stable_ = 0;
++	unsigned int back_ = 0;
++	unsigned int waited_ = 0;
++
++	/* Focus window asked by the application */
++	std::array<float, 4> window_;
++	bool windowSet_ = false;
++
+ 	/* Focus found by the last scan, kept across configurations */
+ 	std::optional<double> lastPosition_;
+ };
+diff --git a/src/ipa/simple/algorithms/agc.cpp b/src/ipa/simple/algorithms/agc.cpp
+index ba7f243..60e2db2 100644
+--- a/src/ipa/simple/algorithms/agc.cpp
++++ b/src/ipa/simple/algorithms/agc.cpp
+@@ -215,10 +215,12 @@ void Agc::process(IPAContext &context,
+ 		context.activeState.agc.valid = true;
+ 	}
+ 
+-	if (!stats->valid) {
++	if (!stats->valid || context.activeState.af.lockExposure) {
+ 		/*
+ 		 * Use the new exposure and gain values calculated the last time
+-		 * there were valid stats.
++		 * there were valid stats. The exposure is also held while the
++		 * autofocus scans: a change of gain in the middle of a scan
++		 * changes the noise, and with it the focus measure.
+ 		 */
+ 		frameContext.sensor.exposure = context.activeState.agc.exposure;
+ 		frameContext.sensor.gain = context.activeState.agc.again;
+diff --git a/src/ipa/simple/ipa_context.h b/src/ipa/simple/ipa_context.h
+index a48751e..419c2a9 100644
+--- a/src/ipa/simple/ipa_context.h
++++ b/src/ipa/simple/ipa_context.h
+@@ -83,19 +83,13 @@ struct IPAActiveState {
+ 	struct {
+ 		int mode;		/* controls::AfModeEnum */
+ 		int state;		/* controls::AfStateEnum */
+-		bool scanning;
+-		bool fine;		/* fine pass of the scan */
+ 		double position;	/* lens position commanded */
+-		double start, stop, step;
+-		double bestPosition;
+-		double bestScore;
+-		double minScore;
+-		double refScore;	/* focus measure at the chosen position */
+-		unsigned int settle;	/* frames to skip after a lens move */
+-		unsigned int changed;	/* frames the scene differs from refScore */
+-		unsigned int drops;	/* coarse steps below the peak in a row */
+-		/* (position, measure) of every scan step */
+-		std::vector<std::pair<double, double>> samples;
++		/* The autofocus is measuring: the AGC holds the exposure */
++		bool lockExposure;
++		/* Focus measure wanted on every frame */
++		bool fastStats;
++		/* Focus window, fractions of the image (x, y, width, height) */
++		std::array<float, 4> window;
+ 	} af;
+ };
+ 
+diff --git a/src/libcamera/software_isp/debayer_cpu.cpp b/src/libcamera/software_isp/debayer_cpu.cpp
+index af7af0a..cf3cc9c 100644
+--- a/src/libcamera/software_isp/debayer_cpu.cpp
++++ b/src/libcamera/software_isp/debayer_cpu.cpp
+@@ -866,6 +866,7 @@ void DebayerCpu::process(uint32_t frame, FrameBuffer *input, FrameBuffer *output
+ 		return;
+ 	}
+ 
++	stats_->setFocusParams(params.focusEveryFrame, params.focusWindow);
+ 	stats_->startFrame(frame);
+ 
+ 	if (inputConfig_.patternSize.height == 2)
+diff --git a/src/libcamera/software_isp/debayer_egl.cpp b/src/libcamera/software_isp/debayer_egl.cpp
+index 4d0caa6..2f13957 100644
+--- a/src/libcamera/software_isp/debayer_egl.cpp
++++ b/src/libcamera/software_isp/debayer_egl.cpp
+@@ -563,6 +563,7 @@ void DebayerEGL::process(uint32_t frame, FrameBuffer *input, FrameBuffer *output
+ 	metadata.planes()[0].bytesused = output->planes()[0].length;
+ 
+ 	/* Calculate stats for the whole frame */
++	stats_->setFocusParams(params.focusEveryFrame, params.focusWindow);
+ 	stats_->processFrame(frame, 0, input);
+ 	dmaSyncers.clear();
+ 
+diff --git a/src/libcamera/software_isp/swstats_cpu.cpp b/src/libcamera/software_isp/swstats_cpu.cpp
+index e7e62da..62c54e0 100644
+--- a/src/libcamera/software_isp/swstats_cpu.cpp
++++ b/src/libcamera/software_isp/swstats_cpu.cpp
+@@ -11,6 +11,8 @@
+ 
+ #include "libcamera/internal/software_isp/swstats_cpu.h"
+ 
++#include <algorithm>
++
+ #include <cstdlib>
+ 
+ #include <libcamera/base/log.h>
+@@ -185,7 +187,8 @@ static constexpr unsigned int kSumSaturation = 240;
+ 	uint32_t sumN = 0;                \
+ 	int sharpG0 = 0, sharpG1 = 0;     \
+ 	unsigned int sharpN = 0;          \
+-	uint64_t sharp = 0;
++	uint64_t sharp = 0;               \
++	uint64_t sharpNorm = 0;
+ 
+ /*
+  * The colour sums leave out samples with a channel close to saturation
+@@ -209,9 +212,11 @@ static constexpr unsigned int kSumSaturation = 240;
+ 
+ /*
+  * Focus measure: absolute second derivative of green along the line, in the
+- * centre third of the window (xpix is the pixel position of the sample), so
+- * that the subject in the middle of the frame wins over a detailed
+- * background.
++ * focus window (xpix is the pixel position of the sample): the centre third
++ * of the window by default, so that the subject in the middle of the frame
++ * wins over a detailed background, or the window the application chose. The
++ * green samples used are summed as well, the autofocus divides the measure
++ * by them to be independent of the exposure and of the rest of the image.
+  *
+  * (div) is the scale of g relative to 8 bits (1, 4 or 16). Samples close to
+  * saturation break the chain: a clipped, blooming highlight (a screen, a
+@@ -220,11 +225,11 @@ static constexpr unsigned int kSumSaturation = 240;
+  * to every lens position and flattens the peak.
+  */
+ #define SWSTATS_ACCUMULATE_SHARPNESS(xpix, div)                             \
+-	if (sharpLine_ && (xpix) >= window_.width / 3 &&                    \
+-	    (xpix) < window_.width * 2 / 3) {                               \
++	if (sharpLine_ && (xpix) >= sharpX0_ && (xpix) < sharpX1_) {        \
+ 		if (g >= kSharpSaturation * (div)) {                        \
+ 			sharpN = 0;                                         \
+ 		} else {                                                    \
++			sharpNorm += g;                                     \
+ 			if (sharpN >= 2) {                                  \
+ 				int d = std::abs(static_cast<int>(g) - 2 * sharpG1 + sharpG0); \
+ 				d -= kSharpNoise * (div);                   \
+@@ -242,7 +247,8 @@ static constexpr unsigned int kSumSaturation = 240;
+ 	stats_.sum_.g() += sumG;    \
+ 	stats_.sum_.b() += sumB;    \
+ 	stats_.sumCount += sumN;    \
+-	stats_.sharpness += sharp;
++	stats_.sharpness += sharp;  \
++	stats_.sharpnessNorm += sharpNorm;
+ 
+ void SwStatsCpu::statsBGGR8Line0(const uint8_t *src[])
+ {
+@@ -386,7 +392,7 @@ void SwStatsCpu::statsGBRG10PLine0(const uint8_t *src[])
+  */
+ void SwStatsCpu::startFrame(uint32_t frame)
+ {
+-	if (frame % kStatPerNumFrames)
++	if (skipFrame(frame))
+ 		return;
+ 
+ 	if (window_.width == 0)
+@@ -395,6 +401,7 @@ void SwStatsCpu::startFrame(uint32_t frame)
+ 	stats_.sum_ = RGB<uint64_t>({ 0, 0, 0 });
+ 	stats_.sumCount = 0;
+ 	stats_.sharpness = 0;
++	stats_.sharpnessNorm = 0;
+ 	stats_.yHistogram.fill(0);
+ }
+ 
+@@ -408,6 +415,7 @@ void SwStatsCpu::startFrame(uint32_t frame)
+ void SwStatsCpu::finishFrame(uint32_t frame, uint32_t bufferId)
+ {
+ 	stats_.valid = frame % kStatPerNumFrames == 0;
++	stats_.focusValid = !skipFrame(frame);
+ 	*sharedStats_ = stats_;
+ 	statsReady.emit(frame, bufferId);
+ }
+@@ -547,6 +555,46 @@ void SwStatsCpu::setWindow(const Rectangle &window)
+ 	window_.width = (window_.width > xShift_ ? window_.width - xShift_ : 0);
+ 	window_.width &= ~(patternSize_.width - 1);
+ 	window_.height &= ~(patternSize_.height - 1);
++
++	updateFocusWindow();
++}
++
++/**
++ * \brief Set how the focus measure is gathered
++ * \param[in] everyFrame Gather the statistics on every frame (autofocus scan)
++ * \param[in] window Focus window, as fractions of the statistics window (x, y,
++ * width, height)
++ *
++ * To be called between frames.
++ */
++void SwStatsCpu::setFocusParams(bool everyFrame, const std::array<float, 4> &window)
++{
++	focusEveryFrame_ = everyFrame;
++
++	if (window != focusWindow_) {
++		focusWindow_ = window;
++		updateFocusWindow();
++	}
++}
++
++void SwStatsCpu::updateFocusWindow()
++{
++	float x = focusWindow_[0], y = focusWindow_[1];
++	float w = focusWindow_[2], h = focusWindow_[3];
++
++	/* Anything unusable (not a number included): the centre third */
++	if (!(w > 0.0f && h > 0.0f && x >= 0.0f && y >= 0.0f &&
++	      x < 1.0f && y < 1.0f)) {
++		x = y = w = h = 1.0f / 3;
++	}
++
++	w = std::min(w, 1.0f - x);
++	h = std::min(h, 1.0f - y);
++
++	sharpX0_ = static_cast<unsigned int>(x * window_.width);
++	sharpX1_ = static_cast<unsigned int>((x + w) * window_.width);
++	sharpY0_ = static_cast<unsigned int>(y * window_.height);
++	sharpY1_ = static_cast<unsigned int>((y + h) * window_.height);
+ }
+ 
+ void SwStatsCpu::processBayerFrame2(MappedFrameBuffer &in)
+@@ -582,7 +630,7 @@ void SwStatsCpu::processBayerFrame2(MappedFrameBuffer &in)
+  */
+ void SwStatsCpu::processFrame(uint32_t frame, uint32_t bufferId, FrameBuffer *input)
+ {
+-	if (frame % kStatPerNumFrames) {
++	if (skipFrame(frame)) {
+ 		finishFrame(frame, bufferId);
+ 		return;
+ 	}
