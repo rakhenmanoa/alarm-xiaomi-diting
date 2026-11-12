@@ -50,7 +50,7 @@ même noyau, pas encore revérifiées ici.
 | Écran éteint contre l'oreille, lever pour réveiller | ✅ | `diting-proximite-appel`, `diting-lever-reveil` |
 | Lecteur d'empreintes | 🟡 | Goodix sous l'écran, tout passe par l'appli sécurisée `gfdit` (pilote QSEECOM, patchs `0918`, `0920`, `0922`, `0923`) : capteur alimenté, détecté, initialisé ; disque lumineux sous le capteur (HBM local, fichier `local_hbm`) ; **images du doigt capturées** (crêtes visibles). Bloqué à l'enrôlement, lié à la chaîne keymaster/gatekeeper d'Android. Voir [extra/empreintes](extra/empreintes/README.md) |
 | **Caméras** | | |
-| Principale (S5KHP1, 200 Mpx) | ✅ | autofocus par contraste (recherche locale, toucher l'aperçu pour choisir le sujet, appui long pour revenir au centre), photo dans plasma-camera ; ❌ sur les unités à capteur Samsung HM6 |
+| Principale (S5KHP1, 200 Mpx) | ✅ | autofocus par contraste (recherche locale, toucher l'aperçu pour choisir le sujet, appui long pour revenir au centre) ; réglette de mise au point manuelle si l'autofocus ne trouve pas, photo dans plasma-camera ; ❌ sur les unités à capteur Samsung HM6 |
 | Ultra grand-angle (S5K4H7) | ✅ | diting-ubuntu |
 | Frontale (IMX596), macro (GC02M1) | ✅ | 30 im/s |
 | ISP matériel (IPE/BPS), JPEG matériel | ❌ | aucun pilote Linux : libcamera traite les images sur le CPU (ISP logiciel) |

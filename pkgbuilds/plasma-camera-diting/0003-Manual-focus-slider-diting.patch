@@ -1,0 +1,441 @@
+From 47e8d98d00579c13778c297cf04456093f5ac33d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 12 Nov 2026 07:21:07 +0300
+Subject: [PATCH] Manual focus slider (diting)
+
+A slider (0..100, 0 = infinity end) to set the lens position directly,
+next to the autofocus, for scenes where it can't settle on the right
+focus. Needs libcamera-diting >= 0.7.0-12 (LensPosition and AfMode
+controls). Setting the slider or tapping a subject turns the other off.
+---
+ .../ui/camera/CameraExtraControls.qml         |  34 ++++++
+ src/contents/ui/camera/CameraPage.qml         |   5 +
+ src/contents/ui/camera/FocusSelectStrip.qml   | 111 ++++++++++++++++++
+ src/plasmacamera.cpp                          |  33 ++++++
+ src/plasmacamera.h                            |  20 ++++
+ src/plasmacamera/settings.cpp                 |  56 +++++++++
+ src/plasmacamera/settings.h                   |  16 +++
+ src/resources.qrc                             |   1 +
+ 8 files changed, 276 insertions(+)
+ create mode 100644 src/contents/ui/camera/FocusSelectStrip.qml
+
+diff --git a/src/contents/ui/camera/CameraExtraControls.qml b/src/contents/ui/camera/CameraExtraControls.qml
+index 697e782..8bfdcff 100644
+--- a/src/contents/ui/camera/CameraExtraControls.qml
++++ b/src/contents/ui/camera/CameraExtraControls.qml
+@@ -16,9 +16,14 @@ Rectangle {
+     required property bool audioRecordingEnabled
+     required property bool audioRecordingEnabledShown
+     required property bool exposureValueEnabled
++    required property bool manualFocusEnabled
++    required property bool manualFocusActive
++    required property real manualFocusInitialPosition
+ 
+     signal audioEnabledChangeRequested(enabled: bool)
+     signal exposureValueRequested(value: real)
++    signal manualFocusPositionRequested(position: real)
++    signal manualFocusAutoRequested()
+ 
+     height: controlsLayout.implicitHeight
+     color: Qt.rgba(0, 0, 0, 0.3)
+@@ -69,6 +74,21 @@ Rectangle {
+                 QQC2.ToolTip.text: text
+             }
+ 
++            QQC2.ToolButton {
++                id: focusControlsButton
++                icon.name: manualFocusActive ? 'crosshairs' : 'crosshairs-symbolic'
++                icon.color: "white"
++                text: i18n("Manual Focus")
++                display: QQC2.ToolButton.IconOnly
++                visible: root.manualFocusEnabled
++                checkable: true
++                checked: focusSelectStrip.shown
++                onClicked: focusSelectStrip.shown = !focusSelectStrip.shown
++
++                QQC2.ToolTip.visible: down
++                QQC2.ToolTip.text: text
++            }
++
+             Item { Layout.fillWidth: true }
+         }
+ 
+@@ -80,5 +100,19 @@ Rectangle {
+             onExposureValueRequested: (value) => root.exposureValueRequested(value)
+             Layout.fillWidth: true
+         }
++
++        FocusSelectStrip {
++            id: focusSelectStrip
++            visible: root.manualFocusEnabled
++            shown: false // Set by focusControlsButton
++            initialPosition: root.manualFocusInitialPosition
++
++            onFocusPositionRequested: (position) => root.manualFocusPositionRequested(position)
++            onAutoRequested: {
++                root.manualFocusAutoRequested();
++                focusSelectStrip.shown = false;
++            }
++            Layout.fillWidth: true
++        }
+     }
+ }
+diff --git a/src/contents/ui/camera/CameraPage.qml b/src/contents/ui/camera/CameraPage.qml
+index 311d6c0..ee1afa6 100644
+--- a/src/contents/ui/camera/CameraPage.qml
++++ b/src/contents/ui/camera/CameraPage.qml
+@@ -121,9 +121,14 @@ Kirigami.Page {
+             audioRecordingEnabled: root.captureSession.audioRecordingEnabled
+             audioRecordingEnabledShown: root.captureMode === CameraPage.CaptureMode.Video && !root.captureSession.isRecordingVideo && !root.captureSession.isSavingVideo
+             exposureValueEnabled: root.camera.exposureValueAvailable
++            manualFocusEnabled: root.camera.manualFocusAvailable
++            manualFocusActive: root.camera.manualFocusSet
++            manualFocusInitialPosition: root.camera.manualFocus
+ 
+             onExposureValueRequested: (value) => root.camera.exposureValue = value;
+             onAudioEnabledChangeRequested: (enabled) => root.captureSession.audioRecordingEnabled = enabled;
++            onManualFocusPositionRequested: (position) => root.camera.manualFocus = position;
++            onManualFocusAutoRequested: root.camera.resetManualFocus();
+         }
+ 
+         // Footer controls
+diff --git a/src/contents/ui/camera/FocusSelectStrip.qml b/src/contents/ui/camera/FocusSelectStrip.qml
+new file mode 100644
+index 0000000..8ee20b1
+--- /dev/null
++++ b/src/contents/ui/camera/FocusSelectStrip.qml
+@@ -0,0 +1,111 @@
++// SPDX-FileCopyrightText: 2026 Fanasina Randriatsarafara
++// SPDX-License-Identifier: GPL-2.0-or-later
++
++import QtQuick
++import QtQuick.Controls as QQC2
++import QtQuick.Layouts
++
++import org.kde.kirigami as Kirigami
++
++Item {
++    id: root
++
++    // Whether the component should be shown
++    required property bool shown
++
++    // Lens position to show the slider at when it appears (0..100)
++    required property real initialPosition
++
++    // When manual focus should be turned off, back to autofocus
++    signal autoRequested()
++
++    // When the user picked a lens position (0..100, 0 = infinity end)
++    signal focusPositionRequested(position: real)
++
++    implicitHeight: shown ? columnLayout.implicitHeight : 0
++    clip: true
++
++    Behavior on implicitHeight {
++        PropertyAnimation {
++            duration: Kirigami.Units.shortDuration
++            easing.type: Easing.InOutCubic
++        }
++    }
++
++    onShownChanged: {
++        if (shown) {
++            focusSlider.value = root.initialPosition;
++        }
++    }
++
++    ColumnLayout {
++        id: columnLayout
++        spacing: Kirigami.Units.smallSpacing
++        anchors.left: parent.left
++        anchors.right: parent.right
++        anchors.top: parent.top
++
++        Kirigami.Theme.inherit: false
++        Kirigami.Theme.colorSet: Kirigami.Theme.Complementary
++
++        QQC2.Label {
++            Layout.topMargin: Kirigami.Units.smallSpacing
++            Layout.fillWidth: true
++            text: i18n("Manual Focus")
++            horizontalAlignment: Text.AlignHCenter
++            font.weight: Font.Bold
++            font.pointSize: Kirigami.Theme.smallFont.pointSize
++            color: "white"
++        }
++
++        RowLayout {
++            Layout.fillWidth: true
++            Layout.leftMargin: Kirigami.Units.largeSpacing
++            Layout.rightMargin: Kirigami.Units.largeSpacing
++            Layout.bottomMargin: Kirigami.Units.smallSpacing
++            spacing: Kirigami.Units.largeSpacing
++
++            Kirigami.Icon {
++                source: 'crosshairs-symbolic'
++                color: "white"
++                Layout.preferredWidth: Kirigami.Units.iconSizes.small
++                Layout.preferredHeight: Kirigami.Units.iconSizes.small
++                QQC2.ToolTip.visible: nearMouseArea.containsMouse
++                QQC2.ToolTip.text: i18n("Near")
++                MouseArea { id: nearMouseArea; anchors.fill: parent; hoverEnabled: true }
++            }
++
++            QQC2.Slider {
++                id: focusSlider
++                Layout.fillWidth: true
++                from: 0
++                to: 100
++                stepSize: 1
++                value: root.initialPosition
++
++                onMoved: root.focusPositionRequested(value)
++            }
++
++            Kirigami.Icon {
++                source: 'view-hidden-symbolic' // distant/infinity-ish stand-in icon
++                color: "white"
++                Layout.preferredWidth: Kirigami.Units.iconSizes.small
++                Layout.preferredHeight: Kirigami.Units.iconSizes.small
++                QQC2.ToolTip.visible: farMouseArea.containsMouse
++                QQC2.ToolTip.text: i18n("Far")
++                MouseArea { id: farMouseArea; anchors.fill: parent; hoverEnabled: true }
++            }
++
++            QQC2.ToolButton {
++                icon.name: 'edit-undo-symbolic'
++                icon.color: "white"
++                display: QQC2.ToolButton.IconOnly
++                text: i18n("Back to autofocus")
++                onClicked: root.autoRequested()
++
++                QQC2.ToolTip.visible: down
++                QQC2.ToolTip.text: text
++            }
++        }
++    }
++}
+diff --git a/src/plasmacamera.cpp b/src/plasmacamera.cpp
+index f5f9589..eef3375 100644
+--- a/src/plasmacamera.cpp
++++ b/src/plasmacamera.cpp
+@@ -250,6 +250,39 @@ void PlasmaCamera::resetFocusPoint()
+     Q_EMIT focusPointChanged();
+ }
+ 
++bool PlasmaCamera::manualFocusAvailable() const
++{
++    return m_settings.canSetManualFocus();
++}
++
++bool PlasmaCamera::manualFocusSet() const
++{
++    return m_settings.manualFocusSet();
++}
++
++float PlasmaCamera::manualFocus() const
++{
++    return m_settings.getManualFocus();
++}
++
++void PlasmaCamera::setManualFocus(const float position)
++{
++    if (m_settings.canSetManualFocus() && m_settings.trySetManualFocus(position)) {
++        // A manual position takes over from a chosen subject
++        if (m_settings.afPointSet()) {
++            m_settings.unSetAfWindow();
++            Q_EMIT focusPointChanged();
++        }
++        Q_EMIT settingsChanged(m_settings);
++    }
++}
++
++void PlasmaCamera::resetManualFocus()
++{
++    m_settings.unSetManualFocus();
++    Q_EMIT settingsChanged(m_settings);
++}
++
+ int PlasmaCamera::iso() const
+ {
+     return static_cast<int>(m_settings.getGain() * 100);
+diff --git a/src/plasmacamera.h b/src/plasmacamera.h
+index 6e4ffe4..37889ce 100644
+--- a/src/plasmacamera.h
++++ b/src/plasmacamera.h
+@@ -60,6 +60,9 @@ class PlasmaCamera : public QObject
+     Q_PROPERTY(bool focusPointAvailable READ focusPointAvailable NOTIFY settingsChanged)
+     Q_PROPERTY(bool focusPointSet READ focusPointSet NOTIFY focusPointChanged)
+     Q_PROPERTY(QPointF focusPoint READ focusPoint NOTIFY focusPointChanged)
++    Q_PROPERTY(bool manualFocusAvailable READ manualFocusAvailable NOTIFY settingsChanged)
++    Q_PROPERTY(bool manualFocusSet READ manualFocusSet NOTIFY settingsChanged)
++    Q_PROPERTY(float manualFocus READ manualFocus WRITE setManualFocus RESET resetManualFocus NOTIFY settingsChanged)
+ 
+     // Brightness
+     // Q_PROPERTY(int iso READ iso WRITE setIso RESET resetIso NOTIFY settingsChanged)
+@@ -171,6 +174,23 @@ public:
+      */
+     Q_INVOKABLE void resetFocusPoint();
+ 
++    /*!
++     * Whether a lens position can be set directly (manual focus slider).
++     */
++    bool manualFocusAvailable() const;
++
++    /*!
++     * Whether the lens is currently held at a manually chosen position.
++     */
++    bool manualFocusSet() const;
++
++    /*!
++     * Manual lens position, 0..100 (0 = infinity end).
++     */
++    float manualFocus() const;
++    void setManualFocus(float position);
++    void resetManualFocus();
++
+     // Brightness
+     int iso() const;
+     int exposureTime() const;
+diff --git a/src/plasmacamera/settings.cpp b/src/plasmacamera/settings.cpp
+index e199af1..316f6de 100644
+--- a/src/plasmacamera/settings.cpp
++++ b/src/plasmacamera/settings.cpp
+@@ -51,6 +51,15 @@ void Settings::load(const libcamera::ControlInfoMap &infoMap)
+             m_afMeteringAvailable = true;
+             break;
+ 
++        case libcamera::controls::AF_MODE:
++            m_afModeAvailable = true;
++            break;
++
++        case libcamera::controls::LENS_POSITION:
++            // Needs AfMode::Manual as well, checked once loading is done
++            m_manualFocusAvailable = true;
++            break;
++
+         case libcamera::controls::AWB_MODE:
+             // TODO: AwbModeEnum
+             m_wbModeAvailable = true;
+@@ -110,6 +119,8 @@ void Settings::load(const libcamera::ControlInfoMap &infoMap)
+             break;
+         }
+     }
++
++    m_manualFocusAvailable = m_manualFocusAvailable && m_afModeAvailable;
+ }
+ 
+ void Settings::set(libcamera::ControlList &controlMap)
+@@ -144,6 +155,15 @@ void Settings::set(libcamera::ControlList &controlMap)
+         }
+     }
+ 
++    if (m_manualFocusAvailable) {
++        if (m_manualFocus) {
++            controlMap.set(libcamera::controls::AfMode, libcamera::controls::AfModeManual);
++            controlMap.set(libcamera::controls::LensPosition, m_manualFocusPosition);
++        } else {
++            controlMap.set(libcamera::controls::AfMode, libcamera::controls::AfModeContinuous);
++        }
++    }
++
+     // TODO: implement the rest of the settings
+ }
+ 
+@@ -283,6 +303,9 @@ bool Settings::trySetAfPoint(const QPointF &point)
+         return false;
+     }
+ 
++    // A chosen subject takes over from a manually set lens position
++    unSetManualFocus();
++
+     m_afWindowUseDefault = false;
+     m_afWindow = true;
+     m_afPoint = QPointF(std::clamp(point.x(), 0.0, 1.0), std::clamp(point.y(), 0.0, 1.0));
+@@ -290,6 +313,39 @@ bool Settings::trySetAfPoint(const QPointF &point)
+     return true;
+ }
+ 
++// Manual focus
++bool Settings::canSetManualFocus() const
++{
++    return m_manualFocusAvailable;
++}
++
++bool Settings::trySetManualFocus(const float position)
++{
++    if (!canSetManualFocus() || position < 0.0f || position > 100.0f) {
++        return false;
++    }
++
++    m_manualFocus = true;
++    m_manualFocusPosition = position;
++
++    return true;
++}
++
++void Settings::unSetManualFocus()
++{
++    m_manualFocus = false;
++}
++
++bool Settings::manualFocusSet() const
++{
++    return m_manualFocus;
++}
++
++float Settings::getManualFocus() const
++{
++    return m_manualFocusPosition;
++}
++
+ bool Settings::afPointSet() const
+ {
+     return m_afWindow;
+diff --git a/src/plasmacamera/settings.h b/src/plasmacamera/settings.h
+index d1e06a7..91d66b8 100644
+--- a/src/plasmacamera/settings.h
++++ b/src/plasmacamera/settings.h
+@@ -72,6 +72,17 @@ public:
+     bool trySetAfPoint(const QPointF &point);
+     bool afPointSet() const;
+ 
++    /*
++     * Manual focus: a slider on a 0..100 scale (0 = infinity end), when the
++     * camera can take a lens position (LensPosition control and AfMode
++     * control with a Manual value).
++     */
++    bool canSetManualFocus() const;
++    bool trySetManualFocus(float position);
++    void unSetManualFocus();
++    bool manualFocusSet() const;
++    float getManualFocus() const;
++
+ 
+     // White Balance (WB) Settings
+     /*
+@@ -193,6 +204,11 @@ private:
+     libcamera::Rectangle m_afWindowSpace;
+     QPointF m_afPoint;
+ 
++    bool m_afModeAvailable = false;
++    bool m_manualFocusAvailable = false;
++    bool m_manualFocus = false;
++    float m_manualFocusPosition = 50.0f;
++
+     // White Balance (WB) Settings
+     /*
+      * TODO:
+diff --git a/src/resources.qrc b/src/resources.qrc
+index e1a8176..5561118 100644
+--- a/src/resources.qrc
++++ b/src/resources.qrc
+@@ -19,6 +19,7 @@
+         <file alias="camera/Viewfinder.qml">contents/ui/camera/Viewfinder.qml</file>
+         <file alias="camera/ViewfinderTimerOverlay.qml">contents/ui/camera/ViewfinderTimerOverlay.qml</file>
+         <file alias="camera/ExposureSelectStrip.qml">contents/ui/camera/ExposureSelectStrip.qml</file>
++        <file alias="camera/FocusSelectStrip.qml">contents/ui/camera/FocusSelectStrip.qml</file>
+         <file alias="camera/ViewfinderVideoDurationOverlay.qml">contents/ui/camera/ViewfinderVideoDurationOverlay.qml</file>
+ 
+         <file alias="camera_flash_off.png">contents/ui/images/camera_flash_off.png</file>
