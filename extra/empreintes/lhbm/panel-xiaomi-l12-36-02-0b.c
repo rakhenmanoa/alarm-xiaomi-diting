@@ -22,6 +22,7 @@
 #include <linux/math64.h>
 #include <linux/minmax.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/property.h>
 #include <linux/string.h>
@@ -81,7 +82,19 @@ struct xiaomi_l12 {
 	struct regulator *vddio;
 	struct regulator *vddd;
 	struct regulator *vci;
+	/*
+	 * Serialises every DSI command sequence: init/off, brightness and
+	 * local HBM. A brightness write arriving in the middle of the init
+	 * sequence would land on whatever manufacturer page 0xf0 selected
+	 * last, and the shared MIPI_DSI_MODE_LPM flag would be flipped under
+	 * the init commands.
+	 */
+	struct mutex lock;
+	bool on;		/* panel initialised, commands accepted */
 };
+
+/* local_hbm attribute (42 02 0a): 0 off, 1..3 disc on */
+static unsigned int xiaomi_l12_lhbm_state;
 
 static inline struct xiaomi_l12 *to_xiaomi_l12(struct drm_panel *panel)
 {
@@ -597,12 +610,15 @@ static int xiaomi_l12_prepare(struct drm_panel *panel)
 	struct device *dev = &ctx->dsi->dev;
 	struct drm_dsc_picture_parameter_set pps;
 	const struct xiaomi_l12_mode *mode;
+	u8 power_mode;
 	int ret;
+
+	mutex_lock(&ctx->lock);
 
 	ret = xiaomi_l12_power_on(ctx);
 	if (ret) {
 		dev_err(dev, "failed to enable supplies: %d\n", ret);
-		return ret;
+		goto err_unlock;
 	}
 
 	xiaomi_l12_reset(ctx);
@@ -611,6 +627,31 @@ static int xiaomi_l12_prepare(struct drm_panel *panel)
 	if (ret < 0) {
 		dev_err(dev, "failed to initialize panel: %d\n", ret);
 		goto err_off;
+	}
+
+	/*
+	 * Make sure the DDIC really left sleep and turned the display on
+	 * (like the vendor ESD check, register 0x0a). If not, reset it and
+	 * send the init sequence once more instead of leaving a dead panel
+	 * that never raises TE.
+	 */
+	ret = mipi_dsi_dcs_get_power_mode(ctx->dsi, &power_mode);
+	if (ret < 0) {
+		dev_warn(dev, "cannot read power mode: %d\n", ret);
+	} else if (!(power_mode & MIPI_DSI_DCS_POWER_MODE_DISPLAY)) {
+		dev_warn(dev, "power mode 0x%02x after init, retrying\n",
+			 power_mode);
+		xiaomi_l12_reset(ctx);
+		ret = ctx->desc->on(ctx);
+		if (ret < 0) {
+			dev_err(dev, "failed to initialize panel: %d\n", ret);
+			goto err_off;
+		}
+		if (!mipi_dsi_dcs_get_power_mode(ctx->dsi, &power_mode))
+			dev_info(dev, "power mode 0x%02x after retry\n",
+				 power_mode);
+	} else {
+		dev_dbg(dev, "power mode 0x%02x\n", power_mode);
 	}
 
 	drm_dsc_pps_payload_pack(&pps, &ctx->dsc);
@@ -639,11 +680,16 @@ static int xiaomi_l12_prepare(struct drm_panel *panel)
 
 	msleep(28);
 
+	ctx->on = true;
+	mutex_unlock(&ctx->lock);
+
 	return 0;
 
 err_off:
 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
 	xiaomi_l12_power_off(ctx);
+err_unlock:
+	mutex_unlock(&ctx->lock);
 	return ret;
 }
 
@@ -653,17 +699,23 @@ static int xiaomi_l12_unprepare(struct drm_panel *panel)
 	struct device *dev = &ctx->dsi->dev;
 	int ret;
 
+	mutex_lock(&ctx->lock);
+	ctx->on = false;
+	/* the disc goes out with the panel */
+	xiaomi_l12_lhbm_state = 0;
+
 	ret = xiaomi_l12_off(ctx);
 	if (ret < 0)
 		dev_err(dev, "failed to un-initialize panel: %d\n", ret);
 
 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
 	xiaomi_l12_power_off(ctx);
+	mutex_unlock(&ctx->lock);
 
 	return 0;
 }
 
-/* First vendor timing (60 Hz); 90/120 Hz modes are not described yet. */
+/* 60 Hz (preferred), 90 and 120 Hz */
 static int xiaomi_l12_get_modes(struct drm_panel *panel,
 				struct drm_connector *connector)
 {
@@ -744,10 +796,11 @@ static u16 xiaomi_l12_level_to_dbv(u32 level)
 	return min_dbv + div64_u64((top - min_dbv) * shape, 100 * max * max);
 }
 
-/* 16-bit DBV, big-endian (vendor qcom,mdss-dsi-bl-inverted-dbv) */
-static int xiaomi_l12_bl_update_status(struct backlight_device *bl)
+/* 16-bit DBV, big-endian (vendor qcom,mdss-dsi-bl-inverted-dbv). ctx->lock held. */
+static int xiaomi_l12_send_brightness(struct xiaomi_l12 *ctx,
+				     struct backlight_device *bl)
 {
-	struct mipi_dsi_device *dsi = bl_get_data(bl);
+	struct mipi_dsi_device *dsi = ctx->dsi;
 	u16 brightness = xiaomi_l12_level_to_dbv(backlight_get_brightness(bl));
 	int ret;
 
@@ -756,6 +809,24 @@ static int xiaomi_l12_bl_update_status(struct backlight_device *bl)
 	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
 
 	return ret < 0 ? ret : 0;
+}
+
+static int xiaomi_l12_bl_update_status(struct backlight_device *bl)
+{
+	struct xiaomi_l12 *ctx = bl_get_data(bl);
+	int ret = 0;
+
+	/*
+	 * Panel off: nothing to send (it would time out on a sleeping DDIC).
+	 * drm_panel_enable() calls backlight_enable() once the panel is up,
+	 * which applies the current level.
+	 */
+	mutex_lock(&ctx->lock);
+	if (ctx->on)
+		ret = xiaomi_l12_send_brightness(ctx, bl);
+	mutex_unlock(&ctx->lock);
+
+	return ret;
 }
 
 /*
@@ -817,12 +888,10 @@ static int xiaomi_l12_42_local_hbm(struct xiaomi_l12 *ctx, unsigned int mode)
 
 	/* Back to the user's brightness (the vendor resends DBV here too). */
 	if (!mode && ctx->panel.backlight)
-		return backlight_update_status(ctx->panel.backlight);
+		return xiaomi_l12_send_brightness(ctx, ctx->panel.backlight);
 
 	return 0;
 }
-
-static unsigned int xiaomi_l12_lhbm_state;
 
 static ssize_t local_hbm_show(struct device *dev,
 			      struct device_attribute *attr, char *buf)
@@ -845,15 +914,20 @@ static ssize_t local_hbm_store(struct device *dev,
 		return -EINVAL;
 	if (ctx->desc->set_rate != xiaomi_l12_42_set_rate)	/* 42 02 0a only */
 		return -EOPNOTSUPP;
-	if (!ctx->panel.prepared)
-		return -EAGAIN;
+	mutex_lock(&ctx->lock);
+	if (!ctx->on) {
+		ret = -EAGAIN;
+		goto out;
+	}
 
 	ret = xiaomi_l12_42_local_hbm(ctx, mode);
 	if (ret)
-		return ret;
+		goto out;
 	xiaomi_l12_lhbm_state = mode;
-
-	return count;
+	ret = count;
+out:
+	mutex_unlock(&ctx->lock);
+	return ret;
 }
 static DEVICE_ATTR_RW(local_hbm);
 
@@ -868,16 +942,16 @@ static const struct backlight_ops xiaomi_l12_bl_ops = {
 };
 
 static struct backlight_device *
-xiaomi_l12_create_backlight(struct mipi_dsi_device *dsi)
+xiaomi_l12_create_backlight(struct xiaomi_l12 *ctx)
 {
-	struct device *dev = &dsi->dev;
+	struct device *dev = &ctx->dsi->dev;
 	const struct backlight_properties props = {
 		.type = BACKLIGHT_RAW,
 		.brightness = XIAOMI_L12_MAX_BRIGHTNESS / 2,
 		.max_brightness = XIAOMI_L12_MAX_BRIGHTNESS,
 	};
 
-	return devm_backlight_device_register(dev, dev_name(dev), dev, dsi,
+	return devm_backlight_device_register(dev, dev_name(dev), dev, ctx,
 					      &xiaomi_l12_bl_ops, &props);
 }
 
@@ -1018,6 +1092,10 @@ static int xiaomi_l12_probe(struct mipi_dsi_device *dsi)
 	ctx->dsi = dsi;
 	mipi_dsi_set_drvdata(dsi, ctx);
 
+	ret = devm_mutex_init(dev, &ctx->lock);
+	if (ret)
+		return ret;
+
 	dsi->lanes = 4;
 	dsi->format = MIPI_DSI_FMT_RGB101010;
 	dsi->mode_flags = MIPI_DSI_MODE_VIDEO_BURST |
@@ -1025,7 +1103,7 @@ static int xiaomi_l12_probe(struct mipi_dsi_device *dsi)
 
 	ctx->panel.prepare_prev_first = true;
 
-	ctx->panel.backlight = xiaomi_l12_create_backlight(dsi);
+	ctx->panel.backlight = xiaomi_l12_create_backlight(ctx);
 	if (IS_ERR(ctx->panel.backlight))
 		return dev_err_probe(dev, PTR_ERR(ctx->panel.backlight),
 				     "failed to create backlight\n");

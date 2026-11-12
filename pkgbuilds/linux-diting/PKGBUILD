@@ -7,7 +7,7 @@ pkgname=linux-diting
 _kver=7.2.10
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=${_kver}
-pkgrel=31
+pkgrel=32
 pkgdesc="Linux ${_kver} pour le Xiaomi 12T Pro / Redmi K50 Ultra (diting, SM8475)"
 arch=(aarch64)
 url="https://github.com/royka1/diting-ubuntu"
@@ -40,8 +40,10 @@ source=("https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${_kver}.tar.xz"
         0919-tee-qcomtee-Allocate-large-shared-buffers-from-CMA.patch
         0920-tee-qseecom-Give-the-request-back-on-INOUT.patch
         0922-arm64-dts-qcom-sm8475-xiaomi-diting-Keep-L1C-L7C-and-L11C-on-for-the-fingerprint-sensor.patch
-        0923-drm-panel-xiaomi-l12-Local-high-brightness-mode.patch)
+        0923-drm-panel-xiaomi-l12-Local-high-brightness-mode.patch
+        0924-drm-panel-xiaomi-l12-Serialise-DSI-access.patch)
 sha256sums=('2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -128,6 +130,8 @@ prepare() {
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0922-arm64-dts-qcom-sm8475-xiaomi-diting-Keep-L1C-L7C-and-L11C-on-for-the-fingerprint-sensor.patch"
   # dalle 42 02 0a : HBM local sous le capteur d'empreintes (fichier local_hbm)
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0923-drm-panel-xiaomi-l12-Local-high-brightness-mode.patch"
+  # dalle : verrou sur les accès DSI (luminosité pendant l'init), contrôle du power mode
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0924-drm-panel-xiaomi-l12-Serialise-DSI-access.patch"
 
   _make defconfig
   scripts/kconfig/merge_config.sh -m .config "$srcdir/diting-ubuntu/kernel/config/diting.config"
