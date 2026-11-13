@@ -180,6 +180,8 @@ Pistes restantes pour la fluidité (hors GPU) : le nombre de pixels rendus (écr
 Plasma en basse résolution agrandie par le contrôleur d'affichage), et le chemin d'affichage de KWin
 (cadence des images, copies inutiles).
 
+Autre limite connue : Wild Life plante à cause de la préemption (voir §7).
+
 Leviers GPU encore disponibles, à utiliser seulement si un usage est limité par le GPU (Waydroid,
 jeux) : fixer `min_freq` du devfreq (montée plus rapide, au prix de la batterie), régler le gouverneur,
 mettre à jour Mesa (freedreno/turnip), vérifier qu'aucun plafond thermique ne bride le GPU.
@@ -187,6 +189,65 @@ mettre à jour Mesa (freedreno/turnip), vérifier qu'aucun plafond thermique ne 
 ```sh
 cat /sys/class/devfreq/*gpu*/{governor,min_freq,max_freq,cur_freq,available_frequencies}
 ```
+
+## 7. Le plantage de 3DMark Wild Life : la préemption de l'A730
+
+Symptôme (Waydroid, 3DMark → Wild Life, Vulkan) : l'appli meurt en quelques secondes, parfois avec des
+barres à l'écran, et le noyau écrit
+
+```
+adreno 3d00000.gpu: [drm:a6xx_irq [msm]] *ERROR* gpu fault ring 2 fence … status 00E01007 …
+msm_dpu …: 07030001: hangcheck recover!
+msm_dpu …: offending task: Thread-12 (com.futuremark.dmandroid.application)
+```
+
+Reproductible à chaque lancement, **avant comme après** les patches 0926 à 0929, quelle que soit la
+fréquence (plafonner à 710 MHz n'y change rien). Sling Shot Vulkan, plus léger, passe sans problème. Le
+message « missing vulkan features » (test OMM) est sans rapport : Wild Life ne demande que Vulkan 1.1.
+
+### Capture et décodage
+
+Le pilote `msm` dépose l'état du GPU dans un *devcoredump*, qui disparaît après environ 5 minutes :
+
+```sh
+cat /sys/class/devcoredump/disabled          # 0 = capture active
+# lancer Wild Life jusqu'au plantage, puis tout de suite :
+sudo timeout 300 sh -c 'cat /sys/class/devcoredump/devcd2/data > /tmp/hang.txt' &
+ls -l /tmp/hang.txt                          # attendre que la taille se stabilise (~14 Mo)
+```
+
+Le fichier est du YAML avec des registres bruts. `scripts/compiler-crashdec.sh` compile `crashdec`
+(Mesa, `-Dtools=freedreno`) sur un PC ; `crashdec -f hang.txt` décode les registres. **Attention** : la
+sortie dépasse 1 Go (décodage des tampons), la limiter avec `head` ou la couper après la section
+`registers:`.
+
+### Ce que montre la capture
+
+- `CP_RB_BASE` = anneau 0, `CP_RB_RPTR` = `CP_RB_WPTR` = `0xc9c` : le processeur de commandes a **tout
+  lu** sur l'anneau 0, `CP_SCRATCH[2]` = 3173 (la dernière fence de cet anneau).
+- `RBBM_STATUS` ne contient que `CP_AHB_BUSY_CX_MASTER` ; `RBBM_INT_0_STATUS`, `CP_HW_FAULT`,
+  `CP_INTERRUPT_STATUS` à 0 : aucun bloc occupé, aucune faute matérielle.
+- L'anneau 2 a du travail en attente (fences 79037 → 79042, 439 mots non lus) que le CP n'a jamais
+  commencé.
+
+Le GPU est donc resté sur l'anneau 0, vide, sans passer à l'anneau 2 : la **préemption** (changement
+de contexte entre anneaux) ne s'est pas faite. Dans le noyau 7.2, l'A730 porte `ADRENO_QUIRK_PREEMPTION`
+(`a6xx_catalog.c`) et utilise donc 4 anneaux.
+
+### Contournement (validé le 2026-11-13)
+
+Le paramètre `enable_preemption` du module `msm` (1 = actif, 0 = coupé, −1 = auto, valeur par défaut) :
+
+```sh
+echo 'options msm enable_preemption=0' | sudo tee /etc/modprobe.d/msm-sans-preemption.conf
+sudo mkinitcpio -P && sudo reboot
+cat /sys/module/msm/parameters/enable_preemption     # 0
+```
+
+Avec `0`, Wild Life va jusqu'au bout. Le paquet `diting-device` (≥ 0.1.25-2) installe ce réglage dans
+`/usr/lib/modprobe.d/diting-gpu-preemption.conf`. Contrepartie : sans préemption, une charge GPU très
+longue peut faire attendre brièvement les autres clients (l'interface). Pour revenir au comportement du
+noyau : supprimer ce fichier (et le `/etc/modprobe.d` de test), `mkinitcpio -P`, redémarrer.
 
 ## Voir aussi
 
