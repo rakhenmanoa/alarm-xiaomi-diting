@@ -71,6 +71,8 @@ caméra, bureau) est dans **[docs/contenu.md](docs/contenu.md)**.
 - Tout ce qui concerne l'audio (haut-parleurs, écouteur, micros, appels, UCM) : [audio/README.md](audio/README.md).
 - Tout ce qui concerne le modem (MPSS, IPA, rmtfs, SIM, ModemManager, données mobiles, appels et SMS) : [modem/README.md](modem/README.md).
 - Tout ce qui concerne l'horloge (RTC du PMIC en lecture seule, heure gardée sans réseau par `diting-rtc`) : [rtc/README.md](rtc/README.md).
+- Tout ce qui concerne le GPU (tension, niveaux de fréquence, bande passante mémoire du GPU) : [gpu/README.md](gpu/README.md).
+- Tout ce qui concerne la mémoire vue du CPU (moniteurs de bande passante `bwmon`, DDR) : [cpu/README.md](cpu/README.md).
 - Pour tester un pilote ou le device tree sans reconstruire tout le noyau : compiler seulement les
   modules et le DTB sur le téléphone, voir [docs/modules-sur-le-telephone.md](docs/modules-sur-le-telephone.md).
 
