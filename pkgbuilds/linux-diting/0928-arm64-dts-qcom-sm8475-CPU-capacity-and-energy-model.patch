@@ -1,0 +1,67 @@
+From: Fanasina <noreply@example.invalid>
+Subject: [PATCH] arm64: dts: qcom: sm8475: Describe the CPU capacity and energy model
+
+sm8450.dtsi gives no capacity-dmips-mhz nor dynamic-power-coefficient, so the
+scheduler saw eight identical cores (cpu_capacity 1024 on all of them) and
+the energy model could not be built. Add both for the three core types, with
+the values of the vendor device tree: cpu0-3 Cortex-A510 (1024, 100), cpu4-6
+Cortex-A710 (2253, 257), cpu7 Cortex-X2 (2386, 509).
+
+---
+ arch/arm64/boot/dts/qcom/sm8475.dtsi | 47 ++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 47 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8475.dtsi b/arch/arm64/boot/dts/qcom/sm8475.dtsi
+--- a/arch/arm64/boot/dts/qcom/sm8475.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8475.dtsi
+@@ -270,3 +270,50 @@
+ 		};
+ 	};
+ };
++
++/*
++ * CPU capacity and energy model. sm8450.dtsi describes neither, so the
++ * scheduler saw eight identical cores (cpu_capacity 1024 everywhere) and EAS
++ * could not work. Values from the vendor device tree (capacity-dmips-mhz and
++ * dynamic-power-coefficient): cpu0-3 Cortex-A510, cpu4-6 Cortex-A710, cpu7
++ * Cortex-X2.
++ */
++&cpu0 {
++	capacity-dmips-mhz = <1024>;
++	dynamic-power-coefficient = <100>;
++};
++
++&cpu1 {
++	capacity-dmips-mhz = <1024>;
++	dynamic-power-coefficient = <100>;
++};
++
++&cpu2 {
++	capacity-dmips-mhz = <1024>;
++	dynamic-power-coefficient = <100>;
++};
++
++&cpu3 {
++	capacity-dmips-mhz = <1024>;
++	dynamic-power-coefficient = <100>;
++};
++
++&cpu4 {
++	capacity-dmips-mhz = <2253>;
++	dynamic-power-coefficient = <257>;
++};
++
++&cpu5 {
++	capacity-dmips-mhz = <2253>;
++	dynamic-power-coefficient = <257>;
++};
++
++&cpu6 {
++	capacity-dmips-mhz = <2253>;
++	dynamic-power-coefficient = <257>;
++};
++
++&cpu7 {
++	capacity-dmips-mhz = <2386>;
++	dynamic-power-coefficient = <509>;
++};

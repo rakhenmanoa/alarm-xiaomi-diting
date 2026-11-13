@@ -7,7 +7,7 @@ pkgname=linux-diting
 _kver=7.2.10
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=${_kver}
-pkgrel=34
+pkgrel=35
 pkgdesc="Linux ${_kver} pour le Xiaomi 12T Pro / Redmi K50 Ultra (diting, SM8475)"
 arch=(aarch64)
 url="https://github.com/royka1/diting-ubuntu"
@@ -44,8 +44,10 @@ source=("https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${_kver}.tar.xz"
         0924-drm-panel-xiaomi-l12-Serialise-DSI-access.patch
         0925-drm-panel-xiaomi-l12-ESD-recovery-dimming-first-frame.patch
         0926-arm64-dts-qcom-sm8475-GPU-DDR-bandwidth-votes.patch
-        0927-arm64-dts-qcom-sm8475-Add-the-CPU-and-LLCC-bwmon.patch)
+        0927-arm64-dts-qcom-sm8475-Add-the-CPU-and-LLCC-bwmon.patch
+        0928-arm64-dts-qcom-sm8475-CPU-capacity-and-energy-model.patch)
 sha256sums=('2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -144,6 +146,8 @@ prepare() {
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0926-arm64-dts-qcom-sm8475-GPU-DDR-bandwidth-votes.patch"
   # moniteurs de bande passante CPU→LLCC et LLCC→DDR (la DDR monte avec le trafic)
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0927-arm64-dts-qcom-sm8475-Add-the-CPU-and-LLCC-bwmon.patch"
+  # capacité et modèle d'énergie des cœurs (ordonnanceur énergétique EAS)
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0928-arm64-dts-qcom-sm8475-CPU-capacity-and-energy-model.patch"
 
   _make defconfig
   scripts/kconfig/merge_config.sh -m .config "$srcdir/diting-ubuntu/kernel/config/diting.config"

@@ -1,8 +1,12 @@
-# CPU et mémoire du Xiaomi 12T Pro (diting) — moniteurs de bande passante (bwmon)
+# CPU et mémoire du Xiaomi 12T Pro (diting) — bwmon, capacité des cœurs, énergie
 
-Ce dossier documente comment la DDR est maintenant montée en fréquence selon le **trafic mesuré du CPU**,
-grâce aux deux moniteurs de bande passante matériels du SM8475. Tout est parti de la question « peut-on
-accélérer la mémoire ? ».
+Ce dossier documente deux choses :
+
+1. comment la DDR est montée en fréquence selon le **trafic mesuré du CPU**, grâce aux deux moniteurs de
+   bande passante matériels du SM8475 (§ 1 à 7, patch `0927`). Tout est parti de la question « peut-on
+   accélérer la mémoire ? » ;
+2. comment le noyau connaît enfin la **puissance relative de chaque cœur** et le modèle d'énergie, ce qui
+   permet à l'ordonnanceur de bien placer les tâches (§ 8, patch `0928`).
 
 > **Ce sont des copies de référence, figées le 2026-11-13.** Les fichiers réellement construits restent
 > ceux de `pkgbuilds/linux-diting/` et `extra/bwmon-overlay/` : mettez d'abord ces originaux à jour, puis
@@ -13,11 +17,12 @@ accélérer la mémoire ? ».
 | Fichier | Contenu | Original |
 |---|---|---|
 | `patches/0927-arm64-dts-qcom-sm8475-Add-the-CPU-and-LLCC-bwmon.patch` | Les deux nœuds `bwmon` dans `sm8475.dtsi` | `pkgbuilds/linux-diting/0927-…` |
+| `patches/0928-arm64-dts-qcom-sm8475-CPU-capacity-and-energy-model.patch` | `capacity-dmips-mhz` et `dynamic-power-coefficient` des 8 cœurs | `pkgbuilds/linux-diting/0928-…` |
 | `overlay/bwmon.dtso` | Même contenu sous forme de surcouche, pour tester sans reconstruire le noyau | `extra/bwmon-overlay/bwmon.dtso` |
 | `scripts/calculer-seuils-bwmon.py` | Calcule les seuils `opp-peak-kBps` depuis les tables du vendeur | — |
 
-Le patch `0927` s'applique **après** `0926` (voir [gpu/README.md](../gpu/README.md)) et après la série
-de royka1/diting-ubuntu, qui fournit `sm8475.dtsi`.
+Les patches `0927` et `0928` s'appliquent **après** `0926` (voir [gpu/README.md](../gpu/README.md)) et
+après la série de royka1/diting-ubuntu, qui fournit `sm8475.dtsi`.
 
 ## 1. Surcadencer la DDR ? Non
 
@@ -179,6 +184,107 @@ rendus, chemin d'affichage de KWin).
   survivent, il faut que le `PKGBUILD` applique `0926` et `0927`, puis reconstruire le paquet.
 - Le message `disp_cc_mdss_mdp_clk_src: rcg didn't update its configuration` au démarrage est celui du
   pilote d'horloge de l'écran ; sans rapport avec les `bwmon`.
+
+## 8. Capacité des cœurs et modèle d'énergie (patch `0928`)
+
+### Constat
+
+Sur le téléphone, avant le patch :
+
+```sh
+grep . /sys/devices/system/cpu/cpu*/cpu_capacity
+```
+
+donnait **1024 pour les 8 cœurs**. Le noyau voyait donc huit cœurs identiques, alors que le SM8475 a :
+
+| Cœurs | Type | Fréquence max |
+|---|---|---|
+| cpu0 à cpu3 | Cortex-A510 (petits) | ~2,0 GHz |
+| cpu4 à cpu6 | Cortex-A710 (moyens) | ~2,75 GHz |
+| cpu7 | Cortex-X2 (gros) | ~3,2 GHz |
+
+Conséquences : pas de placement des tâches selon la puissance du cœur, modèle d'énergie (EAS) impossible,
+et montée en fréquence calculée sans tenir compte de l'écart entre cœurs. `sm8450.dtsi` ne décrit ni
+`capacity-dmips-mhz` ni `dynamic-power-coefficient` pour ses cœurs.
+
+### Les valeurs, lues dans le DT d'Android
+
+Dans le `vendor_boot` d'HyperOS (voir § 3), nœuds `cpu@0` à `cpu@700` :
+
+```sh
+cd /tmp/vb && grep -n "cpu@\|capacity-dmips-mhz\|dynamic-power-coefficient" out/all.txt | head -60
+```
+
+| Cœurs | `capacity-dmips-mhz` | `dynamic-power-coefficient` |
+|---|---|---|
+| `cpu@0`, `@100`, `@200`, `@300` | `0x400` = **1024** | `0x64` = **100** |
+| `cpu@400`, `@500`, `@600` | `0x8cd` = **2253** | `0x101` = **257** |
+| `cpu@700` | `0x952` = **2386** | `0x1fd` = **509** |
+
+Le patch `0928` les écrit pour `&cpu0` à `&cpu7` dans `sm8475.dtsi` (les labels `cpu0` à `cpu7`
+existent dans `sm8450.dtsi`). Le coefficient est en µW/MHz/V², l'unité attendue par le noyau.
+
+### Prérequis du noyau (vérifiés sur le téléphone)
+
+```sh
+cat /sys/devices/system/cpu/cpufreq/policy*/scaling_governor     # schedutil (x3)
+zcat /proc/config.gz | grep -E "CONFIG_ENERGY_MODEL|CONFIG_CPU_FREQ_GOV_SCHEDUTIL|CONFIG_ARM_QCOM_CPUFREQ_HW|CONFIG_SCHED_MC"
+```
+
+Résultat : gouverneur `schedutil` sur les trois groupes, `CONFIG_ENERGY_MODEL=y`,
+`CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y`, `CONFIG_ARM_QCOM_CPUFREQ_HW=y`, `CONFIG_SCHED_MC=y`. Il ne
+manquait que la description des cœurs.
+
+### Test sans reconstruire (`fdtput`)
+
+Fait sur le DTB installé, après sauvegarde. Les nœuds sont `/cpus/cpu@0` … `/cpus/cpu@700` :
+
+```sh
+sudo cp /boot/dtbs/qcom/sm8475-xiaomi-diting.dtb /boot/dtbs/qcom/sm8475-xiaomi-diting.dtb.avant-cpucap
+sudo fdtput -t u /boot/dtbs/qcom/sm8475-xiaomi-diting.dtb /cpus/cpu@0 capacity-dmips-mhz 1024
+sudo fdtput -t u /boot/dtbs/qcom/sm8475-xiaomi-diting.dtb /cpus/cpu@0 dynamic-power-coefficient 100
+# … idem pour @100, @200, @300 (1024 / 100), @400, @500, @600 (2253 / 257), @700 (2386 / 509)
+sudo mkinitcpio -P
+sudo diting-install-bootimg
+sudo reboot
+```
+
+Pour relire les valeurs, une paire « nœud propriété » par appel (`fdtget` n'accepte pas deux propriétés
+pour un même nœud en une seule fois) :
+
+```sh
+fdtget -t u /boot/dtbs/qcom/sm8475-xiaomi-diting.dtb /cpus/cpu@400 capacity-dmips-mhz
+fdtget -t u /boot/dtbs/qcom/sm8475-xiaomi-diting.dtb /cpus/cpu@400 dynamic-power-coefficient
+```
+
+Retour arrière : remettre `sm8475-xiaomi-diting.dtb.avant-cpucap`, puis `mkinitcpio -P` et
+`diting-install-bootimg`.
+
+### Résultat (2026-11-13)
+
+Après redémarrage :
+
+| Cœurs | `cpu_capacity` |
+|---|---|
+| cpu0 à cpu3 | **277** |
+| cpu4 à cpu6 | **832** |
+| cpu7 | **1024** |
+
+Le modèle d'énergie est enregistré (`sudo ls /sys/kernel/debug/energy_model/` → `cpu0`, `cpu4`, `cpu7`)
+et `cat /proc/sys/kernel/sched_energy_aware` donne `1`.
+
+**Effet sur la fluidité : à confirmer à l'usage.** Les capacités et le modèle d'énergie sont actifs ;
+le ressenti (interface de Plasma, Firefox) et la consommation n'ont pas encore été évalués au moment
+de cette écriture. À noter ici une fois jugés.
+
+### Pièges
+
+- Le commutateur `sched_energy_aware` à `1` indique que l'EAS est autorisé, pas qu'il est actif à tout
+  instant : il ne joue que lorsque le système n'est pas saturé.
+- Les `dynamic-power-coefficient` d'Android sont ceux de son propre ordonnanceur ; ils conviennent comme
+  point de départ mais n'ont pas été recalibrés pour Linux mainline.
+- Comme pour le GPU et les `bwmon`, ces valeurs ne survivent à une mise à jour du paquet `linux-diting`
+  que si le `PKGBUILD` applique `0928` (c'est le cas depuis `pkgrel 35`).
 
 ## Voir aussi
 
