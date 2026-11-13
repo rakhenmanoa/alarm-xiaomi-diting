@@ -75,7 +75,7 @@ sha256sums=('2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3'
             'SKIP'
             'SKIP'
             'SKIP'
-            'SKIP',
+            'SKIP'
             'SKIP')
 
 _make() {
