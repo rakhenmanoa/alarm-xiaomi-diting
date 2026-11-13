@@ -291,7 +291,7 @@ de cette écriture. À noter ici une fois jugés.
 - [gpu/README.md](../gpu/README.md) : la tension du GPU, la table de fréquences, le patch `0926`.
 - [screen/README.md](../screen/README.md) : l'affichage et la fluidité.
 
-## 9. L3, LLCC et DDR votés par les CPU (patch 0929, EN TEST)
+## 9. L3, LLCC et DDR votés par les CPU (patch 0929)
 
 Le `sm8450.dtsi` ne donne aucune table OPP aux cœurs : `cpufreq-hw` règle
 seulement l'horloge du cœur, le L3, le LLCC et la DDR restent au plancher.
@@ -302,5 +302,12 @@ reprises par rang du `sm8550.dtsi` (DDR plafonnée à 3196000).
 - Nécessite `CONFIG_INTERCONNECT_QCOM_OSM_L3=y` (module `=m` : `cpufreq-hw`,
   intégré, ne peut pas attendre le fournisseur). Fait dans le `PKGBUILD`
   (pkgrel 36).
-- Branche `l3-epss`, pas encore fusionnée dans `main` : à valider sur le téléphone
-  (fréquences CPU qui montent, `interconnect_summary` avec les clients cpu).
+- Validé sur le téléphone (paquet 7.2.10-36) : `interconnect_summary` montre
+  `epss_l3` avec les clients cpu0, cpu4 et cpu7 (un par grappe). Au repos
+  (cpu7 à 1996800 kHz) : L3 40550400, LLCC 9600000, DDR 6832000 ; sous charge
+  (3187200 kHz) : L3 54067200, LLCC 14928000, DDR 12784000. Les votes GPU
+  (0926) sont inchangés.
+- Piège : `INTERCONNECT_QCOM_OSM_L3=m` ne convient pas, il doit être `=y`.
+- Wild Life (3DMark, via Waydroid) plante avec un « gpu fault » du noyau, mais
+  c'était déjà le cas avant ces patchs : bug du pilote Vulkan de l'image
+  Waydroid, sans lien. Sling Shot Vulkan passe sans problème.
