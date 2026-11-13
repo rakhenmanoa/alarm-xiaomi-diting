@@ -1,0 +1,109 @@
+From: Fanasina <noreply@example.invalid>
+Subject: [PATCH] arm64: dts: qcom: sm8475: Add the CPU and LLCC bandwidth monitors
+
+Describe the two bandwidth monitors of the SM8475 (bwmon4 from the CPU to
+the LLCC, bwmon5 from the LLCC to the DDR), supported by icc-bwmon with the
+SM8550 compatibles. Register addresses and interrupts come from the vendor
+device tree; the thresholds are the vendor frequency tables times the bus
+width, in the kernel's kBps convention.
+
+---
+ arch/arm64/boot/dts/qcom/sm8475.dtsi | 89 ++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 89 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8475.dtsi b/arch/arm64/boot/dts/qcom/sm8475.dtsi
+--- a/arch/arm64/boot/dts/qcom/sm8475.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8475.dtsi
+@@ -181,3 +181,92 @@
+ &videocc {
+ 	compatible = "qcom,sm8475-videocc";
+ };
++
++/*
++ * Bandwidth monitors: raise the DDR/LLCC bandwidth votes with the traffic
++ * measured by the hardware, as on SM8550. Registers and interrupts from the
++ * vendor device tree (bwmon4 CPU to LLCC, bwmon5 LLCC to DDR); thresholds are
++ * the vendor llcc/ddr frequency tables times the bus width, in the
++ * kernel's kBps convention (same values as SM8550 for the shared steps).
++ */
++&soc {
++	pmu@190b6400 {
++		compatible = "qcom,sm8550-cpu-bwmon", "qcom,sdm845-bwmon";
++		reg = <0 0x190b6400 0 0x600>;
++		interrupts = <GIC_SPI 581 IRQ_TYPE_LEVEL_HIGH>;
++		interconnects = <&gem_noc MASTER_APPSS_PROC QCOM_ICC_TAG_ACTIVE_ONLY
++				 &gem_noc SLAVE_LLCC QCOM_ICC_TAG_ACTIVE_ONLY>;
++
++		operating-points-v2 = <&cpu_bwmon_opp_table>;
++
++		cpu_bwmon_opp_table: opp-table {
++			compatible = "operating-points-v2";
++
++			opp-0 {
++				opp-peak-kBps = <4577000>;
++			};
++
++			opp-1 {
++				opp-peak-kBps = <7110000>;
++			};
++
++			opp-2 {
++				opp-peak-kBps = <9155000>;
++			};
++
++			opp-3 {
++				opp-peak-kBps = <12298000>;
++			};
++
++			opp-4 {
++				opp-peak-kBps = <14236000>;
++			};
++
++			opp-5 {
++				opp-peak-kBps = <16265000>;
++			};
++		};
++	};
++
++	pmu@19091000 {
++		compatible = "qcom,sm8550-llcc-bwmon", "qcom,sc7280-llcc-bwmon";
++		reg = <0 0x19091000 0 0x1000>;
++		interrupts = <GIC_SPI 81 IRQ_TYPE_LEVEL_HIGH>;
++		interconnects = <&mc_virt MASTER_LLCC QCOM_ICC_TAG_ACTIVE_ONLY
++				 &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ACTIVE_ONLY>;
++
++		operating-points-v2 = <&llcc_bwmon_opp_table>;
++
++		llcc_bwmon_opp_table: opp-table {
++			compatible = "operating-points-v2";
++
++			opp-0 {
++				opp-peak-kBps = <2086000>;
++			};
++
++			opp-1 {
++				opp-peak-kBps = <2929000>;
++			};
++
++			opp-2 {
++				opp-peak-kBps = <5931000>;
++			};
++
++			opp-3 {
++				opp-peak-kBps = <6515000>;
++			};
++
++			opp-4 {
++				opp-peak-kBps = <7980000>;
++			};
++
++			opp-5 {
++				opp-peak-kBps = <10437000>;
++			};
++
++			opp-6 {
++				opp-peak-kBps = <12191000>;
++			};
++		};
++	};
++};
