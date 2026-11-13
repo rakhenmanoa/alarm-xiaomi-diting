@@ -290,3 +290,17 @@ de cette écriture. À noter ici une fois jugés.
 
 - [gpu/README.md](../gpu/README.md) : la tension du GPU, la table de fréquences, le patch `0926`.
 - [screen/README.md](../screen/README.md) : l'affichage et la fluidité.
+
+## 9. L3, LLCC et DDR votés par les CPU (patch 0929, EN TEST)
+
+Le `sm8450.dtsi` ne donne aucune table OPP aux cœurs : `cpufreq-hw` règle
+seulement l'horloge du cœur, le L3, le LLCC et la DDR restent au plancher.
+Le patch 0929 déclare le fournisseur `epss_l3` (0x17d90000) et trois tables
+OPP (16, 20 et 21 niveaux) dont `opp-peak-kBps` = (LLCC×16) (DDR×4) (L3×32),
+reprises par rang du `sm8550.dtsi` (DDR plafonnée à 3196000).
+
+- Nécessite `CONFIG_INTERCONNECT_QCOM_OSM_L3=y` (module `=m` : `cpufreq-hw`,
+  intégré, ne peut pas attendre le fournisseur). Fait dans le `PKGBUILD`
+  (pkgrel 36).
+- Branche `l3-epss`, pas encore fusionnée dans `main` : à valider sur le téléphone
+  (fréquences CPU qui montent, `interconnect_summary` avec les clients cpu).

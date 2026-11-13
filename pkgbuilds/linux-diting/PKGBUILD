@@ -7,7 +7,7 @@ pkgname=linux-diting
 _kver=7.2.10
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=${_kver}
-pkgrel=35
+pkgrel=36
 pkgdesc="Linux ${_kver} pour le Xiaomi 12T Pro / Redmi K50 Ultra (diting, SM8475)"
 arch=(aarch64)
 url="https://github.com/royka1/diting-ubuntu"
@@ -45,7 +45,8 @@ source=("https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${_kver}.tar.xz"
         0925-drm-panel-xiaomi-l12-ESD-recovery-dimming-first-frame.patch
         0926-arm64-dts-qcom-sm8475-GPU-DDR-bandwidth-votes.patch
         0927-arm64-dts-qcom-sm8475-Add-the-CPU-and-LLCC-bwmon.patch
-        0928-arm64-dts-qcom-sm8475-CPU-capacity-and-energy-model.patch)
+        0928-arm64-dts-qcom-sm8475-CPU-capacity-and-energy-model.patch
+        0929-arm64-dts-qcom-sm8475-CPU-DDR-LLCC-L3-bandwidth-votes.patch)
 sha256sums=('2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3'
             'SKIP'
             'SKIP'
@@ -74,6 +75,7 @@ sha256sums=('2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3'
             'SKIP'
             'SKIP'
             'SKIP'
+            'SKIP',
             'SKIP')
 
 _make() {
@@ -148,6 +150,8 @@ prepare() {
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0927-arm64-dts-qcom-sm8475-Add-the-CPU-and-LLCC-bwmon.patch"
   # capacité et modèle d'énergie des cœurs (ordonnanceur énergétique EAS)
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0928-arm64-dts-qcom-sm8475-CPU-capacity-and-energy-model.patch"
+  # votes DDR/LLCC/L3 des CPU et fournisseur EPSS L3 (voir cpu/README.md)
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0929-arm64-dts-qcom-sm8475-CPU-DDR-LLCC-L3-bandwidth-votes.patch"
 
   _make defconfig
   scripts/kconfig/merge_config.sh -m .config "$srcdir/diting-ubuntu/kernel/config/diting.config"
@@ -169,6 +173,8 @@ prepare() {
   # zram (swap compressé en mémoire, zram-generator dans diting-device)
   scripts/config --module ZRAM --enable ZRAM_BACKEND_LZ4 --enable ZRAM_BACKEND_ZSTD \
     --enable ZRAM_DEF_COMP_ZSTD
+  # fournisseur L3 intégré (pas module) : cpufreq-hw en a besoin au probe (patch 0929)
+  scripts/config --enable INTERCONNECT_QCOM_OSM_L3
   _make olddefconfig
 
   # chaque option du fragment doit survivre à olddefconfig (comme diting-ubuntu)
