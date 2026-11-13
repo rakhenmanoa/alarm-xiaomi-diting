@@ -249,6 +249,14 @@ Avec `0`, Wild Life va jusqu'au bout. Le paquet `diting-device` (≥ 0.1.25-2) i
 longue peut faire attendre brièvement les autres clients (l'interface). Pour revenir au comportement du
 noyau : supprimer ce fichier (et le `/etc/modprobe.d` de test), `mkinitcpio -P`, redémarrer.
 
+### Score de référence
+
+Une fois la préemption coupée, 3DMark Wild Life (Vulkan, via Waydroid, Mesa 26.0.8 de l'image, noyau
+7.2.10-36 avec les patches 0926 à 0929) donne **8837** points (2026-11-13). Pour situer : le Poco F5 Pro
+(Snapdragon 8+ Gen 1, même Adreno 730) a mesuré 8097 (Wild Life) et 8291 (Unlimited) selon Gizmochina,
+et un Galaxy S22+ (Snapdragon 8 Gen 1) 9067 selon UL. Wild Life ne dure qu'une minute : c'est un score de
+pointe, pas de tenue thermique. À refaire avec le même test après tout nouveau réglage GPU.
+
 ## Voir aussi
 
 - [cpu/README.md](../cpu/README.md) : les moniteurs de bande passante du CPU (`bwmon`), patch `0927`.
