@@ -14,94 +14,94 @@ the SM8550 table, to be tuned by measurement.
 diff --git a/arch/arm64/boot/dts/qcom/sm8475.dtsi b/arch/arm64/boot/dts/qcom/sm8475.dtsi
 --- a/arch/arm64/boot/dts/qcom/sm8475.dtsi
 +++ b/arch/arm64/boot/dts/qcom/sm8475.dtsi
-@@ -82,6 +82,10 @@
+@@ -81,6 +81,10 @@
  };
  
  &gpu {
-+        interconnects = <&gem_noc MASTER_GFX3D QCOM_ICC_TAG_ALWAYS
-+                         &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>;
-+        interconnect-names = "gfx-mem";
++	interconnects = <&gem_noc MASTER_GFX3D QCOM_ICC_TAG_ALWAYS
++			 &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>;
++	interconnect-names = "gfx-mem";
 +
-         /*
-          * SM8475 Adreno 730v3 levels, from the vendor kgsl qcom,gpu-pwrlevels
-          * (frequency and RPMh corner per level).
-@@ -94,66 +98,79 @@
-                 opp-900000000 {
-                         opp-hz = /bits/ 64 <900000000>;
-                         opp-level = <RPMH_REGULATOR_LEVEL_TURBO_L1>;
-+                        opp-peak-kBps = <16500000>;
-                 };
+ 	/*
+ 	 * SM8475 Adreno 730v3 levels, from the vendor kgsl qcom,gpu-pwrlevels
+ 	 * (frequency and RPMh corner per level).
+@@ -93,66 +97,79 @@
+ 		opp-900000000 {
+ 			opp-hz = /bits/ 64 <900000000>;
+ 			opp-level = <RPMH_REGULATOR_LEVEL_TURBO_L1>;
++			opp-peak-kBps = <16500000>;
+ 		};
  
-                 opp-862000000 {
-                         opp-hz = /bits/ 64 <862000000>;
-                         opp-level = <RPMH_REGULATOR_LEVEL_TURBO>;
-+                        opp-peak-kBps = <12449218>;
-                 };
+ 		opp-862000000 {
+ 			opp-hz = /bits/ 64 <862000000>;
+ 			opp-level = <RPMH_REGULATOR_LEVEL_TURBO>;
++			opp-peak-kBps = <12449218>;
+ 		};
  
-                 opp-815000000 {
-                         opp-hz = /bits/ 64 <815000000>;
-                         opp-level = <RPMH_REGULATOR_LEVEL_NOM_L1>;
-+                        opp-peak-kBps = <12449218>;
-                 };
+ 		opp-815000000 {
+ 			opp-hz = /bits/ 64 <815000000>;
+ 			opp-level = <RPMH_REGULATOR_LEVEL_NOM_L1>;
++			opp-peak-kBps = <12449218>;
+ 		};
  
-                 opp-765000000 {
-                         opp-hz = /bits/ 64 <765000000>;
-                         opp-level = <RPMH_REGULATOR_LEVEL_NOM>;
-+                        opp-peak-kBps = <10687500>;
-                 };
+ 		opp-765000000 {
+ 			opp-hz = /bits/ 64 <765000000>;
+ 			opp-level = <RPMH_REGULATOR_LEVEL_NOM>;
++			opp-peak-kBps = <10687500>;
+ 		};
  
-                 opp-710000000 {
-                         opp-hz = /bits/ 64 <710000000>;
-                         opp-level = <RPMH_REGULATOR_LEVEL_SVS_L2>;
-+                        opp-peak-kBps = <10687500>;
-                 };
+ 		opp-710000000 {
+ 			opp-hz = /bits/ 64 <710000000>;
+ 			opp-level = <RPMH_REGULATOR_LEVEL_SVS_L2>;
++			opp-peak-kBps = <10687500>;
+ 		};
  
-                 opp-645000000 {
-                         opp-hz = /bits/ 64 <645000000>;
-                         opp-level = <RPMH_REGULATOR_LEVEL_SVS_L1>;
-+                        opp-peak-kBps = <6074218>;
-                 };
+ 		opp-645000000 {
+ 			opp-hz = /bits/ 64 <645000000>;
+ 			opp-level = <RPMH_REGULATOR_LEVEL_SVS_L1>;
++			opp-peak-kBps = <6074218>;
+ 		};
  
-                 opp-580000000 {
-                         opp-hz = /bits/ 64 <580000000>;
-                         opp-level = <RPMH_REGULATOR_LEVEL_SVS_L0>;
-+                        opp-peak-kBps = <6074218>;
-                 };
+ 		opp-580000000 {
+ 			opp-hz = /bits/ 64 <580000000>;
+ 			opp-level = <RPMH_REGULATOR_LEVEL_SVS_L0>;
++			opp-peak-kBps = <6074218>;
+ 		};
  
-                 opp-515000000 {
-                         opp-hz = /bits/ 64 <515000000>;
-                         opp-level = <RPMH_REGULATOR_LEVEL_SVS>;
-+                        opp-peak-kBps = <6074218>;
-                 };
+ 		opp-515000000 {
+ 			opp-hz = /bits/ 64 <515000000>;
+ 			opp-level = <RPMH_REGULATOR_LEVEL_SVS>;
++			opp-peak-kBps = <6074218>;
+ 		};
  
-                 opp-439000000 {
-                         opp-hz = /bits/ 64 <439000000>;
-                         opp-level = <RPMH_REGULATOR_LEVEL_LOW_SVS_L2>;
-+                        opp-peak-kBps = <2136718>;
-                 };
+ 		opp-439000000 {
+ 			opp-hz = /bits/ 64 <439000000>;
+ 			opp-level = <RPMH_REGULATOR_LEVEL_LOW_SVS_L2>;
++			opp-peak-kBps = <2136718>;
+ 		};
  
-                 opp-364000000 {
-                         opp-hz = /bits/ 64 <364000000>;
-                         opp-level = <RPMH_REGULATOR_LEVEL_LOW_SVS_L1>;
-+                        opp-peak-kBps = <2136718>;
-                 };
+ 		opp-364000000 {
+ 			opp-hz = /bits/ 64 <364000000>;
+ 			opp-level = <RPMH_REGULATOR_LEVEL_LOW_SVS_L1>;
++			opp-peak-kBps = <2136718>;
+ 		};
  
-                 opp-324000000 {
-                         opp-hz = /bits/ 64 <324000000>;
-                         opp-level = <RPMH_REGULATOR_LEVEL_LOW_SVS>;
-+                        opp-peak-kBps = <2136718>;
-                 };
+ 		opp-324000000 {
+ 			opp-hz = /bits/ 64 <324000000>;
+ 			opp-level = <RPMH_REGULATOR_LEVEL_LOW_SVS>;
++			opp-peak-kBps = <2136718>;
+ 		};
  
-                 opp-285000000 {
-                         opp-hz = /bits/ 64 <285000000>;
-                         opp-level = <RPMH_REGULATOR_LEVEL_LOW_SVS_D1>;
-+                        opp-peak-kBps = <2136718>;
-                 };
+ 		opp-285000000 {
+ 			opp-hz = /bits/ 64 <285000000>;
+ 			opp-level = <RPMH_REGULATOR_LEVEL_LOW_SVS_D1>;
++			opp-peak-kBps = <2136718>;
+ 		};
  
-                 opp-220000000 {
-                         opp-hz = /bits/ 64 <220000000>;
-                         opp-level = <RPMH_REGULATOR_LEVEL_MIN_SVS>;
-+                        opp-peak-kBps = <2136718>;
-                 };
-         };
+ 		opp-220000000 {
+ 			opp-hz = /bits/ 64 <220000000>;
+ 			opp-level = <RPMH_REGULATOR_LEVEL_MIN_SVS>;
++			opp-peak-kBps = <2136718>;
+ 		};
+ 	};
  };
