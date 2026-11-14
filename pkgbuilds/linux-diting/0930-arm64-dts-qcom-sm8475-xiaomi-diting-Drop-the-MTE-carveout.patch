@@ -1,0 +1,32 @@
+From: Fanasina <noreply@example.invalid>
+Subject: [PATCH] arm64: dts: qcom: sm8475-xiaomi-diting: Drop the MTE carveout
+
+sm8450.dtsi reserves 512 MiB at 0xc0000000 (mte_mem, no-map) for the MTE tag
+storage of the reference platform. Nothing in Linux uses it on diting: the
+node has no phandle and no memory-region user. Removed with fdtput on the
+installed DTB (MemTotal was 6557532 kB before), the phone booted with the
+512 MiB back and survived stress-ng --vm 4 --vm-bytes 90% for two minutes, so
+the firmware does not protect the region on this unit. Drop it.
+
+---
+ arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+--- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
++++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-diting.dts
+@@ -44,6 +44,14 @@
+ /delete-node/ &xbl_ramdump_mem;
+ /delete-node/ &xbl_sc_mem;
+ 
++/*
++ * MTE tag storage carveout of the SM8450 reference (512 MiB at 0xc0000000).
++ * Nothing in Linux uses it here (no phandle, no memory-region user) and the
++ * firmware does not protect it on this unit: removing it from the DTB gave
++ * back 512 MiB of RAM and survived a stress-ng run over 90 % of the memory.
++ */
++/delete-node/ &mte_mem;
++
+ / {
+ 	model = "Xiaomi 12T Pro / Redmi K50 Ultra";
+ 	compatible = "xiaomi,diting", "qcom,sm8475";
