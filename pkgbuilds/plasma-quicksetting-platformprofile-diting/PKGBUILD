@@ -1,0 +1,25 @@
+# Tuile « Profil d'énergie » pour le tiroir des réglages rapides de Plasma Mobile.
+# Un appui passe d'un profil au suivant (économie -> équilibré -> performance)
+# via power-profiles-daemon, qui lit le pilote diting-platform-profile
+# (branche platform-profile, extra/platform-profile/README.md).
+# QML pur : rien à compiler, la tuile est un paquet KPackage dans
+# /usr/share/plasma/quicksettings. Elle apparaît à la fin des tuiles actives ;
+# l'éditeur du tiroir permet de la déplacer. Il faut relancer plasmashell
+# (kquitapp6 plasmashell; plasmashell --replace) ou se reconnecter.
+pkgname=plasma-quicksetting-platformprofile-diting
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Xiaomi diting : tuile de profil d'énergie dans les réglages rapides de Plasma Mobile"
+arch=(any)
+url="https://github.com/rakhenmanoa/alarm-xiaomi-diting"
+license=(GPL-3.0-or-later)
+depends=(plasma-mobile plasma5support power-profiles-daemon)
+source=(metadata.json
+        main.qml)
+sha256sums=('SKIP' 'SKIP')
+
+package() {
+  local d="$pkgdir/usr/share/plasma/quicksettings/org.kde.plasma.quicksetting.platformprofile"
+  install -Dm644 "$srcdir/metadata.json" "$d/metadata.json"
+  install -Dm644 "$srcdir/main.qml" "$d/contents/ui/main.qml"
+}

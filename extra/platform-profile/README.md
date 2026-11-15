@@ -41,3 +41,19 @@ Dans l'arbre de `docs/modules-sur-le-telephone.md`, avec les patches 0931 à 093
     sudo depmod -a
 
 Pour ne plus utiliser ces copies une fois le paquet installé : supprimer les deux fichiers de `updates/`, puis `depmod -a`.
+
+## Tuile des réglages rapides (Plasma Mobile)
+
+Le paquet `pkgbuilds/plasma-quicksetting-platformprofile-diting` ajoute une tuile « Profil d'énergie » au tiroir
+des réglages rapides : un appui passe de `power-saver` à `balanced` puis `performance`, la tuile est allumée dès
+qu'on quitte `balanced`. Elle passe par `powerprofilesctl` (power-profiles-daemon), donc par le pilote ci-dessus ;
+le profil est relu toutes les 10 s pour suivre les changements faits ailleurs. QML pur, rien à compiler.
+
+**Non testée** (écrite sans accès au téléphone). Installation puis rechargement du shell :
+
+    cd pkgbuilds/plasma-quicksetting-platformprofile-diting && makepkg -si
+    kquitapp6 plasmashell; plasmashell --replace &   # ou se reconnecter
+
+La tuile s'ajoute en fin de liste des tuiles actives (éditeur du tiroir pour la déplacer). Si elle n'apparaît pas :
+`powerprofilesctl get` doit répondre dans la session du téléphone, et `journalctl --user -b | grep -i platformprofile`
+montre l'erreur QML. Si `org.kde.plasma.plasma5support` manque, installer le paquet `plasma5support`.
