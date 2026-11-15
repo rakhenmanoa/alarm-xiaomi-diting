@@ -23,8 +23,15 @@ de `low-power` et `performance`, et le plafond GPU, sont des points de départ �
     cat /sys/class/platform-profile/*/name
     echo low-power | sudo tee /sys/firmware/acpi/platform_profile
 
-`balanced` reprend les valeurs de `diting-perf.service` : une fois le module validé, désactiver ce
-service (`systemctl disable diting-perf`) pour que les minima ne soient plus fixés deux fois.
+`balanced` reprend les valeurs de l'ancien `diting-perf.service`, retiré de `diting-device` (pkgrel 3).
+Sur un téléphone où ce service est encore activé : `systemctl disable diting-perf`, puis remettre les
+minima utilisateur à zéro (`scaling_min_freq` des policies et `min_freq` du GPU) ou redémarrer.
+
+## Chargement au démarrage et power-profiles-daemon
+
+    echo diting-platform-profile | sudo tee /etc/modules-load.d/diting-platform-profile.conf
+    sudo systemctl restart power-profiles-daemon
+    powerprofilesctl
 
 ## Sans reconstruire tout le noyau (noyau pkgrel 38)
 

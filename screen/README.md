@@ -120,11 +120,12 @@ et ses événements réveillent aussi le téléphone du suspend.
   `/sys/class/drm/card1-DSI-1/dpms` (le noyau le met à jour mais ne notifie pas, donc relecture
   périodique), plus `PrepareForSleep` de logind, et rallumage par une touche virtuelle uinput (`KEY_WAKEUP`).
 
-## 5. Fluidité — `scripts/diting-perf.service`
-Le GPU (`simple_ondemand`) et les petits cœurs montaient trop tard en fréquence, et l'interface
-saccadait. Minima testés le 2026-10-26 : GPU 439 MHz, policy0 1056 MHz, policy4 1113,6 MHz,
-`rate_limit_us` 500 de schedutil. À désactiver si la batterie compte plus :
-`systemctl disable diting-perf`.
+## 5. Fluidité — remplacé par les profils de consommation
+Le service `diting-perf.service` (minima GPU 439 MHz, policy0 1056 MHz, policy4 1113,6 MHz, `rate_limit_us`
+500 de schedutil, testés le 2026-10-26) a été retiré de `diting-device` (pkgrel 3). Ces valeurs sont
+désormais le profil `balanced` du module `extra/platform-profile`, qui ajoute `low-power` et
+`performance` et se règle par `power-profiles-daemon` / Plasma. Le `rate_limit_us` de schedutil n'est
+pas repris par le module.
 
 ## 6. Compiler et installer le pilote de la dalle sans recompiler le noyau
 
