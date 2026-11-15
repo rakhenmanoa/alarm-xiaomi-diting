@@ -28,7 +28,7 @@ même noyau, pas encore revérifiées ici.
 | GPU Adreno 730 | 🟡 | freedreno + Turnip ; blocages GMU rares (écran noir), à corriger |
 | Fluidité de Plasma Mobile | 🟡 | moins fluide qu'Android ; à faire : rendu KWin en basse résolution, agrandi par le contrôleur d'affichage |
 | **Connectivité** | | |
-| Wi-Fi | ✅ | jusqu'à HE 160 MHz ; économie d'énergie désactivée |
+| Wi-Fi | ✅ | jusqu'à HE 160 MHz ; économie d'énergie activée (−40 mA au repos) |
 | Bluetooth | 🟡 | appairage et musique (A2DP) vérifiés avec un casque, via PipeWire ; reste l'audio des appels (HFP), non testé : Android le fait passer par SLIMbus (`btfmslim`), le kit mains libres en appel pourrait rester muet |
 | USB périphérique (SSH par USB) | ✅ | réseau NCM, `172.16.42.1` |
 | USB hôte (OTG) | ✅ | patch `0915` : connecteur USB-C sous pmic-glink, rôle choisi par UCSI ; testé avec un téléphone Android en câble C-C (énuméré en haute vitesse) |
