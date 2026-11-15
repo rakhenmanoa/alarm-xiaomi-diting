@@ -20,10 +20,11 @@ QS.QuickSetting {
         "balanced": i18nc("@info:status", "Balanced"),
         "performance": i18nc("@info:status", "Performance")
     })
+    // mêmes icônes que le widget « Énergie et batterie » de KDE
     readonly property var icons: ({
-        "power-saver": "power-profile-power-saver-symbolic",
-        "balanced": "power-profile-balanced-symbolic",
-        "performance": "power-profile-performance-symbolic"
+        "power-saver": "battery-profile-powersave-symbolic",
+        "balanced": "speedometer",
+        "performance": "battery-profile-performance-symbolic"
     })
 
     property string current: ""
