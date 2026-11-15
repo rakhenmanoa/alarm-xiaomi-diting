@@ -36,8 +36,8 @@ struct profile_cfg {
 /*
  * Valeurs de départ, à ajuster après mesure (voir README).
  * balanced = ce que faisait diting-perf.service.
- * Les max de low-power et le GPU sont à régler d'après
- * /sys/class/devfreq/3d00000.gpu/available_frequencies.
+ * Paliers GPU (MHz) : 220 285 324 364 439 515 580 645 710 765 815 862 900
+ * (/sys/class/devfreq/3d00000.gpu/available_frequencies).
  */
 static const struct profile_cfg profiles[] = {
 	{
@@ -45,7 +45,7 @@ static const struct profile_cfg profiles[] = {
 		.cpu_min = { 300000, 633600, 787200 },
 		.cpu_max = { 1440000, 1324800, 1401600 },
 		.gpu_min = 0,
-		.gpu_max = UNLIMITED,
+		.gpu_max = 515000,
 	},
 	{
 		.opt = PLATFORM_PROFILE_BALANCED,
@@ -58,7 +58,7 @@ static const struct profile_cfg profiles[] = {
 		.opt = PLATFORM_PROFILE_PERFORMANCE,
 		.cpu_min = { 1440000, 1555200, 1536000 },
 		.cpu_max = { 2016000, 2745600, 3187200 },
-		.gpu_min = 439000,
+		.gpu_min = 515000,
 		.gpu_max = UNLIMITED,
 	},
 };
