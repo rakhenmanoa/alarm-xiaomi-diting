@@ -1,0 +1,24 @@
+From: Fanasina <noreply@example.invalid>
+Subject: [PATCH] ACPI: platform_profile: Make the class user-selectable
+
+ACPI_PLATFORM_PROFILE is a tristate without a prompt, so it can only be
+enabled by a driver that selects it. Give it a prompt so the out-of-tree
+diting-platform-profile module can use the class on this arm64 phone.
+
+---
+--- a/drivers/acpi/Kconfig
++++ b/drivers/acpi/Kconfig
+@@ -351,7 +351,12 @@ config ACPI_THERMAL
+ 	  the module will be called thermal.
+ 
+ config ACPI_PLATFORM_PROFILE
+-	tristate
++	tristate "Platform profile class (power/performance profiles)"
++	help
++	  Exposes /sys/class/platform-profile/, used by power-profiles-daemon
++	  and desktop environments to switch between power profiles.
++
++	  If unsure, say N.
+ 
+ config ACPI_CUSTOM_DSDT_FILE
+ 	string "Custom DSDT Table file to include"

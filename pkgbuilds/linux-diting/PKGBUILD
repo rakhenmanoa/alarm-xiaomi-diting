@@ -7,7 +7,7 @@ pkgname=linux-diting
 _kver=7.2.10
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=${_kver}
-pkgrel=37
+pkgrel=38
 pkgdesc="Linux ${_kver} pour le Xiaomi 12T Pro / Redmi K50 Ultra (diting, SM8475)"
 arch=(aarch64)
 url="https://github.com/royka1/diting-ubuntu"
@@ -47,8 +47,10 @@ source=("https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${_kver}.tar.xz"
         0927-arm64-dts-qcom-sm8475-Add-the-CPU-and-LLCC-bwmon.patch
         0928-arm64-dts-qcom-sm8475-CPU-capacity-and-energy-model.patch
         0929-arm64-dts-qcom-sm8475-CPU-DDR-LLCC-L3-bandwidth-votes.patch
-        0930-arm64-dts-qcom-sm8475-xiaomi-diting-Drop-the-MTE-carveout.patch)
+        0930-arm64-dts-qcom-sm8475-xiaomi-diting-Drop-the-MTE-carveout.patch
+        0931-ACPI-platform_profile-Make-the-class-selectable.patch)
 sha256sums=('2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -156,6 +158,8 @@ prepare() {
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0929-arm64-dts-qcom-sm8475-CPU-DDR-LLCC-L3-bandwidth-votes.patch"
   # zone MTE de 512 Mio inutilisée rendue à Linux (voir ram/README.md)
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0930-arm64-dts-qcom-sm8475-xiaomi-diting-Drop-the-MTE-carveout.patch"
+  # classe platform profile sélectionnable (module extra/platform-profile)
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0931-ACPI-platform_profile-Make-the-class-selectable.patch"
 
   _make defconfig
   scripts/kconfig/merge_config.sh -m .config "$srcdir/diting-ubuntu/kernel/config/diting.config"
@@ -179,6 +183,8 @@ prepare() {
     --enable ZRAM_DEF_COMP_ZSTD
   # fournisseur L3 intégré (pas module) : cpufreq-hw en a besoin au probe (patch 0929)
   scripts/config --enable INTERCONNECT_QCOM_OSM_L3
+  # classe platform profile (patch 0931), pour diting-platform-profile
+  scripts/config --module ACPI_PLATFORM_PROFILE
   _make olddefconfig
 
   # chaque option du fragment doit survivre à olddefconfig (comme diting-ubuntu)
