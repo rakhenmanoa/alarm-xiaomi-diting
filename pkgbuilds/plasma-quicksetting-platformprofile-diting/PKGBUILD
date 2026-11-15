@@ -8,7 +8,7 @@
 # (kquitapp6 plasmashell; plasmashell --replace) ou se reconnecter.
 pkgname=plasma-quicksetting-platformprofile-diting
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Xiaomi diting : tuile de profil d'énergie dans les réglages rapides de Plasma Mobile"
 arch=(any)
 url="https://github.com/rakhenmanoa/alarm-xiaomi-diting"
