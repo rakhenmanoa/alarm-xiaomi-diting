@@ -49,8 +49,10 @@ source=("https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${_kver}.tar.xz"
         0929-arm64-dts-qcom-sm8475-CPU-DDR-LLCC-L3-bandwidth-votes.patch
         0930-arm64-dts-qcom-sm8475-xiaomi-diting-Drop-the-MTE-carveout.patch
         0931-ACPI-platform_profile-Make-the-class-selectable.patch
-        0932-ACPI-platform_profile-Work-with-ACPI-disabled.patch)
+        0932-ACPI-platform_profile-Work-with-ACPI-disabled.patch
+        0933-soc-qcom-Add-the-diting-platform-profile-driver.patch)
 sha256sums=('2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -164,6 +166,8 @@ prepare() {
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0931-ACPI-platform_profile-Make-the-class-selectable.patch"
   # platform profile sans ACPI actif (démarrage par device tree)
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0932-ACPI-platform_profile-Work-with-ACPI-disabled.patch"
+  # pilote des profils de consommation du diting (voir extra/platform-profile)
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0933-soc-qcom-Add-the-diting-platform-profile-driver.patch"
 
   _make defconfig
   scripts/kconfig/merge_config.sh -m .config "$srcdir/diting-ubuntu/kernel/config/diting.config"
@@ -188,7 +192,7 @@ prepare() {
   # fournisseur L3 intégré (pas module) : cpufreq-hw en a besoin au probe (patch 0929)
   scripts/config --enable INTERCONNECT_QCOM_OSM_L3
   # classe platform profile (patch 0931), pour diting-platform-profile
-  scripts/config --module ACPI_PLATFORM_PROFILE
+  scripts/config --module ACPI_PLATFORM_PROFILE --module QCOM_DITING_PLATFORM_PROFILE
   _make olddefconfig
 
   # chaque option du fragment doit survivre à olddefconfig (comme diting-ubuntu)

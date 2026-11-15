@@ -1,42 +1,43 @@
 # Profils de consommation (platform profile)
 
-Module `diting-platform-profile` : expose `low-power`, `balanced` et `performance` dans
-`/sys/class/platform-profile/`, ce que lisent power-profiles-daemon et Plasma. Chaque profil règle
-par QoS le min/max des 3 groupes de cœurs (policy0, policy4, policy7) et du GPU (`3d00000.gpu`),
-sans écraser le gouverneur ni les réglages sysfs.
+Pilote `diting-platform-profile` : expose `low-power`, `balanced` et `performance` dans
+`/sys/class/platform-profile/` et `/sys/firmware/acpi/platform_profile`, ce que lisent
+power-profiles-daemon et Plasma. Chaque profil règle par QoS le min/max des 3 groupes de cœurs
+(policy0, policy4, policy7) et du GPU (`3d00000.gpu`), sans écraser le gouverneur ni les réglages sysfs.
 
-**Non testé** : écrit d'après le noyau principal (v7.2), jamais compilé sur le téléphone. Les valeurs
-de `low-power` et `performance`, et le plafond GPU, sont des points de départ à régler après mesure.
+Le pilote est intégré au noyau par des patches de `pkgbuilds/linux-diting/` :
 
-## Prérequis noyau
+| Patch | Rôle |
+|---|---|
+| `0931` | rend `ACPI_PLATFORM_PROFILE` sélectionnable |
+| `0932` | fait fonctionner la classe sans ACPI (le diting démarre par device tree : `platform_profile` refusait de se charger, `Operation not supported`) ; crée `/sys/firmware/acpi` lui-même |
+| `0933` | le pilote lui-même, `drivers/soc/qcom/diting-platform-profile.c` (`CONFIG_QCOM_DITING_PLATFORM_PROFILE=m`) |
 
-`CONFIG_ACPI_PLATFORM_PROFILE` n'a pas de ligne de menu dans le noyau : le patch
-`pkgbuilds/linux-diting/0931-…` lui en ajoute une, et le PKGBUILD l'active en module. Le patch `0932` fait aussi fonctionner la classe sans ACPI : sur le diting, démarré par device tree, `platform_profile` refusait de se charger (`Operation not supported`) car `acpi_disabled` est vrai. Il crée `/sys/firmware/acpi` lui-même pour le fichier historique lu par power-profiles-daemon (pkgrel 39).
+Le paquet `diting-device` (pkgrel 5) pose `/usr/lib/modules-load.d/diting-platform-profile.conf` : le module
+se charge au démarrage. Il remplace l'ancien `diting-perf.service` : `balanced` en reprend les valeurs.
+Le `rate_limit_us` de schedutil (500 µs) n'est pas repris.
 
-## Compiler et charger (sur le téléphone, noyau pkgrel 38 ou 39 installé ; avec le 38, recompiler d'abord `platform_profile.ko` avec le patch 0932 (voir ci-dessous))
+**Non testé en paquet** : testé sur le téléphone en module compilé à la main (2026-11-15, noyau pkgrel 38) :
+les trois profils changent bien les limites CPU et GPU, et `powerprofilesctl` les voit. Par SSH, polkit
+refuse `powerprofilesctl set` (session non locale) : utiliser `sudo`.
 
-    cd extra/platform-profile
-    make KDIR=/lib/modules/$(uname -r)/build
-    sudo install -Dm644 diting-platform-profile.ko /usr/lib/modules/$(uname -r)/updates/
-    sudo depmod -a
-    sudo modprobe diting-platform-profile
-    cat /sys/class/platform-profile/*/name
-    echo low-power | sudo tee /sys/firmware/acpi/platform_profile
+## Valeurs des profils
 
-`balanced` reprend les valeurs de l'ancien `diting-perf.service`, retiré de `diting-device` (pkgrel 3).
-Sur un téléphone où ce service est encore activé : `systemctl disable diting-perf`, puis remettre les
-minima utilisateur à zéro (`scaling_min_freq` des policies et `min_freq` du GPU) ou redémarrer.
+Dans `profiles[]` du fichier du pilote (kHz). Paliers GPU (MHz) : 220 285 324 364 439 515 580 645 710 765
+815 862 900. `low-power` plafonne le GPU à 515 MHz ; `balanced` = ancien `diting-perf` ; `performance`
+relève les minima. Mesure au repos le 2026-11-15 : pas de différence de consommation entre `low-power` et
+`balanced` (environ 165 mA) ; l'écart se verra sous charge. L'économie d'énergie Wi-Fi, elle, fait gagner
+environ 40 mA (156 → 114 mA).
 
-## Chargement au démarrage et power-profiles-daemon
+## Modifier le pilote sans reconstruire le noyau
 
-    echo diting-platform-profile | sudo tee /etc/modules-load.d/diting-platform-profile.conf
-    sudo systemctl restart power-profiles-daemon
-    powerprofilesctl
-
-## Sans reconstruire tout le noyau (noyau pkgrel 38)
+Dans l'arbre de `docs/modules-sur-le-telephone.md`, avec les patches 0931 à 0933 appliqués :
 
     cd ~/linux-7.2.10
-    patch -Np1 < ~/alarm-xiaomi-diting/pkgbuilds/linux-diting/0932-ACPI-platform_profile-Work-with-ACPI-disabled.patch
-    make LOCALVERSION= KBUILD_MODPOST_WARN=1 drivers/acpi/platform_profile.ko
-    sudo install -Dm644 drivers/acpi/platform_profile.ko /usr/lib/modules/$(uname -r)/updates/platform_profile.ko
+    scripts/config --module ACPI_PLATFORM_PROFILE --module QCOM_DITING_PLATFORM_PROFILE
+    make LOCALVERSION= olddefconfig
+    make LOCALVERSION= KBUILD_MODPOST_WARN=1 drivers/acpi/platform_profile.ko drivers/soc/qcom/diting-platform-profile.ko
+    sudo install -Dm644 -t /usr/lib/modules/$(uname -r)/updates/ drivers/acpi/platform_profile.ko drivers/soc/qcom/diting-platform-profile.ko
     sudo depmod -a
+
+Pour ne plus utiliser ces copies une fois le paquet installé : supprimer les deux fichiers de `updates/`, puis `depmod -a`.
