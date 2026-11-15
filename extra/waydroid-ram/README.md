@@ -5,7 +5,7 @@ Paquet `pkgbuilds/diting-waydroid-ram`. Remplace, dans le raccourci d'une app Wa
 root attend qu'elle n'ait plus de fenêtre dans Android (`dumpsys window windows`), puis écrit
 `1G swappiness=200` dans `/sys/fs/cgroup/lxc.payload.waydroid/memory.reclaim`.
 
-**Non testé sur le téléphone** (logique testée avec un faux `waydroid` et un faux cgroup).
+**Testé sur le téléphone le 2026-11-15** : détection de la fermeture et libération de la RAM fonctionnent.
 
 ## Utilisation
 
@@ -34,4 +34,6 @@ variable `DITING_WAYDROID_RECLAIM` (défaut `1G swappiness=200`).
 
 `pkgbuilds/plasma-mobile-diting` (patch 0002) ajoute dans Réglages > Intégration Android > Applications un
 interrupteur « Libérer la RAM à la fermeture » par app ; il appelle `diting-waydroid-ram on/off <paquet>` et relit
-`diting-waydroid-ram list`. Sans le paquet `diting-waydroid-ram`, l'interrupteur est masqué. **Non testé.**
+`diting-waydroid-ram list`. Sans le paquet `diting-waydroid-ram`, l'interrupteur est masqué. **Testé sur le téléphone le 2026-11-15.**
+L'écran de réglages garde l'ancienne page tant qu'on ne l'a pas rouverte : fermer puis rouvrir Réglages après l'installation.
+L'avertissement `Cannot read property 'width' of null` (ligne `ListView.view.width`) vient de KDE, sans conséquence.

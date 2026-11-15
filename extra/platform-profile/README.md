@@ -51,7 +51,7 @@ La tuile « Profil d'énergie » du tiroir des réglages rapides est fournie par
 relu toutes les 10 s pour suivre les changements faits ailleurs. Elle remplace l'ancien paquet
 `plasma-quicksetting-platformprofile-diting` (retiré du dépôt ; `replaces`/`conflicts` dans le PKGBUILD).
 
-**Non testée** (écrite sans accès au téléphone). Installation puis rechargement du shell :
+**Testée sur le téléphone le 2026-11-15** (la tuile s'affiche et change le profil). Installation puis rechargement du shell :
 
     cd pkgbuilds/plasma-mobile-diting && makepkg -si
     kquitapp6 plasmashell; plasmashell --replace &   # ou se reconnecter
