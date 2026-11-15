@@ -1,0 +1,136 @@
+From: Fanasina <noreply@example.invalid>
+Subject: [PATCH] ACPI: platform_profile: Work with ACPI disabled (device tree)
+
+platform_profile_init() refuses to load when acpi_disabled, and every user of
+the legacy /sys/firmware/acpi/platform_profile file assumes acpi_kobj exists.
+On a device-tree arm64 phone (diting) ACPI is disabled at run time, so the
+class never registers.
+
+When ACPI is disabled, create the firmware/acpi directory ourselves and use it
+for the legacy platform_profile and platform_profile_choices files, so
+power-profiles-daemon keeps working.
+
+---
+--- a/drivers/acpi/platform_profile.c
++++ b/drivers/acpi/platform_profile.c
+@@ -16,6 +16,15 @@
+ 
+ static DEFINE_MUTEX(profile_lock);
+ 
++/*
++ * /sys/firmware/acpi existe seulement si ACPI est actif. Sur un appareil
++ * démarré avec un device tree (ACPI désactivé), on crée ce dossier nous-mêmes
++ * pour garder le fichier historique platform_profile (lu par
++ * power-profiles-daemon).
++ */
++static struct kobject *pp_kobj;
++static bool pp_kobj_owned;
++
+ struct platform_profile_handler {
+ 	const char *name;
+ 	struct device dev;
+@@ -216,7 +225,7 @@
+ 			return ret;
+ 	}
+ 
+-	sysfs_notify(acpi_kobj, NULL, "platform_profile");
++	sysfs_notify(pp_kobj, NULL, "platform_profile");
+ 
+ 	return count;
+ }
+@@ -436,7 +445,7 @@
+ 			return ret;
+ 	}
+ 
+-	sysfs_notify(acpi_kobj, NULL, "platform_profile");
++	sysfs_notify(pp_kobj, NULL, "platform_profile");
+ 
+ 	return count;
+ }
+@@ -482,7 +491,7 @@
+ 	scoped_cond_guard(mutex_intr, return, &profile_lock) {
+ 		_notify_class_profile(dev, NULL);
+ 	}
+-	sysfs_notify(acpi_kobj, NULL, "platform_profile");
++	sysfs_notify(pp_kobj, NULL, "platform_profile");
+ }
+ EXPORT_SYMBOL_GPL(platform_profile_notify);
+ 
+@@ -532,7 +541,7 @@
+ 			return err;
+ 	}
+ 
+-	sysfs_notify(acpi_kobj, NULL, "platform_profile");
++	sysfs_notify(pp_kobj, NULL, "platform_profile");
+ 
+ 	return 0;
+ }
+@@ -605,9 +614,9 @@
+ 		goto cleanup_ida;
+ 	}
+ 
+-	sysfs_notify(acpi_kobj, NULL, "platform_profile");
++	sysfs_notify(pp_kobj, NULL, "platform_profile");
+ 
+-	err = sysfs_update_group(acpi_kobj, &platform_profile_group);
++	err = sysfs_update_group(pp_kobj, &platform_profile_group);
+ 	if (err)
+ 		goto cleanup_cur;
+ 
+@@ -641,8 +650,8 @@
+ 	ida_free(&platform_profile_ida, pprof->minor);
+ 	device_unregister(&pprof->dev);
+ 
+-	sysfs_notify(acpi_kobj, NULL, "platform_profile");
+-	sysfs_update_group(acpi_kobj, &platform_profile_group);
++	sysfs_notify(pp_kobj, NULL, "platform_profile");
++	sysfs_update_group(pp_kobj, &platform_profile_group);
+ }
+ EXPORT_SYMBOL_GPL(platform_profile_remove);
+ 
+@@ -690,24 +699,39 @@
+ {
+ 	int err;
+ 
+-	if (acpi_disabled)
+-		return -EOPNOTSUPP;
++	if (acpi_disabled) {
++		pp_kobj = kobject_create_and_add("acpi", firmware_kobj);
++		if (!pp_kobj)
++			return -ENOMEM;
++		pp_kobj_owned = true;
++	} else {
++		pp_kobj = acpi_kobj;
++	}
+ 
+ 	err = class_register(&platform_profile_class);
+ 	if (err)
+-		return err;
++		goto err_kobj;
+ 
+-	err = sysfs_create_group(acpi_kobj, &platform_profile_group);
++	err = sysfs_create_group(pp_kobj, &platform_profile_group);
+ 	if (err)
+-		class_unregister(&platform_profile_class);
++		goto err_class;
++
++	return 0;
+ 
++err_class:
++	class_unregister(&platform_profile_class);
++err_kobj:
++	if (pp_kobj_owned)
++		kobject_put(pp_kobj);
+ 	return err;
+ }
+ 
+ static void __exit platform_profile_exit(void)
+ {
+-	sysfs_remove_group(acpi_kobj, &platform_profile_group);
++	sysfs_remove_group(pp_kobj, &platform_profile_group);
+ 	class_unregister(&platform_profile_class);
++	if (pp_kobj_owned)
++		kobject_put(pp_kobj);
+ }
+ module_init(platform_profile_init);
+ module_exit(platform_profile_exit);
