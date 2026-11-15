@@ -1,0 +1,151 @@
+diff --git a/quicksettings/CMakeLists.txt b/quicksettings/CMakeLists.txt
+index 9dc8354..6421a3c 100644
+--- a/quicksettings/CMakeLists.txt
++++ b/quicksettings/CMakeLists.txt
+@@ -13,6 +13,7 @@ plasma_install_package(autohidepanels org.kde.plasma.quicksetting.autohidepanels
+ plasma_install_package(keyboardtoggle org.kde.plasma.quicksetting.keyboardtoggle quicksettings)
+ plasma_install_package(kscreenosd org.kde.plasma.quicksetting.kscreenosd quicksettings)
+ plasma_install_package(mobiledata org.kde.plasma.quicksetting.mobiledata quicksettings)
++plasma_install_package(platformprofile org.kde.plasma.quicksetting.platformprofile quicksettings)
+ plasma_install_package(settingsapp org.kde.plasma.quicksetting.settingsapp quicksettings)
+ plasma_install_package(waydroid org.kde.plasma.quicksetting.waydroid quicksettings)
+ plasma_install_package(wifi org.kde.plasma.quicksetting.wifi quicksettings)
+diff --git a/quicksettings/platformprofile/contents/ui/main.qml b/quicksettings/platformprofile/contents/ui/main.qml
+new file mode 100644
+index 0000000..277996a
+--- /dev/null
++++ b/quicksettings/platformprofile/contents/ui/main.qml
+@@ -0,0 +1,109 @@
++// SPDX-License-Identifier: GPL-3.0-or-later
++//
++// Tuile des réglages rapides de Plasma Mobile : profil d'énergie.
++// Un appui passe au profil suivant (économie -> équilibré -> performance).
++// Passe par power-profiles-daemon (powerprofilesctl), donc par le pilote
++// diting-platform-profile (/sys/class/platform-profile/diting).
++
++import QtQuick
++
++import org.kde.plasma.private.mobileshell.quicksettingsplugin as QS
++import org.kde.plasma.plasma5support as P5Support
++
++QS.QuickSetting {
++    id: root
++
++    // Valeurs de power-profiles-daemon, dans l'ordre du cycle.
++    readonly property var order: ["power-saver", "balanced", "performance"]
++    readonly property var labels: ({
++        "power-saver": i18nc("@info:status", "Power saver"),
++        "balanced": i18nc("@info:status", "Balanced"),
++        "performance": i18nc("@info:status", "Performance")
++    })
++    // mêmes icônes que le widget « Énergie et batterie » de KDE
++    readonly property var icons: ({
++        "power-saver": "battery-profile-powersave-symbolic",
++        "balanced": "speedometer",
++        "performance": "battery-profile-performance-symbolic"
++    })
++
++    property string current: ""
++    property var choices: ["power-saver", "balanced", "performance"]
++
++    text: i18nc("@action:button", "Power profile")
++    status: current === "" ? "" : (labels[current] ?? current)
++    icon: icons[current] ?? "speedometer"
++    // allumée dès qu'on s'écarte du profil par défaut
++    enabled: current !== "" && current !== "balanced"
++    // masquée si power-profiles-daemon est absent
++    available: true
++
++    function toggle(): void {
++        if (current === "" || choices.length === 0) {
++            return;
++        }
++        const i = choices.indexOf(current);
++        const next = choices[(i + 1) % choices.length];
++        // affichage immédiat, confirmé par la relecture qui suit
++        current = next;
++        shell.run("powerprofilesctl set " + next);
++    }
++
++    function refresh(): void {
++        shell.run("powerprofilesctl get");
++    }
++
++    function parseChoices(out: string): void {
++        // lignes « * balanced: » / « performance: » de « powerprofilesctl list »
++        const found = [];
++        for (const line of out.split("\n")) {
++            const m = line.match(/^[\s*]*(power-saver|balanced|performance):/);
++            if (m) {
++                found.push(m[1]);
++            }
++        }
++        if (found.length > 0) {
++            choices = order.filter(p => found.includes(p));
++        }
++    }
++
++    P5Support.DataSource {
++        id: shell
++        engine: "executable"
++        connectedSources: []
++
++        onNewData: (source, data) => {
++            disconnectSource(source);
++            const out = (data["stdout"] ?? "").trim();
++            const ok = data["exit code"] === 0;
++            if (source === "powerprofilesctl get") {
++                root.available = ok && out !== "";
++                if (ok) {
++                    root.current = out;
++                }
++            } else if (source === "powerprofilesctl list") {
++                if (ok) {
++                    root.parseChoices(out);
++                }
++            } else if (source.startsWith("powerprofilesctl set")) {
++                // relit le profil réellement appliqué (refus polkit, etc.)
++                root.refresh();
++            }
++        }
++
++        function run(cmd: string): void {
++            connectSource(cmd);
++        }
++    }
++
++    // Suit aussi les changements faits ailleurs (powerprofilesctl, autre appli).
++    Timer {
++        interval: 10000
++        repeat: true
++        running: true
++        triggeredOnStart: true
++        onTriggered: root.refresh()
++    }
++
++    Component.onCompleted: shell.run("powerprofilesctl list")
++}
+diff --git a/quicksettings/platformprofile/metadata.json b/quicksettings/platformprofile/metadata.json
+new file mode 100644
+index 0000000..c375c36
+--- /dev/null
++++ b/quicksettings/platformprofile/metadata.json
+@@ -0,0 +1,18 @@
++{
++    "KPackageStructure": "KPackage/GenericQML",
++    "KPlugin": {
++        "Authors": [
++            {
++                "Name": "Fanasina"
++            }
++        ],
++        "Description": "Choisir le profil d'énergie (économie, équilibré, performance) depuis les réglages rapides",
++        "Description[en]": "Switch the power profile (power saver, balanced, performance) from the quick settings",
++        "Icon": "speedometer",
++        "Id": "org.kde.plasma.quicksetting.platformprofile",
++        "License": "GPL-3.0-or-later",
++        "Name": "Profil d'énergie",
++        "Name[en]": "Power profile",
++        "Website": "https://github.com/rakhenmanoa/alarm-xiaomi-diting"
++    }
++}

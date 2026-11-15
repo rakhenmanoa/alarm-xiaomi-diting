@@ -30,7 +30,8 @@ L'aide est lancée par `sudo -n` : `/etc/sudoers.d/diting-waydroid-ram` l'autori
 `wheel` seulement pour ce fichier (il lit les fenêtres et écrit `memory.reclaim`, rien d'autre). Valeur libérée :
 variable `DITING_WAYDROID_RECLAIM` (défaut `1G swappiness=200`).
 
-## Suite prévue
+## Dans les réglages Plasma Mobile
 
-Option « Libérer la RAM à la fermeture » dans les réglages d'intégration Android de Plasma Mobile
-(patch de `plasma-mobile-diting`), qui appellera `diting-waydroid-ram on/off`.
+`pkgbuilds/plasma-mobile-diting` (patch 0002) ajoute dans Réglages > Intégration Android > Applications un
+interrupteur « Libérer la RAM à la fermeture » par app ; il appelle `diting-waydroid-ram on/off <paquet>` et relit
+`diting-waydroid-ram list`. Sans le paquet `diting-waydroid-ram`, l'interrupteur est masqué. **Non testé.**

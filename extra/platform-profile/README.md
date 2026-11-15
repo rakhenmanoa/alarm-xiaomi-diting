@@ -44,14 +44,16 @@ Pour ne plus utiliser ces copies une fois le paquet installé : supprimer les de
 
 ## Tuile des réglages rapides (Plasma Mobile)
 
-Le paquet `pkgbuilds/plasma-quicksetting-platformprofile-diting` ajoute une tuile « Profil d'énergie » au tiroir
-des réglages rapides : un appui passe de `power-saver` à `balanced` puis `performance`, la tuile est allumée dès
-qu'on quitte `balanced`. Elle passe par `powerprofilesctl` (power-profiles-daemon), donc par le pilote ci-dessus ;
-le profil est relu toutes les 10 s pour suivre les changements faits ailleurs. QML pur, rien à compiler.
+La tuile « Profil d'énergie » du tiroir des réglages rapides est fournie par `pkgbuilds/plasma-mobile-diting`
+(patch 0003, sources dans `quicksettings/platformprofile` de Plasma Mobile). Un appui passe de `power-saver` à
+`balanced` puis `performance` ; elle est allumée dès qu'on quitte `balanced`. Icônes de KDE (feuille, compteur,
+éclair). Elle passe par `powerprofilesctl` (power-profiles-daemon), donc par le pilote ci-dessus ; le profil est
+relu toutes les 10 s pour suivre les changements faits ailleurs. Elle remplace l'ancien paquet
+`plasma-quicksetting-platformprofile-diting` (retiré du dépôt ; `replaces`/`conflicts` dans le PKGBUILD).
 
 **Non testée** (écrite sans accès au téléphone). Installation puis rechargement du shell :
 
-    cd pkgbuilds/plasma-quicksetting-platformprofile-diting && makepkg -si
+    cd pkgbuilds/plasma-mobile-diting && makepkg -si
     kquitapp6 plasmashell; plasmashell --replace &   # ou se reconnecter
 
 La tuile s'ajoute en fin de liste des tuiles actives (éditeur du tiroir pour la déplacer). Si elle n'apparaît pas :

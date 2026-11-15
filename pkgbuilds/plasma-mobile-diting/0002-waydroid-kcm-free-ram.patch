@@ -1,0 +1,85 @@
+diff --git a/kcms/waydroidintegration/ui/WaydroidApplicationsPage.qml b/kcms/waydroidintegration/ui/WaydroidApplicationsPage.qml
+index 6d452ac..cfe84f0 100644
+--- a/kcms/waydroidintegration/ui/WaydroidApplicationsPage.qml
++++ b/kcms/waydroidintegration/ui/WaydroidApplicationsPage.qml
+@@ -12,6 +12,7 @@ import org.kde.kirigami as Kirigami
+ import org.kde.kcmutils as KCM
+ import org.kde.kirigamiaddons.formcard 1.0 as FormCard
+ import org.kde.plasma.private.mobileshell.waydroidintegrationplugin as AIP
++import org.kde.plasma.plasma5support as P5Support
+ 
+ KCM.SimpleKCM {
+     id: root
+@@ -48,6 +49,46 @@ KCM.SimpleKCM {
+         }
+     }
+ 
++    // diting : libérer la RAM de Waydroid à la fermeture d'une app (paquet diting-waydroid-ram)
++    property bool ramAvailable: false
++    property var ramApps: []
++
++    function ramRefresh(): void {
++        ramShell.connectSource("diting-waydroid-ram list")
++    }
++
++    function ramSet(packageName: string, on: bool): void {
++        if (!/^[A-Za-z0-9_.]+$/.test(packageName)) {
++            return
++        }
++        ramShell.connectSource("diting-waydroid-ram " + (on ? "on " : "off ") + packageName)
++    }
++
++    P5Support.DataSource {
++        id: ramShell
++        engine: "executable"
++        connectedSources: []
++
++        onNewData: (source, data) => {
++            disconnectSource(source)
++            if (source === "diting-waydroid-ram list") {
++                root.ramAvailable = data["exit code"] === 0
++                const found = []
++                for (const line of (data["stdout"] ?? "").split("\n")) {
++                    const m = line.match(/^\[x\]\s+(\S+)/)
++                    if (m) {
++                        found.push(m[1])
++                    }
++                }
++                root.ramApps = found
++            } else {
++                root.ramRefresh()
++            }
++        }
++    }
++
++    Component.onCompleted: ramRefresh()
++
+     Timer {
+         id: autoRefreshApplicationsTimer
+         interval: 2000
+@@ -101,6 +142,25 @@ KCM.SimpleKCM {
+                             elide: Text.ElideRight
+                         }
+ 
++                        QQC2.Switch {
++                            id: ramSwitch
++
++                            visible: root.ramAvailable
++                            checked: root.ramApps.indexOf(model.id) !== -1
++                            text: i18nc("@option:check", "Free RAM when closed")
++                            display: QQC2.AbstractButton.IconOnly
++
++                            onToggled: {
++                                root.ramSet(model.id, checked)
++                                // garde le lien avec l'état réel, relu après la commande
++                                checked = Qt.binding(() => root.ramApps.indexOf(model.id) !== -1)
++                            }
++
++                            QQC2.ToolTip.visible: hovered
++                            QQC2.ToolTip.text: text
++                            QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
++                        }
++
+                         QQC2.ToolButton {
+                             display: QQC2.AbstractButton.IconOnly
+                             text: i18nc("@action:button", "Delete the application")

@@ -1,19 +1,28 @@
-# Plasma Mobile 6.8.1 + correction du tiroir des réglages rapides vide.
+# Plasma Mobile 6.8.1 + correction du tiroir des réglages rapides vide, tuile de
+# profil d'énergie et option « Libérer la RAM à la fermeture » pour Waydroid.
 # Au démarrage, la largeur du panneau est brièvement négative : rowCount
 # devient négatif (-280), pageSize aussi (-840), et PaginateModel annonce
 # des lignes d'indices négatifs. La vue crée alors 840 tuiles sans réglage
 # (5040 erreurs QuickSettings.qml:102-107) qui repoussent les vraies tuiles.
 # Patch 0001 : taille de page bornée à 0 (QML et PaginateModel).
+# Patch 0002 : réglages d'intégration Android (Waydroid), un interrupteur « Libérer
+#   la RAM à la fermeture » par app, qui appelle diting-waydroid-ram on/off
+#   (paquet diting-waydroid-ram, facultatif : sans lui l'interrupteur est masqué).
+# Patch 0003 : tuile « Profil d'énergie » des réglages rapides (power-profiles-daemon
+#   et pilote diting-platform-profile). Remplace le paquet
+#   plasma-quicksetting-platformprofile-diting.
 # Retour au paquet d'Arch : sudo pacman -S plasma-mobile
 pkgname=plasma-mobile-diting
 pkgver=6.8.1
-pkgrel=2
-pkgdesc="Plasma Mobile ${pkgver} avec correction du tiroir des réglages rapides vide (diting)"
+pkgrel=3
+pkgdesc="Plasma Mobile ${pkgver} (diting) : tiroir corrigé, tuile profil d'énergie, libération de RAM Waydroid"
 arch=(aarch64)
 url="https://invent.kde.org/plasma/plasma-mobile"
 license=(GPL-2.0-or-later LGPL-2.0-or-later)
 provides=("plasma-mobile=${pkgver}")
-conflicts=(plasma-mobile)
+conflicts=(plasma-mobile plasma-quicksetting-platformprofile-diting)
+replaces=(plasma-quicksetting-platformprofile-diting)
+optdepends=('diting-waydroid-ram: libérer la RAM de Waydroid à la fermeture des apps')
 
 # Mêmes dépendances que le paquet plasma-mobile installé (lues dans la base
 # locale de pacman), pour que le remplacement ne change rien d'autre.
@@ -25,11 +34,13 @@ _deps_installees() {
     return
   done
 }
-depends=($(_deps_installees))
+depends=($({ _deps_installees; printf '%s\n' plasma5support power-profiles-daemon; } | awk '!vu[$0]++'))
 makedepends=(git extra-cmake-modules plasma-wayland-protocols wayland-protocols vulkan-headers)
 source=("plasma-mobile::git+https://github.com/KDE/plasma-mobile.git#tag=v${pkgver}"
-        0001-quicksettings-negative-page-size.patch)
-sha256sums=('SKIP' 'SKIP')
+        0001-quicksettings-negative-page-size.patch
+        0002-waydroid-kcm-free-ram.patch
+        0003-quicksettings-platform-profile.patch)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 prepare() {
   if [ ${#depends[@]} -eq 0 ]; then
@@ -37,7 +48,10 @@ prepare() {
     return 1
   fi
   cd plasma-mobile
-  patch -Np1 --no-backup-if-mismatch < "$srcdir/0001-quicksettings-negative-page-size.patch"
+  local p
+  for p in 0001-quicksettings-negative-page-size 0002-waydroid-kcm-free-ram 0003-quicksettings-platform-profile; do
+    patch -Np1 --no-backup-if-mismatch < "$srcdir/$p.patch"
+  done
 }
 
 build() {
