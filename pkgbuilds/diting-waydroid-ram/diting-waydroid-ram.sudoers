@@ -1,0 +1,3 @@
+# Permet aux membres de wheel de lancer l'aide de diting-waydroid-ram sans mot de passe
+# (elle ne fait que lire l'état des fenêtres Waydroid et écrire memory.reclaim).
+%wheel ALL=(root) NOPASSWD: /usr/lib/diting/diting-waydroid-ram-helper

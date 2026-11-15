@@ -1,0 +1,63 @@
+#!/bin/bash
+# Libère la RAM de Waydroid quand une app choisie se ferme.
+#   diting-waydroid-ram list          apps Waydroid et état de l'option
+#   diting-waydroid-ram on  <paquet>  active l'option pour l'app
+#   diting-waydroid-ram off <paquet>  la désactive
+#   diting-waydroid-ram apply         (ré)applique aux raccourcis (idempotent)
+#   diting-waydroid-ram run <paquet>  lance l'app, attend sa fermeture, libère la RAM
+# L'état est dans ~/.config/diting-waydroid-ram/apps (un paquet par ligne).
+# Waydroid écrit ses raccourcis dans ~/.local/share/applications/waydroid.<paquet>.desktop
+# avec « Exec=waydroid app launch <paquet> » ; on remplace cette commande.
+set -u
+APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/diting-waydroid-ram/apps"
+HELPER=/usr/lib/diting/diting-waydroid-ram-helper
+SELF=diting-waydroid-ram
+
+valide() { [[ "${1:-}" =~ ^[A-Za-z0-9_.]+$ ]] || { echo "nom de paquet invalide : ${1:-}" >&2; exit 2; }; }
+active() { grep -qxF "$1" "$CONF" 2>/dev/null; }
+
+# fichier(s) .desktop de Waydroid pour un paquet
+bureau() { grep -l -E "^Exec=(waydroid app launch|$SELF run) $1\$" "$APPS"/*.desktop 2>/dev/null; }
+
+patch_un() {  # $1 = paquet, $2 = on|off
+  local f
+  for f in $(bureau "$1"); do
+    if [ "$2" = on ]; then
+      sed -i -E "s|^Exec=waydroid app launch $1\$|Exec=$SELF run $1|" "$f"
+    else
+      sed -i -E "s|^Exec=$SELF run $1\$|Exec=waydroid app launch $1|" "$f"
+    fi
+  done
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  list)
+    for f in "$APPS"/*.desktop; do
+      [ -f "$f" ] || continue
+      p=$(sed -n -E "s/^Exec=(waydroid app launch|$SELF run) (.+)\$/\2/p" "$f" | head -1)
+      [ -n "$p" ] || continue
+      n=$(sed -n 's/^Name=//p' "$f" | head -1)
+      if active "$p"; then e='[x]'; else e='[ ]'; fi
+      printf '%s %-40s %s\n' "$e" "$p" "$n"
+    done ;;
+  on)
+    valide "${2:-}"; mkdir -p "$(dirname "$CONF")"
+    active "$2" || echo "$2" >> "$CONF"
+    patch_un "$2" on ;;
+  off)
+    valide "${2:-}"
+    [ -f "$CONF" ] && sed -i "\|^$2\$|d" "$CONF"
+    patch_un "$2" off ;;
+  apply)
+    [ -f "$CONF" ] || exit 0
+    while read -r p; do [ -n "$p" ] && patch_un "$p" on; done < "$CONF" ;;
+  run)
+    valide "${2:-}"
+    waydroid app launch "$2"
+    # attend la fermeture puis libère la RAM (aide root, sudoers : voir le paquet)
+    exec sudo -n "$HELPER" wait "$2" ;;
+  *)
+    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

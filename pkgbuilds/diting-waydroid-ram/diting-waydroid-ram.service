@@ -1,0 +1,6 @@
+[Unit]
+Description=Réappliquer la libération de RAM aux raccourcis Waydroid
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/diting-waydroid-ram apply

@@ -1,0 +1,29 @@
+# Libère la RAM de Waydroid (memory.reclaim) à la fermeture des apps choisies.
+# diting-waydroid-ram on <paquet> remplace, dans le raccourci de l'app, la commande
+# « waydroid app launch » par « diting-waydroid-ram run » : elle lance l'app, attend
+# qu'elle n'ait plus de fenêtre, puis écrit « 1G swappiness=200 » dans
+# /sys/fs/cgroup/lxc.payload.waydroid/memory.reclaim (aide root via sudoers, groupe wheel).
+# Waydroid réécrit parfois ses raccourcis : l'unité utilisateur diting-waydroid-ram.path
+# les repatche (systemctl --user enable --now diting-waydroid-ram.path).
+pkgname=diting-waydroid-ram
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Xiaomi diting : libérer la RAM de Waydroid à la fermeture d'une app"
+arch=(any)
+url="https://github.com/rakhenmanoa/alarm-xiaomi-diting"
+license=(GPL-3.0-or-later)
+depends=(bash sudo waydroid)
+source=(diting-waydroid-ram
+        diting-waydroid-ram-helper
+        diting-waydroid-ram.sudoers
+        diting-waydroid-ram.path
+        diting-waydroid-ram.service)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+package() {
+  install -Dm755 "$srcdir/diting-waydroid-ram" "$pkgdir/usr/bin/diting-waydroid-ram"
+  install -Dm755 "$srcdir/diting-waydroid-ram-helper" "$pkgdir/usr/lib/diting/diting-waydroid-ram-helper"
+  install -Dm440 "$srcdir/diting-waydroid-ram.sudoers" "$pkgdir/etc/sudoers.d/diting-waydroid-ram"
+  install -Dm644 "$srcdir/diting-waydroid-ram.path" "$pkgdir/usr/lib/systemd/user/diting-waydroid-ram.path"
+  install -Dm644 "$srcdir/diting-waydroid-ram.service" "$pkgdir/usr/lib/systemd/user/diting-waydroid-ram.service"
+}

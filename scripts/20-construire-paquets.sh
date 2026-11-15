@@ -95,7 +95,7 @@ else
 fi
 
 # --- 4. Pilotes et services du diting --------------------------------------------
-for p in hexagonrpc-diting fastrpc-diting libssc iio-sensor-proxy-diting diting-lever-reveil diting-rtc plasma-quicksetting-platformprofile-diting libva-v4l2-stateful-diting; do
+for p in hexagonrpc-diting fastrpc-diting libssc iio-sensor-proxy-diting diting-lever-reveil diting-rtc diting-waydroid-ram plasma-quicksetting-platformprofile-diting libva-v4l2-stateful-diting; do
 	chroot_build "$PB/$p"
 done
 
