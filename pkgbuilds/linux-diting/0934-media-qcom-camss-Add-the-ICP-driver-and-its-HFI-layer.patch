@@ -1335,10 +1335,10 @@ index 0000000..342fb02
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..620fa11
+index 0000000..d85f70f
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,1005 @@
+@@ -0,0 +1,1083 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -1436,6 +1436,15 @@ index 0000000..620fa11
 +static int icp_selftest_frame_patch_num;
 +module_param_array(icp_selftest_frame_patch, uint, &icp_selftest_frame_patch_num, 0444);
 +MODULE_PARM_DESC(icp_selftest_frame_patch, "Pairs of byte offset,value written in the BPS frame data");
++
++static uint icp_selftest_sl_patch[64];
++static int icp_selftest_sl_patch_num;
++module_param_array(icp_selftest_sl_patch, uint, &icp_selftest_sl_patch_num, 0444);
++MODULE_PARM_DESC(icp_selftest_sl_patch, "Pairs of byte offset,value written in the BPS striping output");
++
++static uint icp_selftest_sl_stripes_off = 4736;
++module_param(icp_selftest_sl_stripes_off, uint, 0444);
++MODULE_PARM_DESC(icp_selftest_sl_stripes_off, "Offset of the stripe array in the BPS striping output");
 +
 +static uint icp_selftest_patch[64];
 +static int icp_selftest_patch_num;
@@ -1947,6 +1956,71 @@ index 0000000..620fa11
 +#define ICP_SELFTEST_SHM_FRAME	0x4000
 +#define ICP_SELFTEST_SHM_IQ	0x6000
 +#define ICP_SELFTEST_SHM_CDM	0x7000
++#define ICP_SELFTEST_SHM_SL	0x8000
++#define ICP_SELFTEST_SL_SIZE	0x2000
++
++/*
++ * BpsStripingLibOutMultiFrame of the CICP.FW.5.0 firmware, filled field by
++ * field: offsets from its DWARF. One pass, one stripe over the whole image.
++ */
++#define SL_NUM_STRIPES_USED	0	/* u16 */
++#define SL_NUM_STRIPES_MAX	2	/* u16 */
++#define SL_NUM_PASSES_USED	4	/* u32 */
++#define SL_PASS0		8	/* BpsStripingLibOutPass[10], 444 bytes each */
++#define SL_PASS_LINE_RANGE	0	/* u16[2][7]: first/last line per write client */
++#define SL_PASS_NUM_STRIPES	400	/* u16 */
++#define SL_PASS_STRIPES_OFFSET	404	/* u32 */
++#define SL_STRIPE_PIXEL_RANGE	0	/* u16[2][7]: first/last pixel per write client */
++#define SL_STRIPE_FLAGS		28	/* u8[2] */
++#define SL_STRIPE_LCAC_W_M1	568	/* u32 */
++#define SL_STRIPE_LCAC_H_M1	572	/* u32 */
++#define SL_STRIPE_CADL_IN_W	752	/* s32 */
++#define SL_WR_FULL_Y		0	/* BpsWrClientId */
++#define SL_WR_FULL_C		1
++#define SL_WR_CLIENTS		7
++
++static void sl_put16(u8 *b, size_t off, u16 v)
++{
++	memcpy(b + off, &v, sizeof(v));
++}
++
++static void sl_put32(u8 *b, size_t off, u32 v)
++{
++	memcpy(b + off, &v, sizeof(v));
++}
++
++static void icp_selftest_striping(u8 *sl, u32 w, u32 h)
++{
++	u8 *pass = sl + SL_PASS0;
++	u8 *stripe = sl + icp_selftest_sl_stripes_off;
++
++	memset(sl, 0, ICP_SELFTEST_SL_SIZE);
++	sl_put16(sl, SL_NUM_STRIPES_USED, 1);
++	sl_put16(sl, SL_NUM_STRIPES_MAX, 1);
++	sl_put32(sl, SL_NUM_PASSES_USED, 1);
++
++	/* lineRange[0][client] = first line, lineRange[1][client] = last line */
++	sl_put16(pass, SL_PASS_LINE_RANGE + 2 * SL_WR_FULL_Y, 0);
++	sl_put16(pass, SL_PASS_LINE_RANGE + 2 * (SL_WR_CLIENTS + SL_WR_FULL_Y), h - 1);
++	sl_put16(pass, SL_PASS_LINE_RANGE + 2 * SL_WR_FULL_C, 0);
++	sl_put16(pass, SL_PASS_LINE_RANGE + 2 * (SL_WR_CLIENTS + SL_WR_FULL_C), h / 2 - 1);
++	sl_put16(pass, SL_PASS_NUM_STRIPES, 1);
++	sl_put32(pass, SL_PASS_STRIPES_OFFSET, icp_selftest_sl_stripes_off);
++
++	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 2 * SL_WR_FULL_Y, 0);
++	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 2 * (SL_WR_CLIENTS + SL_WR_FULL_Y), w - 1);
++	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 2 * SL_WR_FULL_C, 0);
++	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 2 * (SL_WR_CLIENTS + SL_WR_FULL_C), w - 1);
++	/* first and last stripe of the frame */
++	stripe[SL_STRIPE_FLAGS] = 1;
++	stripe[SL_STRIPE_FLAGS + 1] = 1;
++	sl_put32(stripe, SL_STRIPE_LCAC_W_M1, w - 1);
++	sl_put32(stripe, SL_STRIPE_LCAC_H_M1, h - 1);
++	sl_put32(stripe, SL_STRIPE_CADL_IN_W, w);
++
++	icp_selftest_apply((u32 *)sl, ICP_SELFTEST_SL_SIZE, icp_selftest_sl_patch,
++			   icp_selftest_sl_patch_num);
++}
 +
 +#define ICP_SELFTEST_W		1920
 +#define ICP_SELFTEST_H		1080
@@ -1963,8 +2037,8 @@ index 0000000..620fa11
 +	struct hfi_bps_frame_process *frame;
 +	struct hfi_cdm_program_array *prog;
 +	dma_addr_t in_dma, out_dma, cdm_dma = 0;
-+	u32 frame_iova, iq_iova, prog_iova, reply[3] = {};
-+	void *in, *out, *cdm = NULL, *iq;
++	u32 frame_iova, iq_iova, prog_iova, sl_iova, reply[3] = {};
++	void *in, *out, *cdm = NULL, *iq, *sl;
 +	size_t i, changed = 0;
 +	u16 *px;
 +	int ret;
@@ -1976,7 +2050,9 @@ index 0000000..620fa11
 +	frame = icp_hfi_shmem(&icp->hfi, ICP_SELFTEST_SHM_FRAME, sizeof(*frame), &frame_iova);
 +	iq = icp_hfi_shmem(&icp->hfi, ICP_SELFTEST_SHM_IQ, HFI_BPS_IQ_SETTINGS_SIZE, &iq_iova);
 +	prog = icp_hfi_shmem(&icp->hfi, ICP_SELFTEST_SHM_CDM, sizeof(*prog), &prog_iova);
-+	if (!in || !out || !cdm || !frame || !iq || !prog) {
++	sl = icp_hfi_shmem(&icp->hfi, ICP_SELFTEST_SHM_SL, ICP_SELFTEST_SL_SIZE, &sl_iova);
++	if (!in || !out || !cdm || !frame || !iq || !prog || !sl ||
++	    icp_selftest_sl_stripes_off + 832 > ICP_SELFTEST_SL_SIZE) {
 +		dev_err(icp->dev, "selftest: frame buffers allocation failed\n");
 +		goto out;
 +	}
@@ -1992,6 +2068,7 @@ index 0000000..620fa11
 +	icp_selftest_apply(iq, HFI_BPS_IQ_SETTINGS_SIZE, icp_selftest_iq_patch,
 +			   icp_selftest_iq_patch_num);
 +	memset(prog, 0, sizeof(*prog));
++	icp_selftest_striping(sl, ICP_SELFTEST_W, ICP_SELFTEST_H);
 +
 +	memset(frame, 0, sizeof(*frame));
 +	frame->max_num_cores = 1;
@@ -1999,6 +2076,7 @@ index 0000000..620fa11
 +	frame->cdm_buffer_size = cdm_size;
 +	frame->iq_settings_addr = iq_iova;
 +	frame->cdm_program_array_addr = prog_iova;
++	frame->striping_lib_out_addr = sl_iova;
 +	frame->request_id = 1;
 +	frame->num_frame_sets = 1;
 +	frame->frame_sets[0][HFI_BPS_INPUT_IMAGE].buf_ptr[0] = lower_32_bits(in_dma);
