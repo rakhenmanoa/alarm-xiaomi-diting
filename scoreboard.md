@@ -53,7 +53,7 @@ même noyau, pas encore revérifiées ici.
 | Principale (S5KHP1, 200 Mpx) | ✅ | autofocus par contraste (recherche locale, toucher l'aperçu pour choisir le sujet, appui long pour revenir au centre) ; réglette de mise au point manuelle si l'autofocus ne trouve pas, photo dans plasma-camera ; ❌ sur les unités à capteur Samsung HM6 |
 | Ultra grand-angle (S5K4H7) | ✅ | diting-ubuntu |
 | Frontale (IMX596), macro (GC02M1) | ✅ | 30 im/s |
-| ISP matériel (IPE/BPS), JPEG matériel | ❌ | aucun pilote Linux : libcamera traite les images sur le CPU (ISP logiciel) |
+| ISP matériel (IPE/BPS), JPEG matériel | ❌ | aucun pilote Linux utilisable : libcamera traite les images sur le CPU (ISP logiciel). Matériel et firmware inventoriés, voir [docs/isp-materiel.md](docs/isp-materiel.md) |
 | Flash arrière / lampe torche | ✅ | patch `0912`, LED `white:flash` |
 | **Vidéo** | | |
 | Décodage matériel (H.264, HEVC, VP9) | ✅ | VA-API |
