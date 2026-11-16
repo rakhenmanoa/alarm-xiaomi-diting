@@ -594,10 +594,10 @@ index 0000000..fc7544e
 +EXPORT_SYMBOL_GPL(icp_hfi_config_io);
 diff --git a/drivers/media/platform/qcom/camss/camss-icp-hfi.h b/drivers/media/platform/qcom/camss/camss-icp-hfi.h
 new file mode 100644
-index 0000000..3e3bab3
+index 0000000..2020c07
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp-hfi.h
-@@ -0,0 +1,597 @@
+@@ -0,0 +1,663 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
 + * Qualcomm CAMSS ICP HFI Protocol Definitions
@@ -608,6 +608,7 @@ index 0000000..3e3bab3
 +#ifndef __CAMSS_ICP_HFI_H__
 +#define __CAMSS_ICP_HFI_H__
 +
++#include <linux/build_bug.h>
 +#include <linux/types.h>
 +
 +#define HFI_QTBL_VERSION			0xFFFFFFFF
@@ -983,23 +984,46 @@ index 0000000..3e3bab3
 +	u64 user_data1;
 +} __packed;
 +
-+/* Image descriptions of the CONFIG_IO command (downstream hfi_session_defs.h) */
++/*
++ * CONFIG_IO payloads. The layouts are those of the CICP.FW.5.0 firmware
++ * (API 0x23200ba): they are larger than the structures of the downstream
++ * kernel header, which the downstream kernel only forwards.
++ */
 +#define HFI_IMAGE_FORMAT_INVALID		0
 +#define HFI_IMAGE_FORMAT_MIPI_10		2
 +#define HFI_IMAGE_FORMAT_BAYER_10		6
 +#define HFI_IMAGE_FORMAT_UBWC_TP_10		14
++#define HFI_IMAGE_FORMAT_UBWC_NV_12		15
++#define HFI_IMAGE_FORMAT_LINEAR_TP_10		18
 +#define HFI_IMAGE_FORMAT_LINEAR_P010		19
 +#define HFI_IMAGE_FORMAT_LINEAR_NV12		20
++#define HFI_IMAGE_FORMAT_LINEAR_PLAIN_16	21
++
++#define HFI_UBWC_VERSION_2			0
++#define HFI_UBWC_VERSION_3			1
++#define HFI_UBWC_VERSION_4			2
 +
 +#define HFI_MAX_IMAGE_PLANES			2
 +
-+#define HFI_IPE_INPUT_IMAGE_FULL		0
-+#define HFI_IPE_OUTPUT_IMAGE_DISPLAY		8
-+#define HFI_IPE_IO_IMAGES_MAX			17
-+
 +#define HFI_BPS_INPUT_IMAGE			0
 +#define HFI_BPS_OUTPUT_IMAGE_FULL		1
-+#define HFI_BPS_IO_IMAGES_MAX			9
++#define HFI_BPS_OUTPUT_IMAGE_DS4		2
++#define HFI_BPS_OUTPUT_IMAGE_DS16		3
++#define HFI_BPS_OUTPUT_IMAGE_DS64		4
++#define HFI_BPS_OUTPUT_IMAGE_STATS_BG		5
++#define HFI_BPS_OUTPUT_IMAGE_STATS_BHIST	6
++#define HFI_BPS_OUTPUT_IMAGE_REG1		7
++#define HFI_BPS_OUTPUT_IMAGE_REG2		8
++#define HFI_BPS_IO_IMAGES_MAX			12
++
++#define HFI_IPE_INPUT_IMAGE_FULL		0
++#define HFI_IPE_INPUT_IMAGE_FULL_REF		4
++#define HFI_IPE_OUTPUT_IMAGE_DISPLAY		8
++#define HFI_IPE_OUTPUT_IMAGE_VIDEO		9
++#define HFI_IPE_OUTPUT_IMAGE_FULL_REF		10
++#define HFI_IPE_IO_IMAGES_MAX			62
++
++#define HFI_IPE_TOPOLOGY_DEFAULT		0
 +
 +struct hfi_image_info {
 +	u32 format;
@@ -1009,6 +1033,15 @@ index 0000000..3e3bab3
 +	u32 pix_align;
 +	u32 yuv422_order;
 +	u32 byte_swap;
++	u32 ubwc_version;
++	u32 ubwc_lossy_mode;
++	u32 ubwc_bw_limit;
++	u32 ubwc_thresh_lossy0;
++	u32 ubwc_thresh_lossy1;
++	u32 argb_alpha;
++	u32 ubwc_offsets_var_lossy;
++	u32 from_downscale;
++	u32 is_hdr_content;
 +} __packed;
 +
 +struct hfi_buffer_layout {
@@ -1022,20 +1055,53 @@ index 0000000..3e3bab3
 +	struct hfi_buffer_layout meta_buf_layout[HFI_MAX_IMAGE_PLANES];
 +} __packed;
 +
-+/* hfi_cmd_ipe_config downstream */
-+struct hfi_ipe_config_io {
-+	struct hfi_image_desc images[HFI_IPE_IO_IMAGES_MAX];
-+	u64 user_data;
++struct hfi_image_dimensions {
++	u32 width;
++	u32 height;
 +} __packed;
 +
-+/*
-+ * Not in the downstream kernel headers (user space builds it there):
-+ * assumed to mirror the IPE layout with the BPS image list.
-+ */
++struct hfi_cadl_multi_pass {
++	struct hfi_image_dimensions dimensions;
++	u32 num_channels;
++	u32 bps_in;
++	u32 cadl_in1;
++} __packed;
++
 +struct hfi_bps_config_io {
 +	struct hfi_image_desc images[HFI_BPS_IO_IMAGES_MAX];
-+	u64 user_data;
++	u32 secure_mode;
++	u32 cadl_num_passes;
++	struct hfi_cadl_multi_pass cadl_multi_pass[4];
 +} __packed;
++
++struct hfi_ipe_extra_pass_config_io {
++	struct hfi_image_desc images[7];
++	struct hfi_image_dimensions stabilization_margins;
++	u32 mux_mode;
++	u32 ica_max_upscaling_q16;
++} __packed;
++
++struct hfi_scratch_intermediate {
++	u32 offset[4];
++	u32 size[4];
++} __packed;
++
++struct hfi_ipe_config_io {
++	struct hfi_image_desc images[HFI_IPE_IO_IMAGES_MAX];
++	struct hfi_image_dimensions stabilization_margins;
++	u32 secure_mode;
++	u32 ica_max_upscaling_q16;
++	u32 max_batch_size;
++	u32 mux_mode;
++	u32 topology_type;
++	u32 num_extra_passes;
++	struct hfi_ipe_extra_pass_config_io extra_pass[3];
++	struct hfi_scratch_intermediate scratch[9];
++} __packed;
++
++static_assert(sizeof(struct hfi_image_desc) == 96);
++static_assert(sizeof(struct hfi_bps_config_io) == 1240);
++static_assert(sizeof(struct hfi_ipe_config_io) == 8336);
 +
 +/* Same layout as the downstream struct hfi_cmd_ipebps_async */
 +struct hfi_cmd_async {
@@ -1197,10 +1263,10 @@ index 0000000..3e3bab3
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..edd43f7
+index 0000000..5eb2a99
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,897 @@
+@@ -0,0 +1,895 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -1277,9 +1343,13 @@ index 0000000..edd43f7
 +module_param(icp_selftest_desc_size, uint, 0444);
 +MODULE_PARM_DESC(icp_selftest_desc_size, "Size in bytes of one image description");
 +
-+static uint icp_selftest_layout_off = 28;
++static uint icp_selftest_layout_off = 64;
 +module_param(icp_selftest_layout_off, uint, 0444);
 +MODULE_PARM_DESC(icp_selftest_layout_off, "Offset of the buffer layout in an image description");
++
++static uint icp_selftest_ipe_fmt = HFI_IMAGE_FORMAT_LINEAR_NV12;
++module_param(icp_selftest_ipe_fmt, uint, 0444);
++MODULE_PARM_DESC(icp_selftest_ipe_fmt, "HFI image format of the IPE input and output in the selftest");
 +
 +static uint icp_selftest_patch[64];
 +static int icp_selftest_patch_num;
@@ -1745,12 +1815,10 @@ index 0000000..edd43f7
 +}
 +
 +/*
-+ * The image description of this firmware is larger than the 60 bytes of
-+ * the downstream kernel header (which the downstream kernel never uses):
-+ * the selftest builds the CONFIG_IO payload from raw words so the layout
-+ * can be explored from the module parameters.
++ * The selftest builds the CONFIG_IO payload from raw words so that any
++ * field can be overridden from the module parameters.
 + */
-+#define ICP_SELFTEST_MAX_BYTES	4096
++#define ICP_SELFTEST_MAX_BYTES	sizeof(struct hfi_ipe_config_io)
 +
 +static void icp_selftest_image(u32 *cfg, u32 index, u32 format,
 +			       u32 width, u32 height)
@@ -1786,10 +1854,10 @@ index 0000000..edd43f7
 +	static const struct {
 +		u32 type;
 +		const char *name;
-+		u32 num_images;
++		u32 size;
 +	} engines[] = {
-+		{ HFI_DEV_TYPE_BPS, "BPS", HFI_BPS_IO_IMAGES_MAX },
-+		{ HFI_DEV_TYPE_IPE, "IPE", HFI_IPE_IO_IMAGES_MAX },
++		{ HFI_DEV_TYPE_BPS, "BPS", sizeof(struct hfi_bps_config_io) },
++		{ HFI_DEV_TYPE_IPE, "IPE", sizeof(struct hfi_ipe_config_io) },
 +	};
 +	u64 ctx = (u64)(uintptr_t)icp;
 +	u32 handle, reply[2], size;
@@ -1806,10 +1874,9 @@ index 0000000..edd43f7
 +		if (!(icp_selftest_engines & BIT(i)))
 +			continue;
 +
-+		size = engines[i].num_images * icp_selftest_desc_size;
++		size = engines[i].size;
 +		if (icp_selftest_desc_size % 4 ||
-+		    icp_selftest_layout_off + 16 > icp_selftest_desc_size ||
-+		    size + sizeof(u64) > ICP_SELFTEST_MAX_BYTES) {
++		    icp_selftest_layout_off + 16 > icp_selftest_desc_size) {
 +			dev_err(icp->dev, "selftest: bad description size\n");
 +			break;
 +		}
@@ -1822,12 +1889,10 @@ index 0000000..edd43f7
 +					   icp_selftest_bps_out, 1920, 1080);
 +		} else {
 +			icp_selftest_image(cfg, HFI_IPE_INPUT_IMAGE_FULL,
-+					   HFI_IMAGE_FORMAT_LINEAR_NV12, 1920, 1080);
++					   icp_selftest_ipe_fmt, 1920, 1080);
 +			icp_selftest_image(cfg, HFI_IPE_OUTPUT_IMAGE_DISPLAY,
-+					   HFI_IMAGE_FORMAT_LINEAR_NV12, 1920, 1080);
++					   icp_selftest_ipe_fmt, 1920, 1080);
 +		}
-+		memcpy((u8 *)cfg + size, &ctx, sizeof(ctx));
-+		size += sizeof(ctx);
 +
 +		/* pairs of (byte offset, value) from the command line */
 +		for (j = 0; j + 1 < icp_selftest_patch_num; j += 2) {
@@ -1836,7 +1901,6 @@ index 0000000..edd43f7
 +			if (off % 4 || off + 4 > ICP_SELFTEST_MAX_BYTES)
 +				continue;
 +			cfg[off / 4] = icp_selftest_patch[j + 1];
-+			size = max(size, off + 4);
 +		}
 +
 +		handle = 0;
