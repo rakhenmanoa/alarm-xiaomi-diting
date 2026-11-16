@@ -1197,10 +1197,10 @@ index 0000000..3e3bab3
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..972953e
+index 0000000..6b9a84a
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,849 @@
+@@ -0,0 +1,856 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -1268,6 +1268,10 @@ index 0000000..972953e
 +static bool icp_selftest;
 +module_param(icp_selftest, bool, 0444);
 +MODULE_PARM_DESC(icp_selftest, "Create, configure and destroy a BPS and an IPE firmware session at probe");
++
++static uint icp_selftest_engines = 3;
++module_param(icp_selftest_engines, uint, 0444);
++MODULE_PARM_DESC(icp_selftest_engines, "Engines of the selftest: 1 BPS, 2 IPE, 3 both");
 +
 +static uint icp_selftest_bps_in = HFI_IMAGE_FORMAT_BAYER_10;
 +module_param(icp_selftest_bps_in, uint, 0444);
@@ -1787,6 +1791,9 @@ index 0000000..972953e
 +
 +	for (i = 0; i < ARRAY_SIZE(engines); i++) {
 +		bool is_bps = engines[i].type == HFI_DEV_TYPE_BPS;
++
++		if (!(icp_selftest_engines & BIT(i)))
++			continue;
 +
 +		handle = 0;
 +		ret = icp_hfi_create_handle(&icp->hfi, engines[i].type, ctx,
