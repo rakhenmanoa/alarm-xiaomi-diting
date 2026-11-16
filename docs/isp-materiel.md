@@ -123,6 +123,18 @@ BPS et une session IPE dans le firmware : les quatre opérations réussissent. L
 (GP1 à GP3) sont remis à zéro avant chaque démarrage, sinon le firmware retrouve
 l'ancienne demande d'initialisation et ne répond plus.
 
+**Configuration des entrées et sorties (`CONFIG_IO`).** Acceptée par le firmware pour le
+BPS (Bayer 10 bits vers NV12, 1920×1080) et pour l'IPE (NV12 vers NV12). Les structures de
+l'en-tête du noyau Android sont périmées pour ce firmware : la description d'image fait
+96 octets (60 côté Android), `BpsConfigIoData` a 12 images (1240 octets) et
+`IpeConfigIoData` 62 images (8336 octets).
+
+**Le firmware décrit ses propres structures.** `CAMERA_ICP.elf` contient ses tables de
+débogage (DWARF). `tools/camera/dwarf_struct.py <elf> <Structure>` et
+`tools/camera/dwarf_enum.py <elf> <ÉNUMÉRATEUR>` en affichent la disposition exacte, par
+exemple `_BpsFrameProcessData` ou `_IpeConfigIoData`. Ses messages d'erreur sortent dans
+`dmesg` (lignes `ICP:`). Le firmware n'est pas dans le dépôt.
+
 **Ce qui bloque le traitement d'image.** Pour chaque image, le firmware attend des blocs
 que le noyau Android ne fabrique pas : réglages de qualité d'image (`iq_settings`),
 programme de registres (`cdm_prog`) et découpage en bandes (`strip_lib_out`). Sous Android,
