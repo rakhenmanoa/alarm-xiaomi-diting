@@ -1086,10 +1086,10 @@ index 0000000..4123a07
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..2e50cd2
+index 0000000..cdf6bcc
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,766 @@
+@@ -0,0 +1,782 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -1471,6 +1471,15 @@ index 0000000..2e50cd2
 +
 +	ICP_STAGE_STOP(3, err_hfi, "HFI queues allocated, TrustZone not started");
 +
++	/*
++	 * The handshake registers keep their values while the camera power
++	 * domain stays on: clear what a previous run left there, or the
++	 * firmware sees a stale init request as soon as it starts.
++	 */
++	writel(ICP_INIT_REQUEST_RESET, icp->csr_base + HFI_REG_HOST_ICP_INIT_REQ);
++	writel(ICP_INIT_RESP_RESET, icp->csr_base + HFI_REG_ICP_HOST_INIT_RESP);
++	writel(0, icp->csr_base + HFI_REG_FW_VERSION);
++
 +	/* Start firmware via TrustZone */
 +	dev_info(icp->dev, "starting the ICP through TrustZone (pas_id %d)\n",
 +		 icp_res->pas_id);
@@ -1540,7 +1549,7 @@ index 0000000..2e50cd2
 +		icp_dump_gp_regs(icp, "FW READY TIMEOUT");
 +		icp_hfi_dump_sfr(&icp->hfi);
 +		ret = -ETIMEDOUT;
-+		goto err_hfi;
++		goto err_running;
 +	}
 +
 +	/* The firmware is up: enable its interrupt and the watchdog bite */
@@ -1711,17 +1720,19 @@ index 0000000..2e50cd2
 +
 +	ret = icp_boot(icp);
 +	if (ret)
-+		goto err_pd;
++		goto err_rpm;
 +
 +	ret = icp_hfi_core_init(&icp->hfi);
 +	if (ret)
-+		goto err_pd;
++		goto err_rpm;
 +
 +	if (icp_selftest)
 +		icp_run_selftest(icp);
 +
 +	return 0;
 +
++err_rpm:
++	pm_runtime_disable(&pdev->dev);
 +err_pd:
 +	if (icp->pd_list)
 +		dev_pm_domain_detach_list(icp->pd_list);
@@ -1736,7 +1747,10 @@ index 0000000..2e50cd2
 +	int i;
 +
 +	icp_res = icp->icp_res;
++	icp->hfi.ready = false;
++	writel(0, icp->cirq_base + CIRQ_OB_MASK);
 +	qcom_scm_pas_shutdown(icp_res->pas_id);
++	writel(ICP_INIT_REQUEST_RESET, icp->csr_base + HFI_REG_HOST_ICP_INIT_REQ);
 +
 +	icp_hfi_deinit_queues(&icp->hfi);
 +
@@ -1746,9 +1760,11 @@ index 0000000..2e50cd2
 +	}
 +	clk_bulk_disable_unprepare(icp_res->clk_num, icp->clks);
 +
++	pm_runtime_put_sync(&pdev->dev);
++	pm_runtime_disable(&pdev->dev);
++
 +	if (icp->pd_list)
 +		dev_pm_domain_detach_list(icp->pd_list);
-+
 +}
 +
 +static const char * const x1e80100_clk_names [] = {
