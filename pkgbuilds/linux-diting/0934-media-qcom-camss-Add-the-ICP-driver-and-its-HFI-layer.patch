@@ -1367,10 +1367,10 @@ index 0000000..fe64924
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..2647c3d
+index 0000000..e6e34c3
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,1141 @@
+@@ -0,0 +1,1144 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -2012,6 +2012,7 @@ index 0000000..2647c3d
 +#define SL_PASS_STRIPES_OFFSET	404	/* u32 */
 +#define SL_STRIPE_PIXEL_RANGE	0	/* u16 pairs: first/last pixel per port */
 +#define SL_STRIPE_FLAGS		28	/* u8[2] */
++#define SL_PAIR_FULL		2	/* 1 + BPS_OUTPUT_FULL_DS_4 */
 +#define SL_CROPS		44	/* BpsCRCv10SLibParams[16], in a pass and in a stripe */
 +#define SL_CROP_SIZE		12
 +#define SL_NUM_CROPS		16
@@ -2054,21 +2055,23 @@ index 0000000..2647c3d
 +	sl_put32(sl, SL_NUM_PASSES_USED, 1);
 +
 +	/*
-+	 * The ranges are (first, last) pairs, one per port: pair 0 is the
-+	 * input, pair 1 the full size output. The stripe array is located
-+	 * from the start of its pass (seen in the firmware code).
++	 * The ranges are (first, last) pairs: pair 0 is the input, pair n + 1
++	 * the pass output of type n (BpsPassOutputType), so the full size
++	 * output (BPS_OUTPUT_FULL_DS_4 = 1) is pair 2. The stripe array is
++	 * located from the start of its pass. Seen in the firmware code.
 +	 */
 +	sl_put16(pass, SL_PASS_LINE_RANGE + 0, 0);
 +	sl_put16(pass, SL_PASS_LINE_RANGE + 2, h - 1);
-+	sl_put16(pass, SL_PASS_LINE_RANGE + 4, 0);
-+	sl_put16(pass, SL_PASS_LINE_RANGE + 6, h - 1);
++	sl_put16(pass, SL_PASS_LINE_RANGE + 4 * SL_PAIR_FULL, 0);
++	sl_put16(pass, SL_PASS_LINE_RANGE + 4 * SL_PAIR_FULL + 2, h - 1);
 +	sl_put16(pass, SL_PASS_NUM_STRIPES, 1);
 +	sl_put32(pass, SL_PASS_STRIPES_OFFSET, icp_selftest_sl_stripes_off - SL_PASS0);
 +
 +	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 0, 0);
 +	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 2, w - 1);
-+	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 4, 0);
-+	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 6, w - 1);
++	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 4 * SL_PAIR_FULL, 0);
++	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 4 * SL_PAIR_FULL + 2, w - 1);
++
 +	for (i = 0; i < SL_NUM_CROPS; i++) {
 +		if (!(icp_selftest_sl_crops & BIT(i)))
 +			continue;

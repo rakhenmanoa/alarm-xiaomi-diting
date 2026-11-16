@@ -152,26 +152,33 @@ Ce qu'une image demande au BPS, d'après le DWARF du firmware :
 | Programmes de registres | `CDMProgramArray` | 32 + 24 par programme | forme connue, liste vide |
 | Découpage en bandes | `BpsStripingLibOutMultiFrame` | 4 736 + 832 par bande | **manquant** |
 
-**Découpage calculé à la main (une passe, une bande) : accepté, mais sans effet.** Le
-firmware ne se plaint plus et lance un travail sur le BPS, qui se termine en quelques
-microsecondes sans rien écrire. Ses commandes de registres (décodées avec
-`tools/camera/cdm-decode.py`) ne règlent que la passe : modules activés ou non selon
-`BpsIQSettings`, pas de l'entrée, mais les sept moteurs d'écriture restent coupés et
-aucune adresse d'image n'apparaît. Aucune commande par bande n'est donc générée.
+**16 nov. 2026 : le BPS écrit dans l'image de sortie.** Avec le découpage calculé à la main
+(une passe, une bande sur toute l'image), le firmware programme la lecture, les recadrages
+et les moteurs d'écriture, et le matériel écrit 464 000 octets dans le tampon de sortie
+avant de s'arrêter sur une violation matérielle (`SCHED: Violation occurred`, code
+`0xa0009`). L'image n'est donc pas encore traitée jusqu'au bout, et son contenu est à zéro :
+les réglages d'image (`BpsIQSettings`) sont presque tous à zéro.
 
-Ce qu'on sait du bloc de découpage, lu dans le code du firmware :
+Ce qu'on sait du bloc de découpage `BpsStripingLibOutMultiFrame`, lu dans le firmware :
 
-- les plages de lignes (passe) et de pixels (bande) sont des paires (première, dernière),
-  une par port : paire 0 pour l'entrée, paire 1 pour la sortie pleine résolution ;
+- les plages de lignes (passe) et de pixels (bande) sont des paires (première, dernière) :
+  paire 0 pour l'entrée, paire n + 1 pour la sortie de passe n (`BpsPassOutputType`). La
+  sortie pleine résolution (`BPS_OUTPUT_FULL_DS_4` = 1) est donc la paire 2 ;
 - `stripesArrayOffset` se compte depuis le début de la passe ;
-- activer un module dans `BpsIQSettings` (champ `EN`) se retrouve bien dans son registre.
+- les recadrages (`cropPass`, `cropStripe`) doivent être activés : le firmware divise
+  lui-même la largeur par deux pour la chrominance ;
+- activer un module dans `BpsIQSettings` (champ `EN`) se retrouve dans son registre ;
+- le tampon CDM est rangé à positions fixes : trame à 0, modules de la passe à 1 000,
+  lecture et écriture de la passe à 8 000, bandes à 10 000. Après une erreur, le firmware
+  le remplace par un rapport de diagnostic (étiquettes `0x1234xxxx`).
 
-Ce qui reste à comprendre : pourquoi le firmware ne produit aucune bande. Il faut lire
-`BpsFrameDataCollator` et `AddStripingPassDataFeWe` dans le firmware
-(`tools/camera/dwarf_funcs.py` donne les adresses, `tools/camera/xtensa-dis.py`
-désassemble). Les instructions larges (FLIX, 8 octets) de ce processeur ne sont pas
-décodées, ce qui rend la lecture partielle. L'autre piste reste de relever sous Android ce
-que CamX envoie pour une vraie photo.
+Outils : `tools/camera/cdm-decode.py` (commandes de registres), `dwarf_funcs.py` et
+`dwarf_params.py` (fonctions et paramètres du firmware), `xtensa-dis.py` (désassemblage
+partiel : les instructions larges FLIX de 8 octets ne sont pas décodées).
+
+Reste à comprendre : la cause de la violation matérielle. Pistes : réglages d'image
+incohérents avec une sortie NV12 (conversion de couleurs et sous-échantillonnage de la
+chrominance désactivés), ou recadrages inutiles activés.
 
 Reste à faire : BPS et IPE (les fichiers `camss-bps-cmd.*` de la RFC manquent), puis le
 branchement sur libcamera.
