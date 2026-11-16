@@ -1,0 +1,7 @@
+camss-icp*.[ch]
+*.o
+*.ko
+*.mod*
+.*.cmd
+Module.symvers
+modules.order
