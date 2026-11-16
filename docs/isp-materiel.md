@@ -53,7 +53,11 @@ Flux IOMMU de l'ICP (SID, masque 0x420 ou 0x400) : `0x2000 0x2020 0x2040 0x2060 
    en créer une dans le DTS, et vérifier que `camera_region@9f500000` n'est pas déjà
    déclarée autrement dans `sm8450.dtsi`.
 3. **Compatibilité du HFI** : même taille et même chargeur ne prouvent pas que le firmware du
-   SM8475 parle le même protocole que celui du x1e80100. Seul un démarrage réel le dira.
+   SM8475 parle le même protocole que celui du x1e80100. Indice favorable : la chaîne de
+   version du firmware du diting (`CICP.FW.5.0.0006_TZ_ABORT`, segment `.b08`) est de la même
+   branche 5.0 que celui de la RFC (`CICP.FW.5.0-00020`, compilé le 8 fév. 2023), avec le même
+   format de ligne de journal (`...,BUILD_TIME: ...,CACHE_ENABLED`). Le numéro de build
+   diffère, et le suffixe `_TZ_ABORT` est inexpliqué. Seul un démarrage réel tranchera.
 4. **Numéros d'horloges** (`camcc`, `gcc`) du DT Android à rapprocher des identifiants du
    `camcc` du noyau, et GDSC `titan_top`, `bps`, `ipe_0` correspondants.
 
