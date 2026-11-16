@@ -1367,10 +1367,10 @@ index 0000000..fe64924
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..44cda5a
+index 0000000..e035dd1
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,1113 @@
+@@ -0,0 +1,1112 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -2137,14 +2137,13 @@ index 0000000..44cda5a
 +			changed++;
 +	dev_info(icp->dev, "selftest: %zu of %u CDM buffer bytes written by the firmware\n",
 +		 changed, cdm_size);
-+	if (changed) {
-+		size_t last = 0;
++	/* only the 16 byte lines holding something: the firmware spreads them */
++	for (i = 0; i < cdm_size; i += 16) {
++		u32 *w = cdm + i;
 +
-+		for (i = 0; i < cdm_size; i++)
-+			if (((u8 *)cdm)[i])
-+				last = i;
-+		print_hex_dump(KERN_INFO, "selftest: cdm ", DUMP_PREFIX_OFFSET,
-+			       16, 4, cdm, min_t(size_t, ALIGN(last + 1, 16), 1024), false);
++		if (w[0] | w[1] | w[2] | w[3])
++			dev_info(icp->dev, "selftest: cdm %05zx: %08x %08x %08x %08x\n",
++				 i, w[0], w[1], w[2], w[3]);
 +	}
 +
 +	changed = 0;
