@@ -41,10 +41,10 @@ index 27898b3..056ea29 100644
 +obj-$(CONFIG_VIDEO_QCOM_CAMSS_HARD_ISP) += qcom-camss-icp.o
 diff --git a/drivers/media/platform/qcom/camss/camss-icp-hfi.c b/drivers/media/platform/qcom/camss/camss-icp-hfi.c
 new file mode 100644
-index 0000000..ce0e70e
+index 0000000..c3ab609
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp-hfi.c
-@@ -0,0 +1,572 @@
+@@ -0,0 +1,603 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm CAMSS ICP - HFI (Host Firmware Interface) queue handling
@@ -393,7 +393,7 @@ index 0000000..ce0e70e
 +
 +void icp_hfi_flush_debug_queue(struct icp_hfi *hfi)
 +{
-+	int words, budget = 64;
++	int words, budget = 1024;
 +
 +	if (!hfi->q_tbl || !hfi->rx_buf)
 +		return;
@@ -617,12 +617,43 @@ index 0000000..ce0e70e
 +				      ctx, fw_handle, iova, reply, timeout_ms);
 +}
 +EXPORT_SYMBOL_GPL(icp_hfi_config_io);
++
++/* Firmware log levels (HFI_DEBUG_MSG_*), sent to the debug queue */
++int icp_hfi_set_debug(struct icp_hfi *hfi, u32 level)
++{
++	struct hfi_msg_debug_level pkt = {
++		.hdr = {
++			.hdr = {
++				.size = sizeof(pkt),
++				.type = HFI_CMD_SYS_SET_PROPERTY,
++			},
++			.num_prop = 1,
++		},
++		.prop_id = HFI_PROP_SYS_DEBUG_CFG,
++		.cfg = {
++			.debug_config = level,
++			.debug_mode = 1,	/* HFI_DEBUG_MODE_QUEUE */
++		},
++	};
++	int ret;
++
++	if (!hfi->ready)
++		return -ENODEV;
++
++	/* no reply is sent for a property */
++	mutex_lock(&hfi->cmd_lock);
++	ret = hfi_write_cmd(hfi, &pkt);
++	mutex_unlock(&hfi->cmd_lock);
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(icp_hfi_set_debug);
 diff --git a/drivers/media/platform/qcom/camss/camss-icp-hfi.h b/drivers/media/platform/qcom/camss/camss-icp-hfi.h
 new file mode 100644
-index 0000000..342fb02
+index 0000000..fe64924
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp-hfi.h
-@@ -0,0 +1,710 @@
+@@ -0,0 +1,711 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
 + * Qualcomm CAMSS ICP HFI Protocol Definitions
@@ -1295,6 +1326,7 @@ index 0000000..342fb02
 +int icp_hfi_config_io(struct icp_hfi *hfi, u32 handle_type, u64 ctx,
 +		      u32 fw_handle, const void *cfg, size_t cfg_size,
 +		      u32 *reply, u32 timeout_ms);
++int icp_hfi_set_debug(struct icp_hfi *hfi, u32 level);
 +void *icp_hfi_shmem(struct icp_hfi *hfi, size_t offset, size_t size, u32 *iova);
 +int icp_hfi_async_indirect(struct icp_hfi *hfi, u32 opcode, u64 ctx,
 +			   u32 fw_handle, u32 iova, u32 *reply, u32 timeout_ms);
@@ -1335,10 +1367,10 @@ index 0000000..342fb02
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..d85f70f
+index 0000000..34e8fa4
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,1083 @@
+@@ -0,0 +1,1104 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -1436,6 +1468,10 @@ index 0000000..d85f70f
 +static int icp_selftest_frame_patch_num;
 +module_param_array(icp_selftest_frame_patch, uint, &icp_selftest_frame_patch_num, 0444);
 +MODULE_PARM_DESC(icp_selftest_frame_patch, "Pairs of byte offset,value written in the BPS frame data");
++
++static uint icp_fw_debug;
++module_param(icp_fw_debug, uint, 0444);
++MODULE_PARM_DESC(icp_fw_debug, "Firmware log levels: 1 low, 2 medium, 4 high, 8 error, 16 fatal, 32 perf (0 = firmware default)");
 +
 +static uint icp_selftest_sl_patch[64];
 +static int icp_selftest_sl_patch_num;
@@ -2092,6 +2128,17 @@ index 0000000..d85f70f
 +	ret = icp_hfi_async_indirect(&icp->hfi, HFI_IPEBPS_CMD_OPCODE_BPS_FRAME_PROCESS,
 +				     ctx, handle, frame_iova, reply, 5000);
 +
++	/* let the debug queue drain before reading the buffers */
++	msleep(100);
++	icp_hfi_flush_debug_queue(&icp->hfi);
++
++	for (i = 0; i < cdm_size; i++)
++		if (((u8 *)cdm)[i])
++			changed++;
++	dev_info(icp->dev, "selftest: %zu of %u CDM buffer bytes written by the firmware\n",
++		 changed, cdm_size);
++
++	changed = 0;
 +	for (i = 0; i < out_size; i++)
 +		if (((u8 *)out)[i] != 0xa5)
 +			changed++;
@@ -2275,6 +2322,12 @@ index 0000000..d85f70f
 +	ret = icp_hfi_core_init(&icp->hfi);
 +	if (ret)
 +		goto err_rpm;
++
++	if (icp_fw_debug) {
++		ret = icp_hfi_set_debug(&icp->hfi, icp_fw_debug);
++		dev_info(icp->dev, "firmware log levels 0x%x: %d\n", icp_fw_debug, ret);
++		msleep(20);
++	}
 +
 +	if (icp_selftest)
 +		icp_run_selftest(icp);
