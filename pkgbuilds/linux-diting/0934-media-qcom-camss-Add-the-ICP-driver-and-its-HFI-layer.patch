@@ -41,10 +41,10 @@ index 27898b3..056ea29 100644
 +obj-$(CONFIG_VIDEO_QCOM_CAMSS_HARD_ISP) += qcom-camss-icp.o
 diff --git a/drivers/media/platform/qcom/camss/camss-icp-hfi.c b/drivers/media/platform/qcom/camss/camss-icp-hfi.c
 new file mode 100644
-index 0000000..9fef184
+index 0000000..fc7544e
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp-hfi.c
-@@ -0,0 +1,494 @@
+@@ -0,0 +1,547 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm CAMSS ICP - HFI (Host Firmware Interface) queue handling
@@ -347,6 +347,8 @@ index 0000000..9fef184
 +			m->opcode, m->error, m->msg[0]);
 +		/* msg[0] is the status of the abort/destroy/config reply */
 +		hfi->ack_error = m->error ? m->error : m->msg[0];
++		hfi->ack_msg[0] = m->msg[0];
++		hfi->ack_msg[1] = m->msg[1];
 +		complete(&hfi->cmd_complete);
 +		break;
 +	}
@@ -539,12 +541,63 @@ index 0000000..9fef184
 +	return ret;
 +}
 +EXPORT_SYMBOL_GPL(icp_hfi_destroy_handle);
++
++/*
++ * Describe the input and output images of a session. The description is
++ * passed by address: it is copied at the start of the shared memory region.
++ * reply[0] is the firmware return code, reply[1] the scratch memory size
++ * the firmware asks for (IPE only).
++ */
++int icp_hfi_config_io(struct icp_hfi *hfi, u32 handle_type, u64 ctx,
++		      u32 fw_handle, const void *cfg, size_t cfg_size,
++		      u32 *reply, u32 timeout_ms)
++{
++	struct icp_hfi_mem_region *shmem = &hfi->hfi_mem.shmem;
++	struct {
++		struct hfi_cmd_async cmd;
++		u32 indirect;
++	} __packed pkt = {
++		.cmd = {
++			.hdr = {
++				.size = sizeof(pkt),
++				.type = HFI_CMD_IPEBPS_ASYNC_COMMAND_INDIRECT,
++			},
++			.opcode = handle_type == HFI_DEV_TYPE_BPS ?
++				  HFI_IPEBPS_CMD_OPCODE_BPS_CONFIG_IO :
++				  HFI_IPEBPS_CMD_OPCODE_IPE_CONFIG_IO,
++			.user_data0 = ctx,
++			.num_handles = 1,
++			.handle = { fw_handle },
++		},
++		.indirect = lower_32_bits(shmem->dma_addr),
++	};
++	int ret;
++
++	if (!hfi->ready)
++		return -ENODEV;
++	if (cfg_size > shmem->size)
++		return -EINVAL;
++
++	mutex_lock(&hfi->cmd_lock);
++	memcpy(shmem->vaddr, cfg, cfg_size);
++	hfi->ack_msg[0] = 0;
++	hfi->ack_msg[1] = 0;
++	ret = hfi_send_wait(hfi, &pkt, timeout_ms);
++	if (reply) {
++		reply[0] = hfi->ack_msg[0];
++		reply[1] = hfi->ack_msg[1];
++	}
++	mutex_unlock(&hfi->cmd_lock);
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(icp_hfi_config_io);
 diff --git a/drivers/media/platform/qcom/camss/camss-icp-hfi.h b/drivers/media/platform/qcom/camss/camss-icp-hfi.h
 new file mode 100644
-index 0000000..4123a07
+index 0000000..3e3bab3
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp-hfi.h
-@@ -0,0 +1,539 @@
+@@ -0,0 +1,597 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
 + * Qualcomm CAMSS ICP HFI Protocol Definitions
@@ -821,6 +874,7 @@ index 0000000..4123a07
 +	u32 *rx_buf;
 +	int ack_error;
 +	u32 ack_handle;
++	u32 ack_msg[2];
 +};
 +
 +/*
@@ -927,6 +981,60 @@ index 0000000..4123a07
 +	u32 fw_handle;
 +	u64 user_data0;
 +	u64 user_data1;
++} __packed;
++
++/* Image descriptions of the CONFIG_IO command (downstream hfi_session_defs.h) */
++#define HFI_IMAGE_FORMAT_INVALID		0
++#define HFI_IMAGE_FORMAT_MIPI_10		2
++#define HFI_IMAGE_FORMAT_BAYER_10		6
++#define HFI_IMAGE_FORMAT_UBWC_TP_10		14
++#define HFI_IMAGE_FORMAT_LINEAR_P010		19
++#define HFI_IMAGE_FORMAT_LINEAR_NV12		20
++
++#define HFI_MAX_IMAGE_PLANES			2
++
++#define HFI_IPE_INPUT_IMAGE_FULL		0
++#define HFI_IPE_OUTPUT_IMAGE_DISPLAY		8
++#define HFI_IPE_IO_IMAGES_MAX			17
++
++#define HFI_BPS_INPUT_IMAGE			0
++#define HFI_BPS_OUTPUT_IMAGE_FULL		1
++#define HFI_BPS_IO_IMAGES_MAX			9
++
++struct hfi_image_info {
++	u32 format;
++	u32 width;
++	u32 height;
++	u32 bayer_order;
++	u32 pix_align;
++	u32 yuv422_order;
++	u32 byte_swap;
++} __packed;
++
++struct hfi_buffer_layout {
++	u32 stride;
++	u32 height;
++} __packed;
++
++struct hfi_image_desc {
++	struct hfi_image_info info;
++	struct hfi_buffer_layout buf_layout[HFI_MAX_IMAGE_PLANES];
++	struct hfi_buffer_layout meta_buf_layout[HFI_MAX_IMAGE_PLANES];
++} __packed;
++
++/* hfi_cmd_ipe_config downstream */
++struct hfi_ipe_config_io {
++	struct hfi_image_desc images[HFI_IPE_IO_IMAGES_MAX];
++	u64 user_data;
++} __packed;
++
++/*
++ * Not in the downstream kernel headers (user space builds it there):
++ * assumed to mirror the IPE layout with the BPS image list.
++ */
++struct hfi_bps_config_io {
++	struct hfi_image_desc images[HFI_BPS_IO_IMAGES_MAX];
++	u64 user_data;
 +} __packed;
 +
 +/* Same layout as the downstream struct hfi_cmd_ipebps_async */
@@ -1049,6 +1157,9 @@ index 0000000..4123a07
 + */
 +int icp_hfi_destroy_handle(struct icp_hfi *hfi, u32 handle_type,
 +			   u64 ctx, u32 fw_handle, u32 timeout_ms);
++int icp_hfi_config_io(struct icp_hfi *hfi, u32 handle_type, u64 ctx,
++		      u32 fw_handle, const void *cfg, size_t cfg_size,
++		      u32 *reply, u32 timeout_ms);
 +#if 0
 +/**
 + * icp_ctx_config_io - Configure IO buffers for context
@@ -1086,10 +1197,10 @@ index 0000000..4123a07
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..cdf6bcc
+index 0000000..972953e
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,782 @@
+@@ -0,0 +1,849 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -1107,6 +1218,7 @@ index 0000000..cdf6bcc
 +#include <linux/iommu.h>
 +#include <linux/iopoll.h>
 +#include <linux/module.h>
++#include <linux/slab.h>
 +#include <linux/of.h>
 +#include <linux/of_address.h>
 +#include <linux/of_reserved_mem.h>
@@ -1155,7 +1267,15 @@ index 0000000..cdf6bcc
 +
 +static bool icp_selftest;
 +module_param(icp_selftest, bool, 0444);
-+MODULE_PARM_DESC(icp_selftest, "Create and destroy a BPS and an IPE firmware session at probe");
++MODULE_PARM_DESC(icp_selftest, "Create, configure and destroy a BPS and an IPE firmware session at probe");
++
++static uint icp_selftest_bps_in = HFI_IMAGE_FORMAT_BAYER_10;
++module_param(icp_selftest_bps_in, uint, 0444);
++MODULE_PARM_DESC(icp_selftest_bps_in, "HFI image format of the BPS input in the selftest");
++
++static uint icp_selftest_bps_out = HFI_IMAGE_FORMAT_LINEAR_NV12;
++module_param(icp_selftest_bps_out, uint, 0444);
++MODULE_PARM_DESC(icp_selftest_bps_out, "HFI image format of the BPS output in the selftest");
 +
 +#define ICP_STAGE_STOP(n, label, what) \
 +	do { \
@@ -1607,7 +1727,32 @@ index 0000000..cdf6bcc
 +	return ret;
 +}
 +
-+/* Create and destroy one firmware session per engine, results in the log */
++static void icp_selftest_image(struct hfi_image_desc *img, u32 format,
++			       u32 width, u32 height)
++{
++	img->info.format = format;
++	img->info.width = width;
++	img->info.height = height;
++
++	switch (format) {
++	case HFI_IMAGE_FORMAT_LINEAR_NV12:
++		img->buf_layout[0].stride = width;
++		img->buf_layout[0].height = height;
++		img->buf_layout[1].stride = width;
++		img->buf_layout[1].height = height / 2;
++		break;
++	default:
++		/* 10 bit Bayer in 16 bit words */
++		img->buf_layout[0].stride = width * 2;
++		img->buf_layout[0].height = height;
++		break;
++	}
++}
++
++/*
++ * Create a firmware session per engine, describe a 1920x1080 input and
++ * output to it, then destroy it. The results go to the log.
++ */
 +static void icp_run_selftest(struct camss_icp *icp)
 +{
 +	static const struct {
@@ -1617,23 +1762,56 @@ index 0000000..cdf6bcc
 +		{ HFI_DEV_TYPE_BPS, "BPS" },
 +		{ HFI_DEV_TYPE_IPE, "IPE" },
 +	};
-+	u32 handle;
++	struct hfi_ipe_config_io *ipe;
++	struct hfi_bps_config_io *bps;
++	u64 ctx = (u64)(uintptr_t)icp;
++	u32 handle, reply[2];
 +	int i, ret;
 +
++	ipe = kzalloc(sizeof(*ipe), GFP_KERNEL);
++	bps = kzalloc(sizeof(*bps), GFP_KERNEL);
++	if (!ipe || !bps)
++		goto out;
++
++	icp_selftest_image(&bps->images[HFI_BPS_INPUT_IMAGE],
++			   icp_selftest_bps_in, 1920, 1080);
++	icp_selftest_image(&bps->images[HFI_BPS_OUTPUT_IMAGE_FULL],
++			   icp_selftest_bps_out, 1920, 1080);
++	bps->user_data = ctx;
++
++	icp_selftest_image(&ipe->images[HFI_IPE_INPUT_IMAGE_FULL],
++			   HFI_IMAGE_FORMAT_LINEAR_NV12, 1920, 1080);
++	icp_selftest_image(&ipe->images[HFI_IPE_OUTPUT_IMAGE_DISPLAY],
++			   HFI_IMAGE_FORMAT_LINEAR_NV12, 1920, 1080);
++	ipe->user_data = ctx;
++
 +	for (i = 0; i < ARRAY_SIZE(engines); i++) {
++		bool is_bps = engines[i].type == HFI_DEV_TYPE_BPS;
++
 +		handle = 0;
-+		ret = icp_hfi_create_handle(&icp->hfi, engines[i].type,
-+					    (u64)(uintptr_t)icp, &handle, 1000);
++		ret = icp_hfi_create_handle(&icp->hfi, engines[i].type, ctx,
++					    &handle, 1000);
 +		dev_info(icp->dev, "selftest: %s create handle: %d (handle 0x%x)\n",
 +			 engines[i].name, ret, handle);
 +		if (ret)
 +			continue;
 +
-+		ret = icp_hfi_destroy_handle(&icp->hfi, engines[i].type,
-+					     (u64)(uintptr_t)icp, handle, 1000);
++		reply[0] = reply[1] = 0;
++		ret = icp_hfi_config_io(&icp->hfi, engines[i].type, ctx, handle,
++					is_bps ? (void *)bps : (void *)ipe,
++					is_bps ? sizeof(*bps) : sizeof(*ipe),
++					reply, 5000);
++		dev_info(icp->dev, "selftest: %s config io: %d (fw rc 0x%x, scratch %u bytes)\n",
++			 engines[i].name, ret, reply[0], reply[1]);
++
++		ret = icp_hfi_destroy_handle(&icp->hfi, engines[i].type, ctx,
++					     handle, 1000);
 +		dev_info(icp->dev, "selftest: %s destroy handle: %d\n",
 +			 engines[i].name, ret);
 +	}
++out:
++	kfree(ipe);
++	kfree(bps);
 +}
 +
 +static int camss_icp_probe(struct platform_device *pdev)
