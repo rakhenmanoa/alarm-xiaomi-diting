@@ -46,8 +46,9 @@ Flux IOMMU de l'ICP (SID, masque 0x420 ou 0x400) : `0x2000 0x2020 0x2040 0x2060 
 
 ## Ce qui reste inconnu
 
-1. **`pas-id`** de l'ICP pour le SM8475 : absent du nœud Android. Le x1e80100 utilise 33.
-   Une valeur fausse fait refuser le démarrage par TrustZone.
+1. ~~`pas-id`~~ **Trouvé : 33**, comme le x1e80100. Le pilote caméra Android
+   (`drivers/cam_icp/icp_hw/lx7_hw/lx7_core.h`, `CAM_FW_PAS_ID 33`) charge le firmware avec
+   `qcom_mdt_load()` puis `qcom_scm_pas_auth_and_reset(33)`, exactement comme la RFC.
 2. **Mémoire HFI** : la RFC demande une deuxième `memory-region` (pool `shared-dma-pool`
    d'environ 272 Mo). Android n'en déclare pas de dédiée, il alloue dynamiquement. Il faudra
    en créer une dans le DTS, et vérifier que `camera_region@9f500000` n'est pas déjà
@@ -61,9 +62,22 @@ Flux IOMMU de l'ICP (SID, masque 0x420 ou 0x400) : `0x2000 0x2020 0x2040 0x2060 
 4. **Numéros d'horloges** (`camcc`, `gcc`) du DT Android à rapprocher des identifiants du
    `camcc` du noyau, et GDSC `titan_top`, `bps`, `ipe_0` correspondants.
 
+## Sources disponibles
+
+- **RFC Linaro (3 juil. 2026)** : incomplète. Le patch 3 n'ajoute que `camss-icp.c`,
+  `camss-icp.h` et `camss-icp-hfi.h`. Il manque `camss-icp-hfi.c` (files de messages,
+  `SYS_INIT`, lecture des messages), `camss-bps-cmd.[ch]`, `camss-bps-iq.h` et
+  `camss-icp-hfi-frame.h`. Le pilote ne peut donc pas être compilé tel quel.
+- **Pilote Android de référence (GPL, fork Xiaomi du camera-kernel SM8450)** :
+  `github.com/xiaomi-sm8450-kernel/android_vendor_qcom_opensource_camera-kernel`,
+  branche `zeus-s-oss` : `drivers/cam_icp/hfi.c` (958 lignes), `icp_hw/lx7_hw/`,
+  `fw_inc/hfi_intf.h`. C'est la base pour écrire `camss-icp-hfi.c`.
+- Le dépôt `MiCode/Xiaomi_Kernel_OpenSource`, branche `diting-s-oss`, ne contient que des
+  device trees et des bindings, pas le pilote caméra.
+
 ## Prochaines étapes
 
-1. Trouver le `pas-id` de l'ICP et vérifier la zone `camera_region` dans le DTS du dépôt.
+1. Écrire `camss-icp-hfi.c` à partir du `hfi.c` Android et de `camss-icp-hfi.h` de la RFC.
 2. Écrire les nœuds `icp`, `bps`, `ipe` dans le DTS du diting (désactivés par défaut).
 3. Reprendre la RFC sur le noyau du dépôt, avec les valeurs du diting, et tenter un
    démarrage de l'ICP (échange HFI) sans traiter d'image.
