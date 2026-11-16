@@ -85,7 +85,7 @@ Flux IOMMU de l'ICP (SID, masque 0x420 ou 0x400) : `0x2000 0x2020 0x2040 0x2060 
 
 Les fichiers du firmware (`CAMERA_ICP.*`) sont propriétaires : ils ne sont pas dans le dépôt.
 
-## État du portage (branche `isp-icp`)
+## État du portage
 
 **16 nov. 2026 : l'ICP démarre sur le diting.** Le firmware `CICP.FW.5.0.0006` répond à la
 demande d'initialisation, puis à `SYS_INIT` et au ping (`HFI ready, fw version 0x01000100`,
