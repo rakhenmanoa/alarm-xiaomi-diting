@@ -135,11 +135,26 @@ débogage (DWARF). `tools/camera/dwarf_struct.py <elf> <Structure>` et
 exemple `_BpsFrameProcessData` ou `_IpeConfigIoData`. Ses messages d'erreur sortent dans
 `dmesg` (lignes `ICP:`). Le firmware n'est pas dans le dépôt.
 
-**Ce qui bloque le traitement d'image.** Pour chaque image, le firmware attend des blocs
-que le noyau Android ne fabrique pas : réglages de qualité d'image (`iq_settings`),
-programme de registres (`cdm_prog`) et découpage en bandes (`strip_lib_out`). Sous Android,
-ils viennent de CamX (propriétaire, espace utilisateur). Ce sont les fichiers absents de
-la RFC (`camss-bps-cmd.*`, `camss-bps-iq.h`), où l'envoi d'image est désactivé.
+**Traitement d'une image (`FRAME_PROCESS`) : le point d'arrêt actuel.** Avec
+`icp_selftest_frame=1`, le module envoie au BPS une image Bayer synthétique. Le firmware
+lit la commande et répond : `Striping Output from host is empty while SL is absent in FW`.
+Ce firmware ne contient donc pas la bibliothèque de découpage en bandes du BPS : c'est à
+l'hôte de fournir `BpsStripingLibOutMultiFrame` (4 736 octets, plus 832 octets par bande).
+Sous Android, ce bloc est calculé par la bibliothèque propriétaire de CamX.
+
+Ce qu'une image demande au BPS, d'après le DWARF du firmware :
+
+| Bloc | Structure | Taille | État |
+|---|---|---|---|
+| Données de trame | `BpsFrameProcessData` | 4 932 | écrit, accepté jusqu'au découpage |
+| Tampon CDM | (travail du firmware) | 512 Kio | alloué, taille donnée par `CONFIG_IO` |
+| Réglages d'image | `BpsIQSettings` | 1 276 | forme connue, contenu à zéro pour l'instant |
+| Programmes de registres | `CDMProgramArray` | 32 + 24 par programme | forme connue, liste vide |
+| Découpage en bandes | `BpsStripingLibOutMultiFrame` | 4 736 + 832 par bande | **manquant** |
+
+Pistes pour le découpage : le calculer à la main pour un cas simple (une seule bande, sans
+mise à l'échelle), ou relever sous Android ce que CamX envoie pour une vraie photo (le
+firmware et CamX savent écrire ces blocs dans `/data/vendor/camera`).
 
 Reste à faire : BPS et IPE (les fichiers `camss-bps-cmd.*` de la RFC manquent), puis le
 branchement sur libcamera.
