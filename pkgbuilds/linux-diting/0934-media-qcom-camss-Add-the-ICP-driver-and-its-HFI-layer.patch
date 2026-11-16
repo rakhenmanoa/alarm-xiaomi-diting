@@ -1064,10 +1064,10 @@ index 0000000..8e8bbfc
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..9daee06
+index 0000000..4c97756
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,685 @@
+@@ -0,0 +1,697 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -1126,11 +1126,13 @@ index 0000000..9daee06
 + *   1 power, clocks and HW version read
 + *   2 + firmware loaded in the carveout (TrustZone init_image)
 + *   3 + HFI memory allocated, before TrustZone starts the ICP
++ *   4 + TrustZone started the ICP and returned (the ICP is then stopped)
++ *   5 + HFI registers programmed, before the init request
 + *   0 (default): full boot and HFI handshake
 + */
 +static int icp_stage;
 +module_param(icp_stage, int, 0444);
-+MODULE_PARM_DESC(icp_stage, "Stop the ICP boot after step 1, 2 or 3 (0 = full boot)");
++MODULE_PARM_DESC(icp_stage, "Stop the ICP boot after step 1 to 5 (0 = full boot)");
 +
 +#define ICP_STAGE_STOP(n, label, what) \
 +	do { \
@@ -1434,17 +1436,25 @@ index 0000000..9daee06
 +	/* Start firmware via TrustZone */
 +	dev_info(icp->dev, "starting the ICP through TrustZone (pas_id %d)\n",
 +		 icp_res->pas_id);
++	/* let a log saver write the message out before a possible reset */
++	msleep(1000);
 +	ret = qcom_scm_pas_auth_and_reset(icp_res->pas_id);
 +	if (ret) {
 +		dev_err(icp->dev, "TZ auth_and_reset failed: %d\n", ret);
 +		goto err_hfi;
 +	}
 +
++	ICP_STAGE_STOP(4, err_running, "TrustZone returned, ICP started");
++
 +	/* Wait for firmware to boot */
 +	usleep_range(5000, 51000);
 +
 +	/* Program HFI pointers after bootup */
++	dev_info(icp->dev, "programming the HFI registers\n");
++	msleep(500);
 +	icp_hfi_latch_regs(icp);
++
++	ICP_STAGE_STOP(5, err_running, "HFI registers programmed");
 +
 +	/*
 +	 * Boot handshake with ICP firmware.
@@ -1525,6 +1535,8 @@ index 0000000..9daee06
 +		 readl(icp->csr_base + HFI_REG_FWUNCACHED_SIZE), HFI_FWUNCACHED_SIZE);
 +
 +	return 0;
++err_running:
++	qcom_scm_pas_shutdown(icp_res->pas_id);
 +err_hfi:
 +	icp_hfi_deinit_queues(&icp->hfi);
 +err_clk:
