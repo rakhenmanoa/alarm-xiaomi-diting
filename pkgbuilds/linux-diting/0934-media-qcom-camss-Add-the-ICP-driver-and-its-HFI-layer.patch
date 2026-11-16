@@ -41,10 +41,10 @@ index 27898b3..056ea29 100644
 +obj-$(CONFIG_VIDEO_QCOM_CAMSS_HARD_ISP) += qcom-camss-icp.o
 diff --git a/drivers/media/platform/qcom/camss/camss-icp-hfi.c b/drivers/media/platform/qcom/camss/camss-icp-hfi.c
 new file mode 100644
-index 0000000..8fc90f1
+index 0000000..9fef184
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp-hfi.c
-@@ -0,0 +1,478 @@
+@@ -0,0 +1,494 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm CAMSS ICP - HFI (Host Firmware Interface) queue handling
@@ -343,9 +343,10 @@ index 0000000..8fc90f1
 +	case HFI_MSG_IPEBPS_ASYNC_INDIRECT_ACK: {
 +		struct hfi_msg_async_ack *m = (void *)pkt;
 +
-+		dev_dbg(hfi->dev, "HFI async ack opcode=%u error=%u\n",
-+			m->opcode, m->error);
-+		hfi->ack_error = m->error;
++		dev_dbg(hfi->dev, "HFI async ack opcode=%u error=%u status=%u\n",
++			m->opcode, m->error, m->msg[0]);
++		/* msg[0] is the status of the abort/destroy/config reply */
++		hfi->ack_error = m->error ? m->error : m->msg[0];
 +		complete(&hfi->cmd_complete);
 +		break;
 +	}
@@ -438,7 +439,13 @@ index 0000000..8fc90f1
 +		return -ETIMEDOUT;
 +	}
 +
-+	return hfi->ack_error ? -EIO : 0;
++	if (hfi->ack_error) {
++		dev_err(hfi->dev, "HFI command 0x%x: firmware error 0x%x\n",
++			hfi_pkt_type(pkt), hfi->ack_error);
++		return -EIO;
++	}
++
++	return 0;
 +}
 +
 +int icp_hfi_core_init(struct icp_hfi *hfi)
@@ -501,15 +508,24 @@ index 0000000..8fc90f1
 +int icp_hfi_destroy_handle(struct icp_hfi *hfi, u32 handle_type,
 +			   u64 ctx, u32 fw_handle, u32 timeout_ms)
 +{
-+	struct hfi_cmd_async cmd = {
-+		.hdr = { .size = sizeof(cmd), .type = HFI_CMD_IPEBPS_ASYNC_COMMAND_DIRECT },
-+		.opcode = handle_type == HFI_DEV_TYPE_BPS ?
-+			  HFI_IPEBPS_CMD_OPCODE_BPS_DESTROY :
-+			  HFI_IPEBPS_CMD_OPCODE_IPE_DESTROY,
-+		.fw_handle = fw_handle,
-+		.user_data0 = ctx,
-+		.num_handles = 1,
-+		.handle = { fw_handle },
++	/* The direct payload is one u64 of user data (hfi_cmd_abort_destroy) */
++	struct {
++		struct hfi_cmd_async cmd;
++		u64 user_data;
++	} __packed pkt = {
++		.cmd = {
++			.hdr = {
++				.size = sizeof(pkt),
++				.type = HFI_CMD_IPEBPS_ASYNC_COMMAND_DIRECT,
++			},
++			.opcode = handle_type == HFI_DEV_TYPE_BPS ?
++				  HFI_IPEBPS_CMD_OPCODE_BPS_DESTROY :
++				  HFI_IPEBPS_CMD_OPCODE_IPE_DESTROY,
++			.user_data0 = ctx,
++			.num_handles = 1,
++			.handle = { fw_handle },
++		},
++		.user_data = ctx,
 +	};
 +	int ret;
 +
@@ -517,7 +533,7 @@ index 0000000..8fc90f1
 +		return -ENODEV;
 +
 +	mutex_lock(&hfi->cmd_lock);
-+	ret = hfi_send_wait(hfi, &cmd, timeout_ms);
++	ret = hfi_send_wait(hfi, &pkt, timeout_ms);
 +	mutex_unlock(&hfi->cmd_lock);
 +
 +	return ret;
@@ -525,7 +541,7 @@ index 0000000..8fc90f1
 +EXPORT_SYMBOL_GPL(icp_hfi_destroy_handle);
 diff --git a/drivers/media/platform/qcom/camss/camss-icp-hfi.h b/drivers/media/platform/qcom/camss/camss-icp-hfi.h
 new file mode 100644
-index 0000000..8e8bbfc
+index 0000000..4123a07
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp-hfi.h
 @@ -0,0 +1,539 @@
@@ -913,10 +929,10 @@ index 0000000..8e8bbfc
 +	u64 user_data1;
 +} __packed;
 +
++/* Same layout as the downstream struct hfi_cmd_ipebps_async */
 +struct hfi_cmd_async {
 +	struct hfi_pkt_hdr hdr;
 +	u32 opcode;
-+	u32 fw_handle;
 +	u64 user_data0;
 +	u64 user_data1;
 +	u32 num_handles;
@@ -1070,10 +1086,10 @@ index 0000000..8e8bbfc
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..08c2f04
+index 0000000..2e50cd2
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,730 @@
+@@ -0,0 +1,766 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -1136,6 +1152,10 @@ index 0000000..08c2f04
 +static int icp_stage;
 +module_param(icp_stage, int, 0444);
 +MODULE_PARM_DESC(icp_stage, "Stop the ICP boot after step 1 to 5 (0 = full boot)");
++
++static bool icp_selftest;
++module_param(icp_selftest, bool, 0444);
++MODULE_PARM_DESC(icp_selftest, "Create and destroy a BPS and an IPE firmware session at probe");
 +
 +#define ICP_STAGE_STOP(n, label, what) \
 +	do { \
@@ -1578,6 +1598,35 @@ index 0000000..08c2f04
 +	return ret;
 +}
 +
++/* Create and destroy one firmware session per engine, results in the log */
++static void icp_run_selftest(struct camss_icp *icp)
++{
++	static const struct {
++		u32 type;
++		const char *name;
++	} engines[] = {
++		{ HFI_DEV_TYPE_BPS, "BPS" },
++		{ HFI_DEV_TYPE_IPE, "IPE" },
++	};
++	u32 handle;
++	int i, ret;
++
++	for (i = 0; i < ARRAY_SIZE(engines); i++) {
++		handle = 0;
++		ret = icp_hfi_create_handle(&icp->hfi, engines[i].type,
++					    (u64)(uintptr_t)icp, &handle, 1000);
++		dev_info(icp->dev, "selftest: %s create handle: %d (handle 0x%x)\n",
++			 engines[i].name, ret, handle);
++		if (ret)
++			continue;
++
++		ret = icp_hfi_destroy_handle(&icp->hfi, engines[i].type,
++					     (u64)(uintptr_t)icp, handle, 1000);
++		dev_info(icp->dev, "selftest: %s destroy handle: %d\n",
++			 engines[i].name, ret);
++	}
++}
++
 +static int camss_icp_probe(struct platform_device *pdev)
 +{
 +	struct dev_pm_domain_attach_data pd_data = { .pd_flags = PD_FLAG_DEV_LINK_ON };
@@ -1667,6 +1716,9 @@ index 0000000..08c2f04
 +	ret = icp_hfi_core_init(&icp->hfi);
 +	if (ret)
 +		goto err_pd;
++
++	if (icp_selftest)
++		icp_run_selftest(icp);
 +
 +	return 0;
 +
