@@ -1070,10 +1070,10 @@ index 0000000..8e8bbfc
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..257f412
+index 0000000..08c2f04
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,701 @@
+@@ -0,0 +1,730 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -1110,13 +1110,10 @@ index 0000000..257f412
 +
 +/* CIRQ register offsets */
 +#define CIRQ_OB_MASK			0x00
-+#define CIRQ_OB_STATUS			0x04
-+#define CIRQ_OB_CLEAR			0x08
 +#define CIRQ_HOST2ICPINT		0x124
 +
 +/* CIRQ bits */
-+#define CIRQ_ICP2HOSTINT		BIT(0)
-+#define CIRQ_WDT_BITE_WS0		BIT(6)
++#define CIRQ_IRQ_CLEAR_CMD		BIT(1)
 +
 +#define ICP_CLK_MAX			32
 +
@@ -1158,6 +1155,12 @@ index 0000000..257f412
 +	const char ** const noc_names;
 +	int noc_num;
 +	struct hfi_resources hfi_res;
++	/* CIRQ outbound register layout, it differs between SoCs */
++	u32 cirq_ob_status;
++	u32 cirq_ob_clear;
++	u32 cirq_ob_irq_cmd;	/* 0 when there is no such register */
++	u32 cirq_icp2host;
++	u32 cirq_wdt_bite;
 +};
 +
 +struct camss_icp {
@@ -1207,14 +1210,14 @@ index 0000000..257f412
 +	struct camss_icp *icp = priv;
 +
 +	dev_dbg(icp->dev, "Raising HOST2ICPINT (CIRQ STATUS before: 0x%x)\n",
-+		readl(icp->cirq_base + CIRQ_OB_STATUS));
++		readl(icp->cirq_base + icp->icp_res->cirq_ob_status));
 +
 +	writel(1, icp->cirq_base + CIRQ_HOST2ICPINT);
 +
 +	/* Small delay then check if anything changed */
 +	udelay(100);
 +	dev_dbg(icp->dev, "CIRQ STATUS after HOST2ICPINT: 0x%x\n",
-+		readl(icp->cirq_base + CIRQ_OB_STATUS));
++		readl(icp->cirq_base + icp->icp_res->cirq_ob_status));
 +}
 +
 +/* Load firmware */
@@ -1284,11 +1287,11 @@ index 0000000..257f412
 +	u32 status;
 +
 +	/* Re-read status for logging */
-+	status = readl(icp->cirq_base + CIRQ_OB_STATUS);
++	status = readl(icp->cirq_base + icp->icp_res->cirq_ob_status);
 +
 +	dev_dbg(icp->dev, "IRQ thread: status=0x%x\n", status);
 +
-+	if (status & CIRQ_WDT_BITE_WS0) {
++	if (status & icp->icp_res->cirq_wdt_bite) {
 +		dev_err(icp->dev, "ICP watchdog bite!\n");
 +		icp_hfi_dump_sfr(&icp->hfi);
 +	}
@@ -1309,11 +1312,14 @@ index 0000000..257f412
 +
 +	dev_dbg(icp->dev, "IRQ ISR\n");
 +
-+	status = readl(icp->cirq_base + CIRQ_OB_STATUS);
++	status = readl(icp->cirq_base + icp->icp_res->cirq_ob_status);
 +	if (!status)
 +		return IRQ_NONE;
 +
-+	writel(status, icp->cirq_base + CIRQ_OB_CLEAR);
++	writel(status, icp->cirq_base + icp->icp_res->cirq_ob_clear);
++	if (icp->icp_res->cirq_ob_irq_cmd)
++		writel(CIRQ_IRQ_CLEAR_CMD,
++		       icp->cirq_base + icp->icp_res->cirq_ob_irq_cmd);
 +
 +	return IRQ_WAKE_THREAD;
 +}
@@ -1422,12 +1428,14 @@ index 0000000..257f412
 +	ICP_STAGE_STOP(1, err_clk, "power, clocks and HW version OK");
 +
 +	/* Configure interrupts */
-+	writel(0x7f, icp->cirq_base + CIRQ_OB_CLEAR);
 +	/*
-+	 * The bit layout differs between SoCs (the downstream sm8450 driver
-+	 * has ICP2HOST on bit 2): enable every bit and let the thread decide.
++	 * Keep the outbound interrupts masked until the firmware has answered
++	 * the init request, as the downstream driver does.
 +	 */
-+	writel(GENMASK(6, 0), icp->cirq_base + CIRQ_OB_MASK);
++	writel(0, icp->cirq_base + CIRQ_OB_MASK);
++	writel(0x7f, icp->cirq_base + icp_res->cirq_ob_clear);
++	if (icp_res->cirq_ob_irq_cmd)
++		writel(CIRQ_IRQ_CLEAR_CMD, icp->cirq_base + icp_res->cirq_ob_irq_cmd);
 +
 +	/* Load firmware */
 +	ret = icp_load_firmware(icp);
@@ -1486,6 +1494,13 @@ index 0000000..257f412
 +	 *
 +	 */
 +
++	dev_info(icp->dev, "HFI IOVAs: qtbl %pad shmem %pad fwuncached %pad\n",
++		 &icp->hfi.hfi_mem.q_tbl.dma_addr,
++		 &icp->hfi.hfi_mem.shmem.dma_addr,
++		 &icp->hfi.hfi_mem.fwuncached.dma_addr);
++	dev_info(icp->dev, "sending the init request\n");
++	msleep(500);
++
 +	/* Signal firmware */
 +	writel(ICP_INIT_REQUEST_SET, icp->csr_base + HFI_REG_HOST_ICP_INIT_REQ);
 +
@@ -1508,6 +1523,10 @@ index 0000000..257f412
 +		goto err_hfi;
 +	}
 +
++	/* The firmware is up: enable its interrupt and the watchdog bite */
++	writel(icp_res->cirq_icp2host | icp_res->cirq_wdt_bite,
++	       icp->cirq_base + CIRQ_OB_MASK);
++
 +	/* Read firmware version from GP1 */
 +	icp->hfi.fw_version = readl(icp->csr_base + HFI_REG_FW_VERSION);
 +	dev_dbg(icp->dev, "Firmware ready! version=0x%08x\n", icp->hfi.fw_version);
@@ -1515,7 +1534,7 @@ index 0000000..257f412
 +	/* Dump CIRQ state after FW init */
 +	dev_info(icp->dev, "CIRQ after FW init: MASK=0x%x STATUS=0x%x\n",
 +		 readl(icp->cirq_base + CIRQ_OB_MASK),
-+		 readl(icp->cirq_base + CIRQ_OB_STATUS));
++		 readl(icp->cirq_base + icp->icp_res->cirq_ob_status));
 +
 +	/* Dump GP registers to verify what firmware sees */
 +	dev_info(icp->dev, "GP registers after FW init:\n");
@@ -1699,6 +1718,10 @@ index 0000000..257f412
 +
 +struct camss_icp_resources x1e80100_icp_res = {
 +	.pas_id = 33,
++	.cirq_ob_status = 0x04,
++	.cirq_ob_clear = 0x08,
++	.cirq_icp2host = BIT(0),
++	.cirq_wdt_bite = BIT(6),
 +	.clk_names = x1e80100_clk_names,
 +	.clk_num = ARRAY_SIZE(x1e80100_clk_names),
 +	.noc_names = x1e80100_noc_names,
@@ -1738,6 +1761,12 @@ index 0000000..257f412
 +
 +struct camss_icp_resources sm8475_icp_res = {
 +	.pas_id = 33,	/* CAM_FW_PAS_ID in the downstream camera-kernel */
++	/* lx7_reg.h of the downstream camera-kernel */
++	.cirq_ob_status = 0x0c,
++	.cirq_ob_clear = 0x04,
++	.cirq_ob_irq_cmd = 0x10,
++	.cirq_icp2host = BIT(2),
++	.cirq_wdt_bite = BIT(4),
 +	.clk_names = sm8475_clk_names,
 +	.clk_num = ARRAY_SIZE(sm8475_clk_names),
 +	.noc_names = x1e80100_noc_names,
