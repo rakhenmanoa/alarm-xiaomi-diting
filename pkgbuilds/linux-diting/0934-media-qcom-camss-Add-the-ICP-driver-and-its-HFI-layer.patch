@@ -41,10 +41,10 @@ index 27898b3..056ea29 100644
 +obj-$(CONFIG_VIDEO_QCOM_CAMSS_HARD_ISP) += qcom-camss-icp.o
 diff --git a/drivers/media/platform/qcom/camss/camss-icp-hfi.c b/drivers/media/platform/qcom/camss/camss-icp-hfi.c
 new file mode 100644
-index 0000000..cb5e5ba
+index 0000000..8fc90f1
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp-hfi.c
-@@ -0,0 +1,472 @@
+@@ -0,0 +1,478 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm CAMSS ICP - HFI (Host Firmware Interface) queue handling
@@ -137,8 +137,14 @@ index 0000000..cb5e5ba
 +	size_t off = 0;
 +	int i, ret;
 +
-+	/* The firmware registers are 32 bit wide */
-+	ret = dma_set_mask_and_coherent(hfi->dev, DMA_BIT_MASK(32));
++	/*
++	 * The firmware registers are 32 bit wide. The downstream camera driver
++	 * puts the shared, fw_uncached and QDSS regions below 0x10c00000,
++	 * under the "io" region the firmware uses for client buffers. Keep the
++	 * IOVAs under 256 MiB for the same reason: the default top-down
++	 * allocation would place them at the very top of the 32 bit space.
++	 */
++	ret = dma_set_mask_and_coherent(hfi->dev, DMA_BIT_MASK(28));
 +	if (ret)
 +		return ret;
 +
@@ -1064,10 +1070,10 @@ index 0000000..8e8bbfc
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..4c97756
+index 0000000..257f412
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,697 @@
+@@ -0,0 +1,701 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -1417,7 +1423,11 @@ index 0000000..4c97756
 +
 +	/* Configure interrupts */
 +	writel(0x7f, icp->cirq_base + CIRQ_OB_CLEAR);
-+	writel(CIRQ_ICP2HOSTINT | CIRQ_WDT_BITE_WS0, icp->cirq_base + CIRQ_OB_MASK);
++	/*
++	 * The bit layout differs between SoCs (the downstream sm8450 driver
++	 * has ICP2HOST on bit 2): enable every bit and let the thread decide.
++	 */
++	writel(GENMASK(6, 0), icp->cirq_base + CIRQ_OB_MASK);
 +
 +	/* Load firmware */
 +	ret = icp_load_firmware(icp);
