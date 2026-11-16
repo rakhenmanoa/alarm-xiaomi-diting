@@ -77,7 +77,11 @@ print(f"""/dts-v1/;
 				assigned-clock-rates = <480000000>, <480000000>, <480000000>;
 				power-domains = <{camcc} 8>, <{camcc} 0>, <{camcc} 1>;
 				power-domain-names = "top", "bps", "ipe";
-				iommus = <{smmu} 0x2100 0x0>;
+				iommus = <{smmu} 0x2000 0x420>,
+					 <{smmu} 0x2040 0x420>,
+					 <{smmu} 0x2100 0x420>,
+					 <{smmu} 0x2080 0x400>;
+				dma-coherent;
 				interconnects = <{gem} 2 {T} {cfg} 5 {T}>,
 						<{mmss} 0 {T} {mc} 1 {T}>,
 						<{mmss} 2 {T} {mc} 1 {T}>,

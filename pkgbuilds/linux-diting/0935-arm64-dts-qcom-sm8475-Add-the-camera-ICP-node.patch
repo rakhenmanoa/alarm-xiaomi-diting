@@ -10,7 +10,7 @@ diff --git a/arch/arm64/boot/dts/qcom/sm8475.dtsi b/arch/arm64/boot/dts/qcom/sm8
 index 2f5b29b..b2e1a3a 100644
 --- a/arch/arm64/boot/dts/qcom/sm8475.dtsi
 +++ b/arch/arm64/boot/dts/qcom/sm8475.dtsi
-@@ -57,6 +57,85 @@ &camcc {
+@@ -57,6 +57,92 @@ &camcc {
  	compatible = "qcom,sm8475-camcc";
  };
  
@@ -73,8 +73,15 @@ index 2f5b29b..b2e1a3a 100644
 +				<&camcc IPE_0_GDSC>;
 +		power-domain-names = "top", "bps", "ipe";
 +
-+		/* Hypothesis: x1e80100 stream 0x1900 + 0x800, to be checked */
-+		iommus = <&apps_smmu 0x2100 0x0>;
++		/*
++		 * Streams of the "icp" SMMU context of the vendor camera DT
++		 * (14 stream IDs, grouped by their masks).
++		 */
++		iommus = <&apps_smmu 0x2000 0x420>,
++			 <&apps_smmu 0x2040 0x420>,
++			 <&apps_smmu 0x2100 0x420>,
++			 <&apps_smmu 0x2080 0x400>;
++		dma-coherent;
 +
 +		interconnects = <&gem_noc MASTER_APPSS_PROC QCOM_ICC_TAG_ALWAYS
 +				 &config_noc SLAVE_CAMERA_CFG QCOM_ICC_TAG_ALWAYS>,
