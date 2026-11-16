@@ -41,10 +41,10 @@ index 27898b3..056ea29 100644
 +obj-$(CONFIG_VIDEO_QCOM_CAMSS_HARD_ISP) += qcom-camss-icp.o
 diff --git a/drivers/media/platform/qcom/camss/camss-icp-hfi.c b/drivers/media/platform/qcom/camss/camss-icp-hfi.c
 new file mode 100644
-index 0000000..fc7544e
+index 0000000..ce0e70e
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp-hfi.c
-@@ -0,0 +1,547 @@
+@@ -0,0 +1,572 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm CAMSS ICP - HFI (Host Firmware Interface) queue handling
@@ -349,6 +349,7 @@ index 0000000..fc7544e
 +		hfi->ack_error = m->error ? m->error : m->msg[0];
 +		hfi->ack_msg[0] = m->msg[0];
 +		hfi->ack_msg[1] = m->msg[1];
++		hfi->ack_msg[2] = m->msg[2];
 +		complete(&hfi->cmd_complete);
 +		break;
 +	}
@@ -542,17 +543,26 @@ index 0000000..fc7544e
 +}
 +EXPORT_SYMBOL_GPL(icp_hfi_destroy_handle);
 +
-+/*
-+ * Describe the input and output images of a session. The description is
-+ * passed by address: it is copied at the start of the shared memory region.
-+ * reply[0] is the firmware return code, reply[1] the scratch memory size
-+ * the firmware asks for (IPE only).
-+ */
-+int icp_hfi_config_io(struct icp_hfi *hfi, u32 handle_type, u64 ctx,
-+		      u32 fw_handle, const void *cfg, size_t cfg_size,
-+		      u32 *reply, u32 timeout_ms)
++/* Address of a chunk of the shared memory region, for indirect payloads */
++void *icp_hfi_shmem(struct icp_hfi *hfi, size_t offset, size_t size, u32 *iova)
 +{
 +	struct icp_hfi_mem_region *shmem = &hfi->hfi_mem.shmem;
++
++	if (!shmem->vaddr || offset + size > shmem->size)
++		return NULL;
++	if (iova)
++		*iova = lower_32_bits(shmem->dma_addr) + offset;
++	return shmem->vaddr + offset;
++}
++EXPORT_SYMBOL_GPL(icp_hfi_shmem);
++
++/*
++ * Send an IPE/BPS command whose payload is passed by address and wait for
++ * its reply. reply[] receives the first three words of the reply data.
++ */
++int icp_hfi_async_indirect(struct icp_hfi *hfi, u32 opcode, u64 ctx,
++			   u32 fw_handle, u32 iova, u32 *reply, u32 timeout_ms)
++{
 +	struct {
 +		struct hfi_cmd_async cmd;
 +		u32 indirect;
@@ -562,42 +572,57 @@ index 0000000..fc7544e
 +				.size = sizeof(pkt),
 +				.type = HFI_CMD_IPEBPS_ASYNC_COMMAND_INDIRECT,
 +			},
-+			.opcode = handle_type == HFI_DEV_TYPE_BPS ?
-+				  HFI_IPEBPS_CMD_OPCODE_BPS_CONFIG_IO :
-+				  HFI_IPEBPS_CMD_OPCODE_IPE_CONFIG_IO,
++			.opcode = opcode,
 +			.user_data0 = ctx,
 +			.num_handles = 1,
 +			.handle = { fw_handle },
 +		},
-+		.indirect = lower_32_bits(shmem->dma_addr),
++		.indirect = iova,
 +	};
 +	int ret;
 +
 +	if (!hfi->ready)
 +		return -ENODEV;
-+	if (cfg_size > shmem->size)
-+		return -EINVAL;
 +
 +	mutex_lock(&hfi->cmd_lock);
-+	memcpy(shmem->vaddr, cfg, cfg_size);
-+	hfi->ack_msg[0] = 0;
-+	hfi->ack_msg[1] = 0;
++	memset(hfi->ack_msg, 0, sizeof(hfi->ack_msg));
 +	ret = hfi_send_wait(hfi, &pkt, timeout_ms);
-+	if (reply) {
-+		reply[0] = hfi->ack_msg[0];
-+		reply[1] = hfi->ack_msg[1];
-+	}
++	if (reply)
++		memcpy(reply, hfi->ack_msg, sizeof(hfi->ack_msg));
 +	mutex_unlock(&hfi->cmd_lock);
 +
 +	return ret;
 +}
++EXPORT_SYMBOL_GPL(icp_hfi_async_indirect);
++
++/*
++ * Describe the input and output images of a session. The description is
++ * copied at the start of the shared memory region. reply[0] is the firmware
++ * return code, reply[1] and reply[2] the buffer sizes it asks for.
++ */
++int icp_hfi_config_io(struct icp_hfi *hfi, u32 handle_type, u64 ctx,
++		      u32 fw_handle, const void *cfg, size_t cfg_size,
++		      u32 *reply, u32 timeout_ms)
++{
++	u32 iova;
++	void *dst = icp_hfi_shmem(hfi, 0, cfg_size, &iova);
++
++	if (!dst)
++		return -EINVAL;
++	memcpy(dst, cfg, cfg_size);
++
++	return icp_hfi_async_indirect(hfi, handle_type == HFI_DEV_TYPE_BPS ?
++				      HFI_IPEBPS_CMD_OPCODE_BPS_CONFIG_IO :
++				      HFI_IPEBPS_CMD_OPCODE_IPE_CONFIG_IO,
++				      ctx, fw_handle, iova, reply, timeout_ms);
++}
 +EXPORT_SYMBOL_GPL(icp_hfi_config_io);
 diff --git a/drivers/media/platform/qcom/camss/camss-icp-hfi.h b/drivers/media/platform/qcom/camss/camss-icp-hfi.h
 new file mode 100644
-index 0000000..2020c07
+index 0000000..342fb02
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp-hfi.h
-@@ -0,0 +1,663 @@
+@@ -0,0 +1,710 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
 + * Qualcomm CAMSS ICP HFI Protocol Definitions
@@ -875,7 +900,7 @@ index 0000000..2020c07
 +	u32 *rx_buf;
 +	int ack_error;
 +	u32 ack_handle;
-+	u32 ack_msg[2];
++	u32 ack_msg[3];
 +};
 +
 +/*
@@ -1099,6 +1124,50 @@ index 0000000..2020c07
 +	struct hfi_scratch_intermediate scratch[9];
 +} __packed;
 +
++struct hfi_frame_buffers {
++	u32 buf_ptr[HFI_MAX_IMAGE_PLANES];
++	u32 meta_buf_ptr[HFI_MAX_IMAGE_PLANES];
++} __packed;
++
++/* CDMProgramArray with no program */
++struct hfi_cdm_program_array {
++	u32 allocator;
++	u32 num_programs;
++	struct {
++		u64 base_and_length;
++		u32 program_type;
++		u32 uid;
++		u32 has_single_reg;
++		u32 buffer_allocated_internally;
++	} __packed programs[1];
++} __packed;
++
++#define HFI_BPS_IQ_SETTINGS_SIZE		1276
++#define HFI_BPS_MAX_BATCH			16
++
++/* BpsFrameProcessData */
++struct hfi_bps_frame_process {
++	u32 max_num_cores;
++	u32 target_time_ns;
++	u32 ubwc_stats_buffer_addr;
++	u32 ubwc_stats_buffer_size;
++	u32 cdm_buffer_addr;
++	u32 cdm_buffer_size;
++	u32 iq_settings_addr;
++	u32 striping_lib_out_addr;
++	u32 cdm_program_array_addr;
++	u32 request_id;
++	u64 timestamp;
++	u32 num_frame_sets;
++	struct hfi_frame_buffers frame_sets[HFI_BPS_MAX_BATCH][HFI_BPS_IO_IMAGES_MAX];
++	u8 frame_sets_cadl[560];
++	u32 bayer_order;
++	u32 reconfig_io_valid;
++	struct hfi_bps_config_io reconfig_io;
++} __packed;
++
++static_assert(sizeof(struct hfi_bps_frame_process) == 4932);
++static_assert(sizeof(struct hfi_cdm_program_array) == 32);
 +static_assert(sizeof(struct hfi_image_desc) == 96);
 +static_assert(sizeof(struct hfi_bps_config_io) == 1240);
 +static_assert(sizeof(struct hfi_ipe_config_io) == 8336);
@@ -1226,6 +1295,9 @@ index 0000000..2020c07
 +int icp_hfi_config_io(struct icp_hfi *hfi, u32 handle_type, u64 ctx,
 +		      u32 fw_handle, const void *cfg, size_t cfg_size,
 +		      u32 *reply, u32 timeout_ms);
++void *icp_hfi_shmem(struct icp_hfi *hfi, size_t offset, size_t size, u32 *iova);
++int icp_hfi_async_indirect(struct icp_hfi *hfi, u32 opcode, u64 ctx,
++			   u32 fw_handle, u32 iova, u32 *reply, u32 timeout_ms);
 +#if 0
 +/**
 + * icp_ctx_config_io - Configure IO buffers for context
@@ -1263,10 +1335,10 @@ index 0000000..2020c07
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..5eb2a99
+index 0000000..620fa11
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,895 @@
+@@ -0,0 +1,1005 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -1350,6 +1422,20 @@ index 0000000..5eb2a99
 +static uint icp_selftest_ipe_fmt = HFI_IMAGE_FORMAT_LINEAR_NV12;
 +module_param(icp_selftest_ipe_fmt, uint, 0444);
 +MODULE_PARM_DESC(icp_selftest_ipe_fmt, "HFI image format of the IPE input and output in the selftest");
++
++static bool icp_selftest_frame;
++module_param(icp_selftest_frame, bool, 0444);
++MODULE_PARM_DESC(icp_selftest_frame, "Also ask the BPS to process one test frame");
++
++static uint icp_selftest_iq_patch[64];
++static int icp_selftest_iq_patch_num;
++module_param_array(icp_selftest_iq_patch, uint, &icp_selftest_iq_patch_num, 0444);
++MODULE_PARM_DESC(icp_selftest_iq_patch, "Pairs of byte offset,value written in the BPS IQ settings");
++
++static uint icp_selftest_frame_patch[64];
++static int icp_selftest_frame_patch_num;
++module_param_array(icp_selftest_frame_patch, uint, &icp_selftest_frame_patch_num, 0444);
++MODULE_PARM_DESC(icp_selftest_frame_patch, "Pairs of byte offset,value written in the BPS frame data");
 +
 +static uint icp_selftest_patch[64];
 +static int icp_selftest_patch_num;
@@ -1845,6 +1931,105 @@ index 0000000..5eb2a99
 +	}
 +}
 +
++static void icp_selftest_apply(u32 *buf, size_t size, const uint *patch, int num)
++{
++	int j;
++
++	/* pairs of (byte offset, value) from the command line */
++	for (j = 0; j + 1 < num; j += 2) {
++		if (patch[j] % 4 || patch[j] + 4 > size)
++			continue;
++		buf[patch[j] / 4] = patch[j + 1];
++	}
++}
++
++/* Offsets of the indirect payloads in the shared memory region */
++#define ICP_SELFTEST_SHM_FRAME	0x4000
++#define ICP_SELFTEST_SHM_IQ	0x6000
++#define ICP_SELFTEST_SHM_CDM	0x7000
++
++#define ICP_SELFTEST_W		1920
++#define ICP_SELFTEST_H		1080
++
++/*
++ * Ask the BPS to process one synthetic Bayer frame with every IQ module
++ * left at zero. The point is to read what the firmware answers.
++ */
++static void icp_selftest_bps_frame(struct camss_icp *icp, u64 ctx, u32 handle,
++				   u32 cdm_size)
++{
++	size_t in_size = ICP_SELFTEST_W * 2 * ICP_SELFTEST_H;
++	size_t out_size = ICP_SELFTEST_W * ICP_SELFTEST_H * 3 / 2;
++	struct hfi_bps_frame_process *frame;
++	struct hfi_cdm_program_array *prog;
++	dma_addr_t in_dma, out_dma, cdm_dma = 0;
++	u32 frame_iova, iq_iova, prog_iova, reply[3] = {};
++	void *in, *out, *cdm = NULL, *iq;
++	size_t i, changed = 0;
++	u16 *px;
++	int ret;
++
++	cdm_size = PAGE_ALIGN(cdm_size ?: SZ_512K);
++	in = dma_alloc_coherent(icp->dev, in_size, &in_dma, GFP_KERNEL);
++	out = dma_alloc_coherent(icp->dev, out_size, &out_dma, GFP_KERNEL);
++	cdm = dma_alloc_coherent(icp->dev, cdm_size, &cdm_dma, GFP_KERNEL);
++	frame = icp_hfi_shmem(&icp->hfi, ICP_SELFTEST_SHM_FRAME, sizeof(*frame), &frame_iova);
++	iq = icp_hfi_shmem(&icp->hfi, ICP_SELFTEST_SHM_IQ, HFI_BPS_IQ_SETTINGS_SIZE, &iq_iova);
++	prog = icp_hfi_shmem(&icp->hfi, ICP_SELFTEST_SHM_CDM, sizeof(*prog), &prog_iova);
++	if (!in || !out || !cdm || !frame || !iq || !prog) {
++		dev_err(icp->dev, "selftest: frame buffers allocation failed\n");
++		goto out;
++	}
++
++	/* horizontal ramp on 10 bits, recognisable output marker */
++	px = in;
++	for (i = 0; i < in_size / 2; i++)
++		px[i] = (i % ICP_SELFTEST_W) * 1023 / ICP_SELFTEST_W;
++	memset(out, 0xa5, out_size);
++	memset(cdm, 0, cdm_size);
++
++	memset(iq, 0, HFI_BPS_IQ_SETTINGS_SIZE);
++	icp_selftest_apply(iq, HFI_BPS_IQ_SETTINGS_SIZE, icp_selftest_iq_patch,
++			   icp_selftest_iq_patch_num);
++	memset(prog, 0, sizeof(*prog));
++
++	memset(frame, 0, sizeof(*frame));
++	frame->max_num_cores = 1;
++	frame->cdm_buffer_addr = lower_32_bits(cdm_dma);
++	frame->cdm_buffer_size = cdm_size;
++	frame->iq_settings_addr = iq_iova;
++	frame->cdm_program_array_addr = prog_iova;
++	frame->request_id = 1;
++	frame->num_frame_sets = 1;
++	frame->frame_sets[0][HFI_BPS_INPUT_IMAGE].buf_ptr[0] = lower_32_bits(in_dma);
++	frame->frame_sets[0][HFI_BPS_OUTPUT_IMAGE_FULL].buf_ptr[0] = lower_32_bits(out_dma);
++	frame->frame_sets[0][HFI_BPS_OUTPUT_IMAGE_FULL].buf_ptr[1] =
++		lower_32_bits(out_dma) + ICP_SELFTEST_W * ICP_SELFTEST_H;
++	icp_selftest_apply((u32 *)frame, sizeof(*frame), icp_selftest_frame_patch,
++			   icp_selftest_frame_patch_num);
++
++	dev_info(icp->dev, "selftest: BPS frame: in %pad out %pad cdm %pad (%u bytes)\n",
++		 &in_dma, &out_dma, &cdm_dma, cdm_size);
++
++	ret = icp_hfi_async_indirect(&icp->hfi, HFI_IPEBPS_CMD_OPCODE_BPS_FRAME_PROCESS,
++				     ctx, handle, frame_iova, reply, 5000);
++
++	for (i = 0; i < out_size; i++)
++		if (((u8 *)out)[i] != 0xa5)
++			changed++;
++	dev_info(icp->dev, "selftest: BPS frame process: %d (fw rc 0x%x), %zu of %zu output bytes written\n",
++		 ret, reply[0], changed, out_size);
++	dev_info(icp->dev, "selftest: output Y %*ph, UV %*ph\n", 8, out,
++		 8, out + ICP_SELFTEST_W * ICP_SELFTEST_H);
++out:
++	if (cdm)
++		dma_free_coherent(icp->dev, cdm_size, cdm, cdm_dma);
++	if (out)
++		dma_free_coherent(icp->dev, out_size, out, out_dma);
++	if (in)
++		dma_free_coherent(icp->dev, in_size, in, in_dma);
++}
++
 +/*
 + * Create a firmware session per engine, describe a 1920x1080 input and
 + * output to it, then destroy it. The results go to the log.
@@ -1860,9 +2045,9 @@ index 0000000..5eb2a99
 +		{ HFI_DEV_TYPE_IPE, "IPE", sizeof(struct hfi_ipe_config_io) },
 +	};
 +	u64 ctx = (u64)(uintptr_t)icp;
-+	u32 handle, reply[2], size;
++	u32 handle, reply[3], size;
 +	u32 *cfg;
-+	int i, j, ret;
++	int i, ret;
 +
 +	cfg = kzalloc(ICP_SELFTEST_MAX_BYTES, GFP_KERNEL);
 +	if (!cfg)
@@ -1894,14 +2079,8 @@ index 0000000..5eb2a99
 +					   icp_selftest_ipe_fmt, 1920, 1080);
 +		}
 +
-+		/* pairs of (byte offset, value) from the command line */
-+		for (j = 0; j + 1 < icp_selftest_patch_num; j += 2) {
-+			u32 off = icp_selftest_patch[j];
-+
-+			if (off % 4 || off + 4 > ICP_SELFTEST_MAX_BYTES)
-+				continue;
-+			cfg[off / 4] = icp_selftest_patch[j + 1];
-+		}
++		icp_selftest_apply(cfg, size, icp_selftest_patch,
++				   icp_selftest_patch_num);
 +
 +		handle = 0;
 +		ret = icp_hfi_create_handle(&icp->hfi, engines[i].type, ctx,
@@ -1911,11 +2090,14 @@ index 0000000..5eb2a99
 +		if (ret)
 +			continue;
 +
-+		reply[0] = reply[1] = 0;
++		memset(reply, 0, sizeof(reply));
 +		ret = icp_hfi_config_io(&icp->hfi, engines[i].type, ctx, handle,
 +					cfg, size, reply, 5000);
-+		dev_info(icp->dev, "selftest: %s config io: %d (fw rc 0x%x, scratch %u bytes)\n",
-+			 engines[i].name, ret, reply[0], reply[1]);
++		dev_info(icp->dev, "selftest: %s config io: %d (fw rc 0x%x, sizes %u and %u bytes)\n",
++			 engines[i].name, ret, reply[0], reply[1], reply[2]);
++
++		if (!ret && is_bps && icp_selftest_frame)
++			icp_selftest_bps_frame(icp, ctx, handle, reply[1]);
 +
 +		ret = icp_hfi_destroy_handle(&icp->hfi, engines[i].type, ctx,
 +					     handle, 1000);
