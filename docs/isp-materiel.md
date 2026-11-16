@@ -84,3 +84,15 @@ Flux IOMMU de l'ICP (SID, masque 0x420 ou 0x400) : `0x2000 0x2020 0x2040 0x2060 
 4. Seulement après : traitement d'une trame par le BPS, puis intégration libcamera.
 
 Les fichiers du firmware (`CAMERA_ICP.*`) sont propriétaires : ils ne sont pas dans le dépôt.
+
+## État du portage (branche `isp-icp`, non testé)
+
+- `0934` : pilote ICP de la RFC complété par `camss-icp-hfi.c` (écrit à partir du `hfi.c`
+  Android) et ajout du cas `qcom,sm8475-camss-icp` (`pas_id` 33, horloges du sm8450).
+  Option de noyau `VIDEO_QCOM_CAMSS_HARD_ISP` (module `qcom-camss-icp`). Pas de BPS ni d'IPE.
+- `0935` : nœud `icp@ac01000` dans `sm8475.dtsi`, **désactivé** par défaut.
+- Ni l'un ni l'autre n'a encore été compilé. Hypothèses à vérifier au premier essai :
+  flux SMMU `0x2100`, régions « IO » du firmware (valeurs de la RFC pour le x1e80100),
+  compatibilité du protocole HFI avec le firmware `CICP.FW.5.0.0006`.
+- Le firmware doit être copié depuis la sauvegarde Android (`CAMERA_ICP.*`, y compris
+  le `.mdt`) dans `/usr/lib/firmware/qcom/sm8475/xiaomi/diting/`.

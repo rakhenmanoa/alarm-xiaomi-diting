@@ -1,0 +1,98 @@
+From: Fanasina <noreply@example.invalid>
+Subject: [PATCH] arm64: dts: qcom: sm8475: Add the camera ICP node (disabled)
+
+ICP of the Titan camera subsystem: registers, interrupt, clocks, GDSCs,
+interconnects and firmware region taken from the vendor device tree.
+Disabled by default; the SMMU stream is a hypothesis to check.
+
+---
+diff --git a/arch/arm64/boot/dts/qcom/sm8475.dtsi b/arch/arm64/boot/dts/qcom/sm8475.dtsi
+index 2f5b29b..b2e1a3a 100644
+--- a/arch/arm64/boot/dts/qcom/sm8475.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8475.dtsi
+@@ -57,6 +57,85 @@ &camcc {
+ 	compatible = "qcom,sm8475-camcc";
+ };
+ 
++&camss {
++	#address-cells = <2>;
++	#size-cells = <2>;
++	ranges;
++
++	/*
++	 * Image Control Processor of the Titan camera subsystem.
++	 * Disabled by default: enable it with &icp { status = "okay"; }
++	 * to boot the firmware and test the HFI handshake.
++	 */
++	icp: icp@ac01000 {
++		compatible = "qcom,sm8475-camss-icp";
++
++		reg = <0 0x0ac01000 0 0x400>,
++		      <0 0x0ac01800 0 0x400>,
++		      <0 0x0ac04000 0 0x1000>;
++		reg-names = "csr", "cirq", "wd";
++
++		interrupts = <GIC_SPI 463 IRQ_TYPE_EDGE_RISING>;
++
++		clocks = <&camcc CAM_CC_ICP_AHB_CLK>,
++			 <&camcc CAM_CC_ICP_CLK>,
++			 <&camcc CAM_CC_QDSS_DEBUG_XO_CLK>,
++			 <&gcc GCC_CAMERA_HF_AXI_CLK>,
++			 <&gcc GCC_CAMERA_SF_AXI_CLK>,
++			 <&camcc CAM_CC_CPAS_AHB_CLK>,
++			 <&camcc CAM_CC_CORE_AHB_CLK>,
++			 <&camcc CAM_CC_CPAS_FAST_AHB_CLK>,
++			 <&camcc CAM_CC_CAMNOC_AXI_CLK>,
++			 <&camcc CAM_CC_BPS_AHB_CLK>,
++			 <&camcc CAM_CC_BPS_FAST_AHB_CLK>,
++			 <&camcc CAM_CC_BPS_CLK>,
++			 <&camcc CAM_CC_CPAS_BPS_CLK>,
++			 <&camcc CAM_CC_IPE_NPS_AHB_CLK>,
++			 <&camcc CAM_CC_IPE_NPS_FAST_AHB_CLK>,
++			 <&camcc CAM_CC_IPE_PPS_FAST_AHB_CLK>,
++			 <&camcc CAM_CC_IPE_NPS_CLK>,
++			 <&camcc CAM_CC_IPE_PPS_CLK>,
++			 <&camcc CAM_CC_CPAS_IPE_NPS_CLK>;
++		clock-names = "ahb", "core", "debug_xo",
++			      "gcc_hf_axi", "gcc_sf_axi",
++			      "cpas_ahb", "core_ahb", "cpas_fast_ahb",
++			      "camnoc_axi",
++			      "bps_ahb", "bps_fast_ahb", "bps", "cpas_bps",
++			      "ipe_ahb", "ipe_nps_fast_ahb", "ipe_pps_fast_ahb",
++			      "ipe_nps", "ipe_pps", "cpas_ipe";
++
++		assigned-clocks = <&camcc CAM_CC_BPS_CLK_SRC>,
++				  <&camcc CAM_CC_IPE_NPS_CLK_SRC>,
++				  <&camcc CAM_CC_ICP_CLK_SRC>;
++		assigned-clock-rates = <480000000>,
++				       <480000000>,
++				       <480000000>;
++
++		power-domains = <&camcc TITAN_TOP_GDSC>,
++				<&camcc BPS_GDSC>,
++				<&camcc IPE_0_GDSC>;
++		power-domain-names = "top", "bps", "ipe";
++
++		/* Hypothesis: x1e80100 stream 0x1900 + 0x800, to be checked */
++		iommus = <&apps_smmu 0x2100 0x0>;
++
++		interconnects = <&gem_noc MASTER_APPSS_PROC QCOM_ICC_TAG_ALWAYS
++				 &config_noc SLAVE_CAMERA_CFG QCOM_ICC_TAG_ALWAYS>,
++				<&mmss_noc MASTER_CAMNOC_HF QCOM_ICC_TAG_ALWAYS
++				 &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>,
++				<&mmss_noc MASTER_CAMNOC_SF QCOM_ICC_TAG_ALWAYS
++				 &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>,
++				<&mmss_noc MASTER_CAMNOC_ICP QCOM_ICC_TAG_ALWAYS
++				 &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>;
++		interconnect-names = "ahb", "hf_0", "sf_0", "sf_icp";
++
++		memory-region = <&camera_mem>;
++		firmware-name = "qcom/sm8475/xiaomi/diting/CAMERA_ICP";
++
++		status = "disabled";
++	};
++};
++
+ &dispcc {
+ 	compatible = "qcom,sm8475-dispcc";
+ };

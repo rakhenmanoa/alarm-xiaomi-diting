@@ -7,7 +7,7 @@ pkgname=linux-diting
 _kver=7.2.10
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=${_kver}
-pkgrel=39
+pkgrel=40
 pkgdesc="Linux ${_kver} pour le Xiaomi 12T Pro / Redmi K50 Ultra (diting, SM8475)"
 arch=(aarch64)
 url="https://github.com/royka1/diting-ubuntu"
@@ -50,8 +50,12 @@ source=("https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${_kver}.tar.xz"
         0930-arm64-dts-qcom-sm8475-xiaomi-diting-Drop-the-MTE-carveout.patch
         0931-ACPI-platform_profile-Make-the-class-selectable.patch
         0932-ACPI-platform_profile-Work-with-ACPI-disabled.patch
-        0933-soc-qcom-Add-the-diting-platform-profile-driver.patch)
+        0933-soc-qcom-Add-the-diting-platform-profile-driver.patch
+        0934-media-qcom-camss-Add-the-ICP-driver-and-its-HFI-layer.patch
+        0935-arm64-dts-qcom-sm8475-Add-the-camera-ICP-node.patch)
 sha256sums=('2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3'
+            'SKIP'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -168,6 +172,9 @@ prepare() {
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0932-ACPI-platform_profile-Work-with-ACPI-disabled.patch"
   # pilote des profils de consommation du diting (voir extra/platform-profile)
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0933-soc-qcom-Add-the-diting-platform-profile-driver.patch"
+  # pilote ICP de l'ISP matériel et son nœud device tree, désactivé (voir docs/isp-materiel.md)
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0934-media-qcom-camss-Add-the-ICP-driver-and-its-HFI-layer.patch"
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0935-arm64-dts-qcom-sm8475-Add-the-camera-ICP-node.patch"
 
   _make defconfig
   scripts/kconfig/merge_config.sh -m .config "$srcdir/diting-ubuntu/kernel/config/diting.config"
@@ -193,6 +200,7 @@ prepare() {
   scripts/config --enable INTERCONNECT_QCOM_OSM_L3
   # classe platform profile (patch 0931), pour diting-platform-profile
   scripts/config --module ACPI_PLATFORM_PROFILE --module QCOM_DITING_PLATFORM_PROFILE
+  scripts/config --module VIDEO_QCOM_CAMSS_HARD_ISP
   _make olddefconfig
 
   # chaque option du fragment doit survivre à olddefconfig (comme diting-ubuntu)
