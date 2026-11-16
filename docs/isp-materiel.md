@@ -114,5 +114,20 @@ sm8450, adresses HFI sous 256 Mo.
 Le firmware doit être copié depuis la sauvegarde Android (`CAMERA_ICP.*`, y compris
 le `.mdt`) dans `/usr/lib/firmware/qcom/sm8475/xiaomi/diting/`.
 
+**Sessions BPS et IPE.** Avec `icp_selftest=1`, le module ouvre puis ferme une session
+BPS et une session IPE dans le firmware : les quatre opérations réussissent. La structure
+`hfi_cmd_async` de la RFC avait un champ `fw_handle` en trop après l'opcode (absent du
+`hfi_cmd_ipebps_async` Android), d'où l'échec de destruction signalé dans la RFC.
+
+**Redémarrage sans reboot.** `rmmod` puis `insmod` fonctionne : les registres de handshake
+(GP1 à GP3) sont remis à zéro avant chaque démarrage, sinon le firmware retrouve
+l'ancienne demande d'initialisation et ne répond plus.
+
+**Ce qui bloque le traitement d'image.** Pour chaque image, le firmware attend des blocs
+que le noyau Android ne fabrique pas : réglages de qualité d'image (`iq_settings`),
+programme de registres (`cdm_prog`) et découpage en bandes (`strip_lib_out`). Sous Android,
+ils viennent de CamX (propriétaire, espace utilisateur). Ce sont les fichiers absents de
+la RFC (`camss-bps-cmd.*`, `camss-bps-iq.h`), où l'envoi d'image est désactivé.
+
 Reste à faire : BPS et IPE (les fichiers `camss-bps-cmd.*` de la RFC manquent), puis le
 branchement sur libcamera.
