@@ -152,9 +152,26 @@ Ce qu'une image demande au BPS, d'après le DWARF du firmware :
 | Programmes de registres | `CDMProgramArray` | 32 + 24 par programme | forme connue, liste vide |
 | Découpage en bandes | `BpsStripingLibOutMultiFrame` | 4 736 + 832 par bande | **manquant** |
 
-Pistes pour le découpage : le calculer à la main pour un cas simple (une seule bande, sans
-mise à l'échelle), ou relever sous Android ce que CamX envoie pour une vraie photo (le
-firmware et CamX savent écrire ces blocs dans `/data/vendor/camera`).
+**Découpage calculé à la main (une passe, une bande) : accepté, mais sans effet.** Le
+firmware ne se plaint plus et lance un travail sur le BPS, qui se termine en quelques
+microsecondes sans rien écrire. Ses commandes de registres (décodées avec
+`tools/camera/cdm-decode.py`) ne règlent que la passe : modules activés ou non selon
+`BpsIQSettings`, pas de l'entrée, mais les sept moteurs d'écriture restent coupés et
+aucune adresse d'image n'apparaît. Aucune commande par bande n'est donc générée.
+
+Ce qu'on sait du bloc de découpage, lu dans le code du firmware :
+
+- les plages de lignes (passe) et de pixels (bande) sont des paires (première, dernière),
+  une par port : paire 0 pour l'entrée, paire 1 pour la sortie pleine résolution ;
+- `stripesArrayOffset` se compte depuis le début de la passe ;
+- activer un module dans `BpsIQSettings` (champ `EN`) se retrouve bien dans son registre.
+
+Ce qui reste à comprendre : pourquoi le firmware ne produit aucune bande. Il faut lire
+`BpsFrameDataCollator` et `AddStripingPassDataFeWe` dans le firmware
+(`tools/camera/dwarf_funcs.py` donne les adresses, `tools/camera/xtensa-dis.py`
+désassemble). Les instructions larges (FLIX, 8 octets) de ce processeur ne sont pas
+décodées, ce qui rend la lecture partielle. L'autre piste reste de relever sous Android ce
+que CamX envoie pour une vraie photo.
 
 Reste à faire : BPS et IPE (les fichiers `camss-bps-cmd.*` de la RFC manquent), puis le
 branchement sur libcamera.

@@ -1367,10 +1367,10 @@ index 0000000..fe64924
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..e035dd1
+index 0000000..d181a24
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,1112 @@
+@@ -0,0 +1,1113 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -2003,17 +2003,14 @@ index 0000000..e035dd1
 +#define SL_NUM_STRIPES_MAX	2	/* u16 */
 +#define SL_NUM_PASSES_USED	4	/* u32 */
 +#define SL_PASS0		8	/* BpsStripingLibOutPass[10], 444 bytes each */
-+#define SL_PASS_LINE_RANGE	0	/* u16[2][7]: first/last line per write client */
++#define SL_PASS_LINE_RANGE	0	/* u16 pairs: first/last line per port */
 +#define SL_PASS_NUM_STRIPES	400	/* u16 */
 +#define SL_PASS_STRIPES_OFFSET	404	/* u32 */
-+#define SL_STRIPE_PIXEL_RANGE	0	/* u16[2][7]: first/last pixel per write client */
++#define SL_STRIPE_PIXEL_RANGE	0	/* u16 pairs: first/last pixel per port */
 +#define SL_STRIPE_FLAGS		28	/* u8[2] */
 +#define SL_STRIPE_LCAC_W_M1	568	/* u32 */
 +#define SL_STRIPE_LCAC_H_M1	572	/* u32 */
 +#define SL_STRIPE_CADL_IN_W	752	/* s32 */
-+#define SL_WR_FULL_Y		0	/* BpsWrClientId */
-+#define SL_WR_FULL_C		1
-+#define SL_WR_CLIENTS		7
 +
 +static void sl_put16(u8 *b, size_t off, u16 v)
 +{
@@ -2035,18 +2032,22 @@ index 0000000..e035dd1
 +	sl_put16(sl, SL_NUM_STRIPES_MAX, 1);
 +	sl_put32(sl, SL_NUM_PASSES_USED, 1);
 +
-+	/* lineRange[0][client] = first line, lineRange[1][client] = last line */
-+	sl_put16(pass, SL_PASS_LINE_RANGE + 2 * SL_WR_FULL_Y, 0);
-+	sl_put16(pass, SL_PASS_LINE_RANGE + 2 * (SL_WR_CLIENTS + SL_WR_FULL_Y), h - 1);
-+	sl_put16(pass, SL_PASS_LINE_RANGE + 2 * SL_WR_FULL_C, 0);
-+	sl_put16(pass, SL_PASS_LINE_RANGE + 2 * (SL_WR_CLIENTS + SL_WR_FULL_C), h / 2 - 1);
++	/*
++	 * The ranges are (first, last) pairs, one per port: pair 0 is the
++	 * input, pair 1 the full size output. The stripe array is located
++	 * from the start of its pass (seen in the firmware code).
++	 */
++	sl_put16(pass, SL_PASS_LINE_RANGE + 0, 0);
++	sl_put16(pass, SL_PASS_LINE_RANGE + 2, h - 1);
++	sl_put16(pass, SL_PASS_LINE_RANGE + 4, 0);
++	sl_put16(pass, SL_PASS_LINE_RANGE + 6, h - 1);
 +	sl_put16(pass, SL_PASS_NUM_STRIPES, 1);
-+	sl_put32(pass, SL_PASS_STRIPES_OFFSET, icp_selftest_sl_stripes_off);
++	sl_put32(pass, SL_PASS_STRIPES_OFFSET, icp_selftest_sl_stripes_off - SL_PASS0);
 +
-+	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 2 * SL_WR_FULL_Y, 0);
-+	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 2 * (SL_WR_CLIENTS + SL_WR_FULL_Y), w - 1);
-+	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 2 * SL_WR_FULL_C, 0);
-+	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 2 * (SL_WR_CLIENTS + SL_WR_FULL_C), w - 1);
++	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 0, 0);
++	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 2, w - 1);
++	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 4, 0);
++	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 6, w - 1);
 +	/* first and last stripe of the frame */
 +	stripe[SL_STRIPE_FLAGS] = 1;
 +	stripe[SL_STRIPE_FLAGS + 1] = 1;
