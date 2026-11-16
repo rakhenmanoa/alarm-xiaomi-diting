@@ -7,7 +7,6 @@ IPE/BPS handle creation. Based on the Linaro RFC "ICP boots, stats"
 (2026-07-03), whose camss-icp-hfi.c was missing, rewritten here from the
 GPL downstream camera-kernel hfi.c. IPE and BPS are not built yet.
 
----
 diff --git a/drivers/media/platform/qcom/camss/Kconfig b/drivers/media/platform/qcom/camss/Kconfig
 index 4eda48c..195855a 100644
 --- a/drivers/media/platform/qcom/camss/Kconfig
@@ -1065,10 +1064,10 @@ index 0000000..8e8bbfc
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..15d6123
+index 0000000..9daee06
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,653 @@
+@@ -0,0 +1,685 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -1121,6 +1120,26 @@ index 0000000..15d6123
 +/* HFI polling - match CAMX: 100us interval, 2 second timeout */
 +#define HFI_POLL_DELAY_US		100
 +#define HFI_POLL_TIMEOUT_US		2000000
++
++/*
++ * Stop the boot early to find where a hardware fault happens:
++ *   1 power, clocks and HW version read
++ *   2 + firmware loaded in the carveout (TrustZone init_image)
++ *   3 + HFI memory allocated, before TrustZone starts the ICP
++ *   0 (default): full boot and HFI handshake
++ */
++static int icp_stage;
++module_param(icp_stage, int, 0444);
++MODULE_PARM_DESC(icp_stage, "Stop the ICP boot after step 1, 2 or 3 (0 = full boot)");
++
++#define ICP_STAGE_STOP(n, label, what) \
++	do { \
++		dev_info(icp->dev, "stage %d: %s\n", n, what); \
++		if (icp_stage == n) { \
++			ret = -ECANCELED; \
++			goto label; \
++		} \
++	} while (0)
 +
 +/* ICC paths */
 +#define HFI_MAX_ICC_PATHS		4
@@ -1355,6 +1374,7 @@ index 0000000..15d6123
 +	int i, ret;
 +
 +	/* Power on all domains via runtime PM */
++	dev_info(icp->dev, "powering on the domains\n");
 +	ret = pm_runtime_resume_and_get(icp->dev);
 +	if (ret) {
 +		dev_err(icp->dev, "Failed to power on: %d\n", ret);
@@ -1362,6 +1382,7 @@ index 0000000..15d6123
 +	}
 +
 +	/* Enable clocks */
++	dev_info(icp->dev, "enabling %d clocks\n", icp_res->clk_num);
 +	ret = clk_bulk_prepare_enable(icp_res->clk_num, icp->clks);
 +	if (ret) {
 +		dev_err(icp->dev, "Failed to enable clocks: %d\n", ret);
@@ -1380,6 +1401,7 @@ index 0000000..15d6123
 +	}
 +
 +	/* Verify HW version */
++	dev_info(icp->dev, "reading the HW version\n");
 +	hw_version = readl(icp->csr_base + ICP_CSR_HW_VERSION);
 +	dev_info(icp->dev, "HW version: 0x%08x\n", hw_version);
 +
@@ -1388,6 +1410,8 @@ index 0000000..15d6123
 +		ret = -EIO;
 +		goto err_clk;
 +	}
++
++	ICP_STAGE_STOP(1, err_clk, "power, clocks and HW version OK");
 +
 +	/* Configure interrupts */
 +	writel(0x7f, icp->cirq_base + CIRQ_OB_CLEAR);
@@ -1398,12 +1422,18 @@ index 0000000..15d6123
 +	if (ret)
 +		goto err_clk;
 +
++	ICP_STAGE_STOP(2, err_clk, "firmware loaded");
++
 +	/* Allocate HFI queues */
 +	ret = icp_hfi_init_queues(&icp->hfi);
 +	if (ret)
 +		goto err_clk;
 +
++	ICP_STAGE_STOP(3, err_hfi, "HFI queues allocated, TrustZone not started");
++
 +	/* Start firmware via TrustZone */
++	dev_info(icp->dev, "starting the ICP through TrustZone (pas_id %d)\n",
++		 icp_res->pas_id);
 +	ret = qcom_scm_pas_auth_and_reset(icp_res->pas_id);
 +	if (ret) {
 +		dev_err(icp->dev, "TZ auth_and_reset failed: %d\n", ret);
@@ -1503,6 +1533,7 @@ index 0000000..15d6123
 +			icc_set_bw(icp->icc_path[i], 0, 0);
 +	}
 +	clk_bulk_disable_unprepare(icp_res->clk_num, icp->clks);
++	pm_runtime_put_sync(icp->dev);
 +	return ret;
 +}
 +
