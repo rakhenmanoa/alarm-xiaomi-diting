@@ -1367,10 +1367,10 @@ index 0000000..fe64924
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..d181a24
+index 0000000..2647c3d
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,1113 @@
+@@ -0,0 +1,1141 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -1477,6 +1477,10 @@ index 0000000..d181a24
 +static int icp_selftest_sl_patch_num;
 +module_param_array(icp_selftest_sl_patch, uint, &icp_selftest_sl_patch_num, 0444);
 +MODULE_PARM_DESC(icp_selftest_sl_patch, "Pairs of byte offset,value written in the BPS striping output");
++
++static uint icp_selftest_sl_crops = 0xffff;
++module_param(icp_selftest_sl_crops, uint, 0444);
++MODULE_PARM_DESC(icp_selftest_sl_crops, "Mask of the 16 BPS crop instances enabled over the whole image");
 +
 +static uint icp_selftest_sl_stripes_off = 4736;
 +module_param(icp_selftest_sl_stripes_off, uint, 0444);
@@ -2008,6 +2012,9 @@ index 0000000..d181a24
 +#define SL_PASS_STRIPES_OFFSET	404	/* u32 */
 +#define SL_STRIPE_PIXEL_RANGE	0	/* u16 pairs: first/last pixel per port */
 +#define SL_STRIPE_FLAGS		28	/* u8[2] */
++#define SL_CROPS		44	/* BpsCRCv10SLibParams[16], in a pass and in a stripe */
++#define SL_CROP_SIZE		12
++#define SL_NUM_CROPS		16
 +#define SL_STRIPE_LCAC_W_M1	568	/* u32 */
 +#define SL_STRIPE_LCAC_H_M1	572	/* u32 */
 +#define SL_STRIPE_CADL_IN_W	752	/* s32 */
@@ -2022,8 +2029,22 @@ index 0000000..d181a24
 +	memcpy(b + off, &v, sizeof(v));
 +}
 +
++/* A crop instance enabled over the whole image: the write clients need one */
++static void icp_selftest_crop(u8 *base, int index, u32 w, u32 h)
++{
++	u8 *crop = base + SL_CROPS + index * SL_CROP_SIZE;
++
++	sl_put32(crop, 0, 1);		/* enable */
++	sl_put16(crop, 4, 0);		/* firstOut */
++	sl_put16(crop, 6, w - 1);	/* lastOut */
++	sl_put16(crop, 8, 0);		/* firstLineOut */
++	sl_put16(crop, 10, h - 1);	/* lastLineOut */
++}
++
 +static void icp_selftest_striping(u8 *sl, u32 w, u32 h)
 +{
++	int i;
++
 +	u8 *pass = sl + SL_PASS0;
 +	u8 *stripe = sl + icp_selftest_sl_stripes_off;
 +
@@ -2048,6 +2069,13 @@ index 0000000..d181a24
 +	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 2, w - 1);
 +	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 4, 0);
 +	sl_put16(stripe, SL_STRIPE_PIXEL_RANGE + 6, w - 1);
++	for (i = 0; i < SL_NUM_CROPS; i++) {
++		if (!(icp_selftest_sl_crops & BIT(i)))
++			continue;
++		icp_selftest_crop(pass, i, w, h);
++		icp_selftest_crop(stripe, i, w, h);
++	}
++
 +	/* first and last stripe of the frame */
 +	stripe[SL_STRIPE_FLAGS] = 1;
 +	stripe[SL_STRIPE_FLAGS + 1] = 1;
