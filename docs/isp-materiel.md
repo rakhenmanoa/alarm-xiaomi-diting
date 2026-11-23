@@ -284,6 +284,11 @@ en registres CC 1.3.1 (interrupteur à l'octet 652). Les matrices du HP1 sont da
 `com.qti.tuned.diting_semco_s5khp1_wide.bin` (sauvegarde HyperOS, `vendor/lib64/camera`, pas
 dans le dépôt) : une trentaine de matrices (selon la température de couleur et la luminosité),
 repérables comme 9 flottants dont chaque ligne fait 1. Le découpage ne change pas avec elle.
+Vérifié le 23 nov. 2026 : la matrice identité redonne l'image sans matrice, et la matrice
+`1.74 -0.5794 -0.1605 -0.2432 1.4669 -0.2237 -0.0624 -0.7943 1.8567` du HP1 donne des couleurs
+plus saturées, sans permutation. Chaîne complète utilisée : `icp_selftest_iq_patch=492,1,652,1,
+660,1,664,1,780,255,788,255,988,1`, `icp_selftest_regs=` CST + WB + CC (40 écritures, limite
+128), `icp_selftest_glut_file=` tables gamma avec noir à 67.
 
 **Le découpage dépend des modules activés** : activer la balance des blancs change les marges
 des bandes ; avec un découpage calculé sans elle, violation de taille. Recalculer le découpage
