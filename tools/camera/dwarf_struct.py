@@ -103,7 +103,7 @@ def dump(die, base, ind, depth):
         bits = ''
         if 'DW_AT_bit_size' in m.attributes:
             bits = f" :{m.attributes['DW_AT_bit_size'].value}"
-        print(f"{pad}  +{o:5d} ({size(t)!s:>5}) {tname(t)} {m.attributes['DW_AT_name'].value.decode()}{bits}")
+        print(f"{pad}  +{o:5d} ({size(t)!s:>5}) {tname(t)} {m.attributes['DW_AT_name'].value.decode() if 'DW_AT_name' in m.attributes else '(pad)'}{bits}")
         r = t
         while r is not None and r.tag in ('DW_TAG_typedef', 'DW_TAG_const_type', 'DW_TAG_volatile_type', 'DW_TAG_array_type'):
             r = ref(r)

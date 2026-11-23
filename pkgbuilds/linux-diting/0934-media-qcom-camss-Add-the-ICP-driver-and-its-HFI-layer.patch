@@ -41,10 +41,10 @@ index 27898b3..056ea29 100644
 +obj-$(CONFIG_VIDEO_QCOM_CAMSS_HARD_ISP) += qcom-camss-icp.o
 diff --git a/drivers/media/platform/qcom/camss/camss-icp-hfi.c b/drivers/media/platform/qcom/camss/camss-icp-hfi.c
 new file mode 100644
-index 0000000..c3ab609
+index 0000000..26efa78
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp-hfi.c
-@@ -0,0 +1,603 @@
+@@ -0,0 +1,639 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm CAMSS ICP - HFI (Host Firmware Interface) queue handling
@@ -648,12 +648,48 @@ index 0000000..c3ab609
 +	return ret;
 +}
 +EXPORT_SYMBOL_GPL(icp_hfi_set_debug);
++
++/*
++ * What the firmware dumps after a failed job (HFI_FW_DUMP_*). With
++ * HFI_FW_DUMP_ON_FAILURE, the default of the Android driver, the report it
++ * writes in the CDM buffer also holds the engine registers.
++ */
++int icp_hfi_set_fw_dump(struct icp_hfi *hfi, u32 level)
++{
++	struct {
++		struct hfi_cmd_set_property hdr;
++		u32 prop_id;
++		u32 level;
++	} __packed pkt = {
++		.hdr = {
++			.hdr = {
++				.size = sizeof(pkt),
++				.type = HFI_CMD_SYS_SET_PROPERTY,
++			},
++			.num_prop = 1,
++		},
++		.prop_id = HFI_PROP_SYS_FW_DUMP_CFG,
++		.level = level,
++	};
++	int ret;
++
++	if (!hfi->ready)
++		return -ENODEV;
++
++	/* no reply is sent for a property */
++	mutex_lock(&hfi->cmd_lock);
++	ret = hfi_write_cmd(hfi, &pkt);
++	mutex_unlock(&hfi->cmd_lock);
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(icp_hfi_set_fw_dump);
 diff --git a/drivers/media/platform/qcom/camss/camss-icp-hfi.h b/drivers/media/platform/qcom/camss/camss-icp-hfi.h
 new file mode 100644
-index 0000000..fe64924
+index 0000000..1aab001
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp-hfi.h
-@@ -0,0 +1,711 @@
+@@ -0,0 +1,718 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
 + * Qualcomm CAMSS ICP HFI Protocol Definitions
@@ -771,6 +807,12 @@ index 0000000..fe64924
 +#define HFI_PROP_SYS_IMAGE_VER			0x03
 +#define HFI_PROP_SYS_SUPPORTED			0x04
 +#define HFI_PROP_SYS_IPEBPS_PC			0x05
++#define HFI_PROP_SYS_FW_DUMP_CFG		0x08
++
++/* HFI_PROP_SYS_FW_DUMP_CFG levels */
++#define HFI_FW_DUMP_DISABLED			0x00
++#define HFI_FW_DUMP_ON_FAILURE			0x01
++#define HFI_FW_DUMP_ALWAYS			0x02
 +
 +/*
 + * Debug levels
@@ -1327,6 +1369,7 @@ index 0000000..fe64924
 +		      u32 fw_handle, const void *cfg, size_t cfg_size,
 +		      u32 *reply, u32 timeout_ms);
 +int icp_hfi_set_debug(struct icp_hfi *hfi, u32 level);
++int icp_hfi_set_fw_dump(struct icp_hfi *hfi, u32 level);
 +void *icp_hfi_shmem(struct icp_hfi *hfi, size_t offset, size_t size, u32 *iova);
 +int icp_hfi_async_indirect(struct icp_hfi *hfi, u32 opcode, u64 ctx,
 +			   u32 fw_handle, u32 iova, u32 *reply, u32 timeout_ms);
@@ -1367,10 +1410,10 @@ index 0000000..fe64924
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..e6e34c3
+index 0000000..939c952
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,1144 @@
+@@ -0,0 +1,1192 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -1472,6 +1515,10 @@ index 0000000..e6e34c3
 +static uint icp_fw_debug;
 +module_param(icp_fw_debug, uint, 0444);
 +MODULE_PARM_DESC(icp_fw_debug, "Firmware log levels: 1 low, 2 medium, 4 high, 8 error, 16 fatal, 32 perf (0 = firmware default)");
++
++static int icp_fw_dump = -1;
++module_param(icp_fw_dump, int, 0444);
++MODULE_PARM_DESC(icp_fw_dump, "Firmware dump after a failed job: 0 off, 1 on failure, 2 always (-1 = firmware default)");
 +
 +static uint icp_selftest_sl_patch[64];
 +static int icp_selftest_sl_patch_num;
@@ -2090,6 +2137,41 @@ index 0000000..e6e34c3
 +			   icp_selftest_sl_patch_num);
 +}
 +
++/*
++ * Where the hardware wrote in a plane: written bytes, lines touched, first
++ * and last written line, and the width written on the first line.
++ */
++static void icp_selftest_plane(struct camss_icp *icp, const char *name,
++			       const u8 *p, u32 stride, u32 lines)
++{
++	u32 y, x, n_lines = 0, first = U32_MAX, last = 0, w0 = 0;
++	size_t total = 0;
++
++	for (y = 0; y < lines; y++) {
++		u32 n = 0, end = 0;
++
++		for (x = 0; x < stride; x++)
++			if (p[y * stride + x] != 0xa5) {
++				n++;
++				end = x + 1;
++			}
++		if (!n)
++			continue;
++		if (first == U32_MAX) {
++			first = y;
++			w0 = end;
++		}
++		last = y;
++		n_lines++;
++		total += n;
++	}
++	if (first == U32_MAX)
++		dev_info(icp->dev, "selftest: plane %s: nothing written\n", name);
++	else
++		dev_info(icp->dev, "selftest: plane %s: %zu bytes on %u lines (%u to %u), first line %u bytes wide\n",
++			 name, total, n_lines, first, last, w0);
++}
++
 +#define ICP_SELFTEST_W		1920
 +#define ICP_SELFTEST_H		1080
 +
@@ -2184,6 +2266,9 @@ index 0000000..e6e34c3
 +			changed++;
 +	dev_info(icp->dev, "selftest: BPS frame process: %d (fw rc 0x%x), %zu of %zu output bytes written\n",
 +		 ret, reply[0], changed, out_size);
++	icp_selftest_plane(icp, "Y", out, ICP_SELFTEST_W, ICP_SELFTEST_H);
++	icp_selftest_plane(icp, "UV", out + ICP_SELFTEST_W * ICP_SELFTEST_H,
++			   ICP_SELFTEST_W, ICP_SELFTEST_H / 2);
 +	dev_info(icp->dev, "selftest: output Y %*ph, UV %*ph\n", 8, out,
 +		 8, out + ICP_SELFTEST_W * ICP_SELFTEST_H);
 +out:
@@ -2366,6 +2451,12 @@ index 0000000..e6e34c3
 +	if (icp_fw_debug) {
 +		ret = icp_hfi_set_debug(&icp->hfi, icp_fw_debug);
 +		dev_info(icp->dev, "firmware log levels 0x%x: %d\n", icp_fw_debug, ret);
++		msleep(20);
++	}
++
++	if (icp_fw_dump >= 0) {
++		ret = icp_hfi_set_fw_dump(&icp->hfi, icp_fw_dump);
++		dev_info(icp->dev, "firmware dump level %d: %d\n", icp_fw_dump, ret);
 +		msleep(20);
 +	}
 +
