@@ -290,6 +290,19 @@ plus saturées, sans permutation. Chaîne complète utilisée : `icp_selftest_iq
 660,1,664,1,780,255,788,255,988,1`, `icp_selftest_regs=` CST + WB + CC (40 écritures, limite
 128), `icp_selftest_glut_file=` tables gamma avec noir à 67.
 
+**Balance des blancs et noir : vérifications du 23 nov. 2026.** Ordre des gains G, B, R
+confirmé : gains calculés sur le mur gris de la photo, il ressort neutre (U = V = 128) ; dans
+l'ordre G, R, B, il vire (V = 118). Le module de balance des blancs multiplie les valeurs brutes,
+noir compris : les gains doivent être calculés sur les valeurs avec le noir tant que le noir
+n'est retiré qu'ensuite (dans la table gamma). Calculés sans le noir, ils laissent une dominante
+(magenta ou cyan selon l'ordre). Le vrai remède sera le module de soustraction du noir, avant la
+balance des blancs. La méthode « monde gris » se trompe sur une scène dominée par une couleur
+(tissu orange rendu rose). Matrice de couleurs : le rangement des lignes est vérifié (ajouter
+0,3 V à la sortie R donne au mur gris une teinte rouge, U 125, V 137) ; la matrice
+`1.74 -0.5794 …` sature trop et tire l'orange vers le rose sous cet éclairage : CamX choisit et
+interpole la matrice selon la température de couleur, ce qui reste à faire. Avec la matrice
+identité, les couleurs sont proches de la réalité.
+
 **Le découpage dépend des modules activés** : activer la balance des blancs change les marges
 des bandes ; avec un découpage calculé sans elle, violation de taille. Recalculer le découpage
 avec les mêmes `--iq` que l'image (`bps-striping.py … --iq 492,1,664,1,780,255,788,255,988,1`).
