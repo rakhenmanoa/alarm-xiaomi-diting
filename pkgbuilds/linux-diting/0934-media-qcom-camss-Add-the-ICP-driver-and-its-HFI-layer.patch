@@ -1410,10 +1410,10 @@ index 0000000..1aab001
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..e4ec7cd
+index 0000000..a7d654c
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,1200 @@
+@@ -0,0 +1,1206 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -2182,6 +2182,7 @@ index 0000000..e4ec7cd
 +
 +#define ICP_SELFTEST_W		icp_selftest_w
 +#define ICP_SELFTEST_H		icp_selftest_h
++#define ICP_SELFTEST_PAD	16
 +
 +/*
 + * Ask the BPS to process one synthetic Bayer frame with every IQ module
@@ -2190,8 +2191,13 @@ index 0000000..e4ec7cd
 +static void icp_selftest_bps_frame(struct camss_icp *icp, u64 ctx, u32 handle,
 +				   u32 cdm_size)
 +{
-+	size_t in_size = ICP_SELFTEST_W * 2 * ICP_SELFTEST_H;
-+	size_t out_size = ICP_SELFTEST_W * ICP_SELFTEST_H * 3 / 2;
++	/*
++	 * Spare lines after the input and after each output plane, so that
++	 * a line range larger than the image stays inside our buffers.
++	 */
++	size_t in_size = ICP_SELFTEST_W * 2 * (ICP_SELFTEST_H + ICP_SELFTEST_PAD);
++	size_t y_size = ICP_SELFTEST_W * (ICP_SELFTEST_H + ICP_SELFTEST_PAD);
++	size_t out_size = y_size + ICP_SELFTEST_W * (ICP_SELFTEST_H / 2 + ICP_SELFTEST_PAD);
 +	struct hfi_bps_frame_process *frame;
 +	struct hfi_cdm_program_array *prog;
 +	dma_addr_t in_dma, out_dma, cdm_dma = 0;
@@ -2240,7 +2246,7 @@ index 0000000..e4ec7cd
 +	frame->frame_sets[0][HFI_BPS_INPUT_IMAGE].buf_ptr[0] = lower_32_bits(in_dma);
 +	frame->frame_sets[0][HFI_BPS_OUTPUT_IMAGE_FULL].buf_ptr[0] = lower_32_bits(out_dma);
 +	frame->frame_sets[0][HFI_BPS_OUTPUT_IMAGE_FULL].buf_ptr[1] =
-+		lower_32_bits(out_dma) + ICP_SELFTEST_W * ICP_SELFTEST_H;
++		lower_32_bits(out_dma) + y_size;
 +	icp_selftest_apply((u32 *)frame, sizeof(*frame), icp_selftest_frame_patch,
 +			   icp_selftest_frame_patch_num);
 +
@@ -2274,11 +2280,11 @@ index 0000000..e4ec7cd
 +			changed++;
 +	dev_info(icp->dev, "selftest: BPS frame process: %d (fw rc 0x%x), %zu of %zu output bytes written\n",
 +		 ret, reply[0], changed, out_size);
-+	icp_selftest_plane(icp, "Y", out, ICP_SELFTEST_W, ICP_SELFTEST_H);
-+	icp_selftest_plane(icp, "UV", out + ICP_SELFTEST_W * ICP_SELFTEST_H,
-+			   ICP_SELFTEST_W, ICP_SELFTEST_H / 2);
++	icp_selftest_plane(icp, "Y", out, ICP_SELFTEST_W, ICP_SELFTEST_H + ICP_SELFTEST_PAD);
++	icp_selftest_plane(icp, "UV", out + y_size, ICP_SELFTEST_W,
++			   ICP_SELFTEST_H / 2 + ICP_SELFTEST_PAD);
 +	dev_info(icp->dev, "selftest: output Y %*ph, UV %*ph\n", 8, out,
-+		 8, out + ICP_SELFTEST_W * ICP_SELFTEST_H);
++		 8, out + y_size);
 +out:
 +	if (cdm)
 +		dma_free_coherent(icp->dev, cdm_size, cdm, cdm_dma);
