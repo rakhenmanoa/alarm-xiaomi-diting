@@ -1410,7 +1410,7 @@ index 0000000..1aab001
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..a2d3148
+index 0000000..1f248ce
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
 @@ -0,0 +1,1369 @@
@@ -1531,7 +1531,7 @@ index 0000000..a2d3148
 +module_param(icp_selftest_sl_crops, uint, 0444);
 +MODULE_PARM_DESC(icp_selftest_sl_crops, "Mask of the 16 BPS crop instances enabled over the whole image");
 +
-+static uint icp_selftest_regs[64];
++static uint icp_selftest_regs[256];
 +static int icp_selftest_regs_num;
 +module_param_array(icp_selftest_regs, uint, &icp_selftest_regs_num, 0444);
 +MODULE_PARM_DESC(icp_selftest_regs, "Pairs of BPS register offset,value sent as a CDM program with the test frame");
