@@ -5,7 +5,8 @@ Retour au [README principal](../README.md) · [scoreboard](../scoreboard.md).
 Aujourd'hui libcamera traite les images brutes sur le CPU (ISP logiciel). Le diting a
 pourtant un vrai ISP matériel hors ligne : un cœur de contrôle **ICP** (Xtensa LX7) qui fait
 tourner un firmware, et deux moteurs, **BPS** (Bayer) et **IPE** (post-traitement).
-Cette page note ce qu'on sait, pour reprendre le travail quand un pilote sera utilisable.
+Cette page note ce qu'on sait du matériel ; le pilote V4L2 du BPS (utilisable depuis le
+23 nov. 2026) est décrit dans [isp-pilote.md](isp-pilote.md).
 
 ## État upstream (16 nov. 2026)
 
@@ -320,11 +321,12 @@ pour 960, 5 pour 1 920, rangées de droite à gauche), 4 pixels de marge par cô
 dématriçage, plages de lignes de la passe égales à l'image, recadrages de la passe en lignes
 (chrominance : 0 à H/2 − 1).
 
-Piste pour aller plus vite : faire tourner la bibliothèque de découpage du BPS de CamX (dans la
-sauvegarde HyperOS) sous Waydroid, pour obtenir le bloc exact au lieu de le deviner.
+**23 nov. 2026 : pilote V4L2 du BPS.** Le BPS est un périphérique mémoire à mémoire
+(`camss-bps.c`, dans le module `qcom-camss-icp`) : RAW10 compacté en entrée, NV12 en sortie,
+réglages d'image et découpage passés en un bloc (`tools/camera/bps-params.py`). La photo du HP1
+sort par `/dev/video18` identique à celle de l'autotest, en ~4 ms. Architecture, format du bloc
+et commandes d'essai : [isp-pilote.md](isp-pilote.md).
 
-Prochaines étapes : marges du dématriçage, découpage en deux bandes pour 1 920 pixels, puis
-réglages d'image (balance des blancs, matrice de couleurs, conversion YUV) pour une image utile.
-
-Reste à faire : BPS et IPE (les fichiers `camss-bps-cmd.*` de la RFC manquent), puis le
-branchement sur libcamera.
+Reste à faire : découpage en pleine taille (4096 × 3072), gestionnaire libcamera `diting` et
+son IPA (balance des blancs, exposition, choix de la matrice de couleurs, noir), module de
+soustraction du noir (BLS), puis l'IPE et le JPEG.
