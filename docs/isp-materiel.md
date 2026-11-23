@@ -205,6 +205,19 @@ Ce qui a mené là :
   il lui faut des marges aux bords de la bande (pixels et lignes en plus à l'entrée, retirés par
   les recadrages), que CamX calcule dans son découpage et que le nôtre ne prévoit pas.
 
+**Dématriçage : ce qui est mesuré (23 nov., 960 × 480).** Avec le dématriçage, la luminance
+reçoit 4 lignes de moins que l'entrée lue, et la chrominance la moitié de l'entrée. Avec
+l'entrée lue sur 484 lignes (paire 0 de la passe), la sortie sur 480 et la chrominance recadrée
+sur ses lignes 1 à 240 (champ `firstOut/lastOut` du recadrage n° 5 de la passe, que le firmware
+écrit dans `0x6268`), les deux plans ont la bonne taille, mais la violation reste. Elle reste
+aussi avec une marge de 4 pixels en largeur, et sans le recadrage du DS4. La sortie en cause
+n'est donc pas identifiée. Registres utiles : `0xa54` position de la bande (0 = bande unique,
+1 = voisine à droite, 2 = voisine à gauche, 3 = les deux), `0xa5c` largeur lue en octets,
+`0xa60` hauteur lue, `0x4960` activation du dématriçage.
+
+Piste pour aller plus vite : faire tourner la bibliothèque de découpage du BPS de CamX (dans la
+sauvegarde HyperOS) sous Waydroid, pour obtenir le bloc exact au lieu de le deviner.
+
 Prochaines étapes : marges du dématriçage, découpage en deux bandes pour 1 920 pixels, puis
 réglages d'image (balance des blancs, matrice de couleurs, conversion YUV) pour une image utile.
 
