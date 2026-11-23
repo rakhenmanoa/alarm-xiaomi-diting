@@ -226,6 +226,16 @@ dématriçage actif : `0x0`, `WrStatus 0x101`, luminance 1 080 lignes et chromin
 `icp_selftest_w=1920 icp_selftest_h=1080 icp_selftest_sl_file=sl-1920x1080.bin
 icp_selftest_iq_patch=492,1,664,1,780,255,788,255`.
 
+**Lecture de l'image produite.** Après l'autotest, la sortie NV12 (sans lignes de réserve) est
+dans `/sys/kernel/debug/qcom-camss-icp/bps-out.nv12` ; `ffmpeg -f rawvideo -pix_fmt nv12 -s
+1920x1080 -i bps-out.nv12 bps-out.png` la convertit. Avec le dégradé d'entrée, le dématriçage
+et sans conversion YUV (`icp_selftest_iq_patch=492,1,780,255,788,255`), la luminance reproduit
+exactement le dégradé (0, 32, 64… 224 tous les 240 pixels), sans cassure entre les 5 bandes.
+Avec la conversion YUV activée, tout vaut 0 : ses coefficients ne sont pas dans
+`BpsIQSettings` mais dans les registres du module, que CamX programme par `CDMProgramArray`
+(liste vide chez nous). Une entrée réelle se charge avec `icp_selftest_in_file=` (Bayer
+10 bits dans des mots de 16 bits, depuis `/lib/firmware`).
+
 **Bibliothèque de découpage de CamX.** `tools/camera/bps-striping.py LIB.so LARGEUR HAUTEUR`
 exécute `libipebpsstriping.so` (sauvegarde HyperOS, `vendor/lib64`, pas dans le dépôt) dans un
 émulateur Unicorn : elle n'importe que la libc. Appels : `BPSStripingLibraryContextCreate(configIo,
