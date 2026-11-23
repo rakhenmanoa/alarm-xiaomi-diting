@@ -1410,10 +1410,10 @@ index 0000000..1aab001
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..9895ea7
+index 0000000..a2d3148
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,1317 @@
+@@ -0,0 +1,1369 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -1543,6 +1543,14 @@ index 0000000..9895ea7
 +static bool icp_selftest_prog_len_m1 = true;
 +module_param(icp_selftest_prog_len_m1, bool, 0444);
 +MODULE_PARM_DESC(icp_selftest_prog_len_m1, "Program length field is the size in bytes minus one");
++
++static char *icp_selftest_glut_file;
++module_param(icp_selftest_glut_file, charp, 0444);
++MODULE_PARM_DESC(icp_selftest_glut_file, "Firmware file holding the 3 gamma tables (3 x 256 32-bit entries), loaded by DMI");
++
++static uint icp_selftest_glut_type = 7;
++module_param(icp_selftest_glut_type, uint, 0444);
++MODULE_PARM_DESC(icp_selftest_glut_type, "Program type of the gamma tables (7 = BPS_GLUT_LUT_PROGRAM)");
 +
 +static char *icp_selftest_in_file;
 +module_param(icp_selftest_in_file, charp, 0444);
@@ -2076,6 +2084,24 @@ index 0000000..9895ea7
 +#define ICP_SELFTEST_SHM_SL	0x8000
 +#define ICP_SELFTEST_SL_SIZE	0x4000
 +#define ICP_SELFTEST_SHM_REGS	0xc000
++#define ICP_SELFTEST_SHM_GLUT	0xd000
++#define ICP_SELFTEST_GLUT_SIZE	0xc00
++/* BPS_GLUT DMI: register and size of one table, as written by CamX (Titan 680) */
++#define ICP_BPS_GLUT_DMI_ADDR	0x5208
++#define ICP_BPS_GLUT_TABLE	0x400
++
++/* CdmProgram entries after the 8 byte CDMProgramArray header */
++static void icp_selftest_add_prog(void *array, u32 iova, u32 len, u32 type)
++{
++	u32 *n = array + 4;
++	u8 *p = array + 8 + *n * 24;
++	u64 base_len = iova | ((u64)(icp_selftest_prog_len_m1 ? len - 1 : len) << 44);
++
++	memset(p, 0, 24);
++	memcpy(p, &base_len, 8);
++	memcpy(p + 8, &type, 4);
++	(*n)++;
++}
 +
 +/*
 + * BpsStripingLibOutMultiFrame of the CICP.FW.5.0 firmware, filled field by
@@ -2265,7 +2291,7 @@ index 0000000..9895ea7
 +	cdm = dma_alloc_coherent(icp->dev, cdm_size, &cdm_dma, GFP_KERNEL);
 +	frame = icp_hfi_shmem(&icp->hfi, ICP_SELFTEST_SHM_FRAME, sizeof(*frame), &frame_iova);
 +	iq = icp_hfi_shmem(&icp->hfi, ICP_SELFTEST_SHM_IQ, HFI_BPS_IQ_SETTINGS_SIZE, &iq_iova);
-+	prog = icp_hfi_shmem(&icp->hfi, ICP_SELFTEST_SHM_CDM, sizeof(*prog), &prog_iova);
++	prog = icp_hfi_shmem(&icp->hfi, ICP_SELFTEST_SHM_CDM, 8 + 4 * 24, &prog_iova);
 +	sl = icp_hfi_shmem(&icp->hfi, ICP_SELFTEST_SHM_SL, ICP_SELFTEST_SL_SIZE, &sl_iova);
 +	if (!in || !out || !cdm || !frame || !iq || !prog || !sl ||
 +	    icp_selftest_sl_stripes_off + 832 > ICP_SELFTEST_SL_SIZE) {
@@ -2298,7 +2324,7 @@ index 0000000..9895ea7
 +	memset(iq, 0, HFI_BPS_IQ_SETTINGS_SIZE);
 +	icp_selftest_apply(iq, HFI_BPS_IQ_SETTINGS_SIZE, icp_selftest_iq_patch,
 +			   icp_selftest_iq_patch_num);
-+	memset(prog, 0, sizeof(*prog));
++	memset(prog, 0, 8 + 4 * 24);
 +	if (icp_selftest_regs_num >= 2) {
 +		u32 regs_iova, n = icp_selftest_regs_num / 2, len = 4 + 8 * n;
 +		u32 *cmd = icp_hfi_shmem(&icp->hfi, ICP_SELFTEST_SHM_REGS, len, &regs_iova);
@@ -2311,12 +2337,38 @@ index 0000000..9895ea7
 +			cmd[1 + 2 * i] = icp_selftest_regs[2 * i];
 +			cmd[2 + 2 * i] = icp_selftest_regs[2 * i + 1];
 +		}
-+		prog->num_programs = 1;
-+		prog->programs[0].base_and_length = regs_iova |
-+			((u64)(icp_selftest_prog_len_m1 ? len - 1 : len) << 44);
-+		prog->programs[0].program_type = icp_selftest_prog_type;
++		icp_selftest_add_prog(prog, regs_iova, len, icp_selftest_prog_type);
 +		dev_info(icp->dev, "selftest: register program of %u writes, type %u, at %#x\n",
 +			 n, icp_selftest_prog_type, regs_iova);
++	}
++	if (icp_selftest_glut_file && *icp_selftest_glut_file) {
++		const struct firmware *fw;
++		u32 lut_iova, cmd_iova, k;
++		void *lut;
++		u32 *cmd;
++
++		lut = icp_hfi_shmem(&icp->hfi, ICP_SELFTEST_SHM_GLUT, ICP_SELFTEST_GLUT_SIZE, &lut_iova);
++		cmd = icp_hfi_shmem(&icp->hfi, ICP_SELFTEST_SHM_GLUT + ICP_SELFTEST_GLUT_SIZE,
++				    3 * 12, &cmd_iova);
++		ret = request_firmware(&fw, icp_selftest_glut_file, icp->dev);
++		if (ret || !lut || !cmd || fw->size != ICP_SELFTEST_GLUT_SIZE) {
++			dev_err(icp->dev, "selftest: gamma file %s: %d\n",
++				icp_selftest_glut_file, ret ?: -EINVAL);
++			if (!ret)
++				release_firmware(fw);
++			goto out;
++		}
++		memcpy(lut, fw->data, fw->size);
++		release_firmware(fw);
++		/* CDM DMI: length - 1 and opcode, data address, selector and DMI register */
++		for (k = 0; k < 3; k++) {
++			cmd[3 * k] = (1 << 24) | (ICP_BPS_GLUT_TABLE - 1);
++			cmd[3 * k + 1] = lut_iova + k * ICP_BPS_GLUT_TABLE;
++			cmd[3 * k + 2] = ((k + 1) << 24) | ICP_BPS_GLUT_DMI_ADDR;
++		}
++		icp_selftest_add_prog(prog, cmd_iova, 3 * 12, icp_selftest_glut_type);
++		dev_info(icp->dev, "selftest: gamma tables from %s, program type %u\n",
++			 icp_selftest_glut_file, icp_selftest_glut_type);
 +	}
 +	icp_selftest_striping(sl, ICP_SELFTEST_W, ICP_SELFTEST_H);
 +	if (icp_selftest_sl_file && *icp_selftest_sl_file) {
