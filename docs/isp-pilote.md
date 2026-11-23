@@ -1,6 +1,6 @@
 # Pilote de l'ISP matériel (BPS)
 
-Retour à [l'état des lieux de l'ISP](isp-materiel.md) · [scoreboard](../scoreboard.md).
+Retour à [l'état des lieux de l'ISP](isp-materiel.md) · [récapitulatif et reprise](isp-reprise.md) · [scoreboard](../scoreboard.md).
 
 État au 23 nov. 2026 : le BPS traite une photo du HP1 en 1920 × 1080 par l'autotest du module
 `qcom-camss-icp` (voir `isp-materiel.md`). Ce document décrit comment en faire un pilote

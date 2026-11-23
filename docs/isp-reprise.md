@@ -1,0 +1,189 @@
+# ISP matériel : récapitulatif et reprise
+
+Retour à [l'état des lieux](isp-materiel.md) · [pilote V4L2](isp-pilote.md) · [scoreboard](../scoreboard.md).
+
+Page écrite le 23 nov. 2026 pour reprendre le travail depuis une nouvelle conversation.
+Le détail technique est dans `isp-materiel.md` (matériel, firmware, registres) et
+`isp-pilote.md` (pilote, bloc de paramètres, commandes).
+
+## Où on en est
+
+L'ISP matériel du diting (Titan 680, SM8475) traite des images sous Linux.
+
+- **ICP** : le processeur de contrôle démarre, son firmware `CICP.FW.5.0` (variante T480,
+  API 0x23200ba) répond sur les files HFI. Module `qcom-camss-icp`, patch
+  `pkgbuilds/linux-diting/0934-…ICP…patch` (fichiers `camss-icp.c`, `camss-icp-hfi.[ch]`,
+  `camss-icp.h`, `camss-bps.c`), nœud DT dans le patch 0935.
+- **BPS** : image complète traitée, RAW10 compacté (`SGBRG10P`) → NV12, en ~4 ms pour
+  1920 × 1080. Chaîne en marche : dématriçage, balance des blancs (WB 2.0.1), matrice de
+  couleurs (CC 1.3.1), gamma (GLUT, tables DMI, noir retiré dans la table), conversion YUV
+  (CST 1.2).
+- **Pilote V4L2** : le BPS est un nœud mémoire à mémoire (`/dev/video18` sur le téléphone,
+  pilote `qcom-camss-bps`). Les réglages et le découpage arrivent en un bloc
+  (`tools/camera/bps-params.py`), par le contrôle `bps_parameters` ou par
+  `/lib/firmware/bps-params.bin`.
+- **Découpage en bandes** : calculé par la bibliothèque de CamX `libipebpsstriping.so`
+  exécutée dans Unicorn (`tools/camera/bps-striping.py`). Il dépend de la taille, du format
+  d'entrée, de l'ordre Bayer et des modules activés.
+- **Pas encore** : libcamera (qui traite toujours sur le CPU), réglages automatiques, noir
+  matériel (BLS), IPE, JPEG.
+
+## Ce qu'il faut avoir sous la main
+
+Fichiers propriétaires, **jamais dans le dépôt** : à rejoindre à la nouvelle conversation
+quand une tâche en a besoin (ils viennent de la sauvegarde HyperOS du téléphone).
+
+| Fichier | Origine | Sert à |
+|---|---|---|
+| `libipebpsstriping.so` | `vendor/lib64` | découpage (`bps-striping.py`) |
+| `camera.qcom.so` | `vendor/lib64/hw` | formats des registres (symboles dans `.gnu_debugdata`) |
+| `com.qti.tuned.diting_semco_s5khp1_wide.bin` | `vendor/lib64/camera` | matrices de couleurs, réglages du HP1 |
+| `CAMERA_ICP.elf` | firmware | DWARF des structures du firmware (`tools/camera/dwarf_struct.py`) |
+
+Sur le téléphone, dans `/lib/firmware` : `hp1p.bin` (centre 1920 × 1080 compacté de la photo
+de test), `sl-1920x1080-mipi.bin` (découpage), `glut-noir.bin` (gamma 2,2 avec noir à 67),
+`bps-params.bin` (bloc par défaut du pilote).
+
+## Commandes de base sur le téléphone
+
+Dépôt dans `~/alarm-xiaomi-diting`, branche `isp-icp` (fusionnée dans `main`), noyau
+7.2.10-diting, arbre source `~/linux-7.2.10`.
+
+```
+cd ~/alarm-xiaomi-diting/extra/camss-icp
+git pull
+make extraire && make KDIR=~/linux-7.2.10 KBUILD_MODPOST_WARN=1
+sudo modprobe -a v4l2-mem2mem videobuf2-dma-contig
+sudo rmmod qcom_camss_icp; sudo insmod qcom-camss-icp.ko && sudo dmesg | tail -20
+```
+
+Conversion d'essai et visualisation :
+
+```
+python3 ../../tools/camera/bps-params.py /tmp/bps-params.bin --taille 1920x1080 \
+    --iq 492,1,652,1,660,1,664,1,780,255,788,255,988,1 --cst --wb 1,1.415,1.513 \
+    --regs $(python3 ../../tools/camera/bps-ccm.py 1 0 0 0 1 0 0 0 1) \
+    --gamma /lib/firmware/glut-noir.bin --sl /lib/firmware/sl-1920x1080-mipi.bin
+sudo cp /tmp/bps-params.bin /lib/firmware/
+cat /lib/firmware/hp1p.bin <(head -c 38400 /dev/zero) > /tmp/hp1-pad.raw
+v4l2-ctl -d /dev/video18 --set-fmt-video-out=width=1920,height=1080,pixelformat=pGAA \
+    --stream-out-mmap --stream-mmap --stream-from=/tmp/hp1-pad.raw \
+    --stream-to=/tmp/sortie.nv12 --stream-count=1
+ffmpeg -loglevel error -f rawvideo -pix_fmt nv12 -s 1920x1080 -i /tmp/sortie.nv12 \
+    -frames:v 1 -y /tmp/sortie.png
+```
+
+Photo brute du capteur arrière (HP1) : `cam -c 1 -s role=viewfinder -s
+role=raw,width=1920,height=1080 --capture=30 --file=hp1-#.raw` (4096 × 3072 SGBRG10_CSI2P ;
+un flux brut seul donne une image noire). L'autotest du module (`icp_selftest=1 …`) reste
+disponible, ses paramètres sont décrits dans `isp-materiel.md`.
+
+## Ce qui reste à faire, dans l'ordre conseillé
+
+### 1. Photo en pleine taille (4096 × 3072)
+
+But : traiter la photo brute entière, sans recadrage.
+
+1. Calculer le découpage (dans la conversation, avec `libipebpsstriping.so` jointe) :
+   `bps-striping.py libipebpsstriping.so 4096 3072 -o sl-4096x3072.bin --in-format 2 --bayer 3
+   --iq 492,1,652,1,660,1,664,1,780,255,788,255,988,1`. Vérifier que le fichier tient dans
+   16 Ko (limite `BPS_SHM_SL_SIZE` du pilote ; sinon l'agrandir dans `camss-bps.c`, avec les
+   régions de mémoire partagée qui suivent).
+2. Bloc de paramètres avec `--taille 4096x3072` et ce découpage.
+3. Entrée : la photo brute de `cam` telle quelle, pas de ligne 5 120 octets, plus 16 lignes
+   nulles (16 × 5 120 octets). `v4l2-ctl … width=4096,height=3072,pixelformat=pGAA`.
+4. Si la photo est trop grande pour une passe, la bibliothèque produit plusieurs passes : à
+   vérifier dans sa sortie (`-v`).
+
+### 2. Paramètres selon la taille, dans le pilote
+
+Le découpage n'est valable que pour une taille. Faire chercher au pilote, à la mise en route
+du flux, `bps-params-LARGEURxHAUTEUR.bin` avant `bps-params.bin` (fonction
+`bps_params_load_default` de `camss-bps.c`, à appeler aussi au changement de format). Ainsi
+libcamera peut s'en servir sans IPA, avec un fichier par taille installé dans `/lib/firmware`.
+
+### 3. Premier branchement sur libcamera (convertisseur du gestionnaire `simple`)
+
+Le gestionnaire `simple` de libcamera sait déjà envoyer les images capturées à un
+convertisseur mémoire à mémoire (`V4L2M2MConverter`). C'est le chemin le plus court vers
+une caméra utilisable par les applications.
+
+1. Noyau : donner au BPS un périphérique média (`media_device_init` + `media_device_register`,
+   `v4l2_m2m_register_media_controller`, `driver_name` = `qcom-camss-bps`), comme
+   `drivers/media/test-drivers/vim2m.c`. libcamera trouve les convertisseurs par ce nom.
+2. libcamera :
+   - `src/libcamera/converter/converter_v4l2_m2m.cpp` : ajouter `"qcom-camss-bps"` à
+     `compatibles` ;
+   - `src/libcamera/pipeline/simple/simple.cpp` : remplacer `{ "qcom-camss", {}, true }` par
+     `{ "qcom-camss", { { "qcom-camss-bps", 1 } }, false }` (convertisseur et ISP logiciel
+     s'excluent).
+   - Paquet libcamera du dépôt à reconstruire avec ce patch.
+3. Essai : `cam -c 1 -s role=viewfinder,pixelformat=NV12 --capture=3 --file=…`, puis
+   plasma-camera.
+4. Limites attendues : réglages fixes (balance des blancs et exposition figées), la taille de
+   sortie du convertisseur doit être celle de l'entrée.
+
+### 4. Soustraction du noir en matériel (BLS 1.2.1)
+
+Aujourd'hui le noir (67 sur 10 bits) est retiré dans la table gamma, après la balance des
+blancs, ce qui fausse les gains.
+
+1. Dans `camera.qcom.so` (joindre le fichier) : `BPSBLS121Titan680::PackIQRegisterSetting` et
+   `BLS12Setting::CalculateHWSetting` donnent le format des 6 registres à `0x3e68`
+   (interrupteur à l'octet 1060 de `BpsIQSettings`). Méthode : comme pour WB/CC/CST, voir
+   `isp-materiel.md`.
+2. Recalculer le découpage avec `1060,1` dans `--iq` (le découpage dépend des modules).
+3. Vérifier : gamma sans noir (`bps-gamma.py sortie.bin 2.2 1.0 0`), noirs à 16 ou moins,
+   mur gris neutre avec des gains calculés sur les valeurs sans le noir.
+
+### 5. Matrice de couleurs selon l'éclairage
+
+La matrice identité donne des couleurs proches ; celle du HP1 (`1.74 -0.5794 …`) sature et
+tire l'orange vers le rose. CamX interpole entre plusieurs matrices selon la température de
+couleur.
+
+1. Décoder dans le fichier de réglage `com.qti.tuned.diting_semco_s5khp1_wide.bin` l'arbre
+   du module CC 1.3 (déclencheurs CCT et lux, matrices associées).
+2. Outil qui, pour une température de couleur, interpole la matrice ; essai sur des photos
+   sous éclairage connu (jour, ampoule).
+
+### 6. IPA libcamera (réglages automatiques)
+
+Gestionnaire `diting` dérivé de `simple`, ou IPA branché sur le convertisseur : balance des
+blancs et exposition d'abord avec les statistiques du SoftISP, puis celles du BPS (sorties
+`STATS_BG`, `STATS_BHIST`, indices 5 et 6 des images du BPS, à décrire dans `CONFIG_IO`).
+L'IPA construit le bloc de paramètres à chaque image et le passe par le contrôle
+`bps_parameters`.
+
+### 7. Découpage précalculé à l'installation
+
+La bibliothèque de CamX n'est pas redistribuable : script qui, à partir de la sauvegarde
+HyperOS de l'utilisateur, calcule les découpages des tailles utiles (`bps-striping.py`, sur le
+téléphone avec `pip install unicorn pyelftools`) et les installe dans `/lib/firmware`.
+
+### 8. IPE puis JPEG
+
+IPE (débruitage, netteté, mise à l'échelle) : même méthode que le BPS (session déjà créée par
+l'autotest, `CONFIG_IO` accepté) ; structures `IpeFrameProcessData` dans le DWARF du firmware,
+découpage par la bibliothèque `libipebpsstriping` (fonctions IPE). JPEG matériel ensuite.
+
+### Entretien
+
+- `Module.symvers` manque dans `~/linux-7.2.10` : d'où `KBUILD_MODPOST_WARN=1`. Le recopier
+  depuis le paquet du noyau ou refaire `make modules_prepare` complet évite l'option.
+- Le patch 0934 entre dans le paquet `linux-diting` : à la prochaine construction du noyau,
+  vérifier que `CONFIG_VIDEO_QCOM_CAMSS_HARD_ISP=m` y est (il sélectionne maintenant
+  `V4L2_MEM2MEM_DEV` et `VIDEOBUF2_DMA_CONTIG`).
+- Modifier le pilote : extraire les fichiers du patch
+  (`make extraire` dans `extra/camss-icp`), les modifier, puis reconstruire les sections du
+  patch à partir des fichiers (les sections « new file » du patch sont le texte des fichiers
+  préfixé de `+`, avec le nombre de lignes dans l'en-tête `@@ -0,0 +1,N @@`).
+
+## Message pour reprendre
+
+À coller au début d'une nouvelle conversation :
+
+> Pilote ISP matériel du Xiaomi 12T Pro « diting », dépôt rakhenmanoa/alarm-xiaomi-diting,
+> branche isp-icp. Lis d'abord docs/isp-reprise.md, puis isp-pilote.md et isp-materiel.md.
+> Le BPS marche par V4L2 (/dev/video18). On attaque l'étape N de la liste « Ce qui reste à
+> faire ». Réponds en français, commandes une par une ; je te colle les sorties du téléphone.

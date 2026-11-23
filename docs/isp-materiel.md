@@ -1,6 +1,6 @@
 # ISP matériel (ICP / BPS / IPE) — état des lieux
 
-Retour au [README principal](../README.md) · [scoreboard](../scoreboard.md).
+Retour au [README principal](../README.md) · [scoreboard](../scoreboard.md) · [récapitulatif et reprise](isp-reprise.md).
 
 Aujourd'hui libcamera traite les images brutes sur le CPU (ISP logiciel). Le diting a
 pourtant un vrai ISP matériel hors ligne : un cœur de contrôle **ICP** (Xtensa LX7) qui fait
