@@ -279,6 +279,12 @@ avec le noir mesuré (67), les noirs redeviennent noirs. Le module de soustracti
 (`BPSBLS121Titan680`, 6 registres à `0x3e68`, interrupteur à l'octet 1060) n'est pas encore
 utilisé : son échelle interne n'est pas vérifiée.
 
+**Matrice de couleurs.** `tools/camera/bps-ccm.py c0 … c8 [q]` convertit une matrice RVB 3x3
+en registres CC 1.3.1 (interrupteur à l'octet 652). Les matrices du HP1 sont dans
+`com.qti.tuned.diting_semco_s5khp1_wide.bin` (sauvegarde HyperOS, `vendor/lib64/camera`, pas
+dans le dépôt) : une trentaine de matrices (selon la température de couleur et la luminosité),
+repérables comme 9 flottants dont chaque ligne fait 1. Le découpage ne change pas avec elle.
+
 **Le découpage dépend des modules activés** : activer la balance des blancs change les marges
 des bandes ; avec un découpage calculé sans elle, violation de taille. Recalculer le découpage
 avec les mêmes `--iq` que l'image (`bps-striping.py … --iq 492,1,664,1,780,255,788,255,988,1`).
