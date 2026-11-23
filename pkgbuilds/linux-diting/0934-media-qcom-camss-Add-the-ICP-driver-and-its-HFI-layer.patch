@@ -1410,10 +1410,10 @@ index 0000000..1aab001
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..206b46f
+index 0000000..9895ea7
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,1284 @@
+@@ -0,0 +1,1317 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -1530,6 +1530,19 @@ index 0000000..206b46f
 +static uint icp_selftest_sl_crops = 0xffff;
 +module_param(icp_selftest_sl_crops, uint, 0444);
 +MODULE_PARM_DESC(icp_selftest_sl_crops, "Mask of the 16 BPS crop instances enabled over the whole image");
++
++static uint icp_selftest_regs[64];
++static int icp_selftest_regs_num;
++module_param_array(icp_selftest_regs, uint, &icp_selftest_regs_num, 0444);
++MODULE_PARM_DESC(icp_selftest_regs, "Pairs of BPS register offset,value sent as a CDM program with the test frame");
++
++static uint icp_selftest_prog_type = 72;
++module_param(icp_selftest_prog_type, uint, 0444);
++MODULE_PARM_DESC(icp_selftest_prog_type, "Program type of the register program (72 = PROGRAM_TYPE_GENERIC)");
++
++static bool icp_selftest_prog_len_m1 = true;
++module_param(icp_selftest_prog_len_m1, bool, 0444);
++MODULE_PARM_DESC(icp_selftest_prog_len_m1, "Program length field is the size in bytes minus one");
 +
 +static char *icp_selftest_in_file;
 +module_param(icp_selftest_in_file, charp, 0444);
@@ -2062,6 +2075,7 @@ index 0000000..206b46f
 +#define ICP_SELFTEST_SHM_CDM	0x7000
 +#define ICP_SELFTEST_SHM_SL	0x8000
 +#define ICP_SELFTEST_SL_SIZE	0x4000
++#define ICP_SELFTEST_SHM_REGS	0xc000
 +
 +/*
 + * BpsStripingLibOutMultiFrame of the CICP.FW.5.0 firmware, filled field by
@@ -2285,6 +2299,25 @@ index 0000000..206b46f
 +	icp_selftest_apply(iq, HFI_BPS_IQ_SETTINGS_SIZE, icp_selftest_iq_patch,
 +			   icp_selftest_iq_patch_num);
 +	memset(prog, 0, sizeof(*prog));
++	if (icp_selftest_regs_num >= 2) {
++		u32 regs_iova, n = icp_selftest_regs_num / 2, len = 4 + 8 * n;
++		u32 *cmd = icp_hfi_shmem(&icp->hfi, ICP_SELFTEST_SHM_REGS, len, &regs_iova);
++
++		if (!cmd)
++			goto out;
++		/* CDM REG_RANDOM: header, then (offset, value) pairs */
++		cmd[0] = (4 << 24) | n;
++		for (i = 0; i < n; i++) {
++			cmd[1 + 2 * i] = icp_selftest_regs[2 * i];
++			cmd[2 + 2 * i] = icp_selftest_regs[2 * i + 1];
++		}
++		prog->num_programs = 1;
++		prog->programs[0].base_and_length = regs_iova |
++			((u64)(icp_selftest_prog_len_m1 ? len - 1 : len) << 44);
++		prog->programs[0].program_type = icp_selftest_prog_type;
++		dev_info(icp->dev, "selftest: register program of %u writes, type %u, at %#x\n",
++			 n, icp_selftest_prog_type, regs_iova);
++	}
 +	icp_selftest_striping(sl, ICP_SELFTEST_W, ICP_SELFTEST_H);
 +	if (icp_selftest_sl_file && *icp_selftest_sl_file) {
 +		const struct firmware *fw;
