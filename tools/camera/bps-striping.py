@@ -5,8 +5,9 @@ La bibliothèque n'importe que la libc : quelques fonctions fournies ici suffise
 
 Usage : bps-striping.py LIB.so LARGEUR HAUTEUR [-o sortie.bin] [--iq off,val,...]
                         [--titan 0x60800] [-v]
-Sortie : BpsStripingLibOutMultiFrame au format du firmware CICP.FW.5.0 (bande de 832 octets ;
-la bibliothèque en produit 848, les 748 premiers octets sont communs). Le fichier va dans
+Sortie : BpsStripingLibOutMultiFrame tel que la bibliothèque le produit, bandes de 848 octets.
+Le firmware CICP.FW.5.0 lit bien ce format (vérifié le 23 nov. 2026 : 3 bandes en 960 × 480),
+même si son DWARF décrit une bande de 832 octets. Le fichier va dans
 /lib/firmware et se charge avec icp_selftest_sl_file=. La bibliothèque n'est pas dans le dépôt.
 Dépendances : pip install unicorn pyelftools"""
 import argparse, math, re, struct, sys
@@ -186,7 +187,7 @@ def main():
     ap.add_argument('--iq', default='492,1,664,1,780,255,788,255', help='paires octet,valeur dans BpsIQSettings')
     ap.add_argument('--titan', type=lambda v: int(v, 0), default=0x60800)
     ap.add_argument('--hw', type=lambda v: int(v, 0), default=0x20000000)
-    ap.add_argument('--raw', action='store_true', help='garder les bandes de 848 octets de la bibliothèque')
+    ap.add_argument('--fw832', action='store_true', help='convertir en bandes de 832 octets (DWARF du firmware, ne marche pas)')
     ap.add_argument('-v', '--verbose', action='store_true')
     a = ap.parse_args()
 
@@ -219,11 +220,11 @@ def main():
     if (size - FW_HDR) % LIB_STRIPE:
         sys.exit(f'taille inattendue {size} : bande de {LIB_STRIPE} octets ?')
     fw = bytearray(lib[:FW_HDR])
-    stride = LIB_STRIPE if a.raw else FW_STRIPE
-    for i in range(nstripes if not a.raw else 0):
+    stride = LIB_STRIPE if not a.fw832 else FW_STRIPE
+    for i in range(nstripes if not not a.fw832 else 0):
         s = lib[FW_HDR + i * LIB_STRIPE:FW_HDR + (i + 1) * LIB_STRIPE]
         fw += s[:LIB_COMMON] + bytes(FW_STRIPE - LIB_COMMON)
-    if a.raw:
+    if not a.fw832:
         fw = bytearray(lib)
     open(a.output, 'wb').write(fw)
 

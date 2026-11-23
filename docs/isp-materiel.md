@@ -215,13 +215,19 @@ n'est donc pas identifiée. Registres utiles : `0xa54` position de la bande (0 =
 1 = voisine à droite, 2 = voisine à gauche, 3 = les deux), `0xa5c` largeur lue en octets,
 `0xa60` hauteur lue, `0x4960` activation du dématriçage.
 
+**23 nov. 2026, soir : image traitée avec dématriçage, en 3 bandes.** En 960 × 480, avec le
+découpage calculé par la bibliothèque de CamX (`sl-960x480.bin`, 3 bandes de 200, 332 et 444
+pixels lus), le dématriçage et la conversion YUV actifs, le firmware répond `0x0`,
+`WrStatus 0x101`, et les deux plans NV12 sont écrits en entier.
+
 **Bibliothèque de découpage de CamX.** `tools/camera/bps-striping.py LIB.so LARGEUR HAUTEUR`
 exécute `libipebpsstriping.so` (sauvegarde HyperOS, `vendor/lib64`, pas dans le dépôt) dans un
 émulateur Unicorn : elle n'importe que la libc. Appels : `BPSStripingLibraryContextCreate(configIo,
 memOp, titanVersion = 0x60800, hwVersion, &handle, &taille, &tailleCdm)` puis
 `BPSStripingLibraryExecute(handle, {iq, cadl, cœurs, reConfigIo}, sortie, métadonnées,
-userBPSArgs)`. Sa bande fait 848 octets contre 832 dans le firmware ; les 748 premiers sont
-communs, l'outil convertit. Le fichier produit va dans `/lib/firmware` et se charge avec
+userBPSArgs)`. Sa bande fait 848 octets ; le DWARF du firmware en décrit 832, mais le firmware lit bien
+les bandes de 848 octets (avec 832, seule la première bande est lue correctement et la
+lecture comme l'écriture sont coupées). Le fichier produit va dans `/lib/firmware` et se charge avec
 `icp_selftest_sl_file=`. Ce qu'elle montre : 448 pixels de sortie au plus par bande (3 bandes
 pour 960, 5 pour 1 920, rangées de droite à gauche), 4 pixels de marge par côté pour le
 dématriçage, plages de lignes de la passe égales à l'image, recadrages de la passe en lignes
