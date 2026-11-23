@@ -1410,10 +1410,10 @@ index 0000000..1aab001
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..1f248ce
+index 0000000..95b8241
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,1369 @@
+@@ -0,0 +1,1374 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -2056,6 +2056,11 @@ index 0000000..1f248ce
 +		layout[1] = height;
 +		layout[2] = width;
 +		layout[3] = height / 2;
++		break;
++	case HFI_IMAGE_FORMAT_MIPI_10:
++		/* MIPI RAW10: 4 pixels in 5 bytes, as the IFE writes them */
++		layout[0] = width * 5 / 4;
++		layout[1] = height;
 +		break;
 +	default:
 +		/* 10 bit Bayer in 16 bit words */

@@ -177,6 +177,8 @@ def image(cfg, idx, fmt, w, h):
     struct.pack_into('<III', cfg, o, fmt, w, h)
     if fmt == 20:		# LINEAR_NV12
         struct.pack_into('<IIII', cfg, o + 64, w, h, w, h // 2)
+    elif fmt == 2:		# MIPI_10 compacté
+        struct.pack_into('<II', cfg, o + 64, w * 5 // 4, h)
     else:			# Bayer 10 bits dans des mots de 16 bits
         struct.pack_into('<II', cfg, o + 64, w * 2, h)
 
@@ -188,12 +190,13 @@ def main():
     ap.add_argument('--titan', type=lambda v: int(v, 0), default=0x60800)
     ap.add_argument('--hw', type=lambda v: int(v, 0), default=0x20000000)
     ap.add_argument('--fw832', action='store_true', help='convertir en bandes de 832 octets (DWARF du firmware, ne marche pas)')
+    ap.add_argument('--in-format', type=int, default=6, help='format d\'entrée : 6 BAYER_10 (16 bits), 2 MIPI_10 (compacté)')
     ap.add_argument('--bayer', type=int, default=0, help='ordre Bayer : 0 R, 1 GR, 2 B, 3 GB')
     ap.add_argument('-v', '--verbose', action='store_true')
     a = ap.parse_args()
 
     cfg = bytearray(1240)		# BpsConfigIoData
-    image(cfg, 0, 6, a.width, a.height)	# entrée BAYER_10
+    image(cfg, 0, a.in_format, a.width, a.height)	# entrée
     struct.pack_into('<I', cfg, 12, a.bayer)
     image(cfg, 1, 20, a.width, a.height)	# sortie pleine LINEAR_NV12
     iq = bytearray(1276)		# BpsIQSettings

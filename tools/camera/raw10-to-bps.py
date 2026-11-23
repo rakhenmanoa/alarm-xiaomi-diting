@@ -3,11 +3,15 @@
 livre `cam -s role=raw`) en entrée du BPS : 10 bits dans des mots de 16 bits, LARGEUR * 2
 octets par ligne.
 
-Usage : raw10-to-bps.py image.raw LARGEUR HAUTEUR sortie.bin [LARGEUR_SOURCE HAUTEUR_SOURCE]
+Usage : raw10-to-bps.py image.raw LARGEUR HAUTEUR sortie.bin [LARGEUR_SOURCE HAUTEUR_SOURCE] [--compacte]
+--compacte : garde le RAW10 compacté (pas de ligne LARGEUR * 5 / 4), pour le format MIPI_10.
 Sans taille source, l'image fait LARGEUR x HAUTEUR. Avec, on garde le centre de l'image source
 (décalages pairs : l'ordre Bayer ne change pas). Le pas de ligne est déduit de la taille du
 fichier."""
 import sys
+
+packed = '--compacte' in sys.argv
+sys.argv = [a for a in sys.argv if a != '--compacte']
 
 src, w, h, dst = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
 sw, sh = (int(sys.argv[5]), int(sys.argv[6])) if len(sys.argv) > 6 else (w, h)
@@ -17,6 +21,12 @@ if stride < sw * 5 // 4 or w > sw or h > sh:
     sys.exit(f'{len(d)} octets : ne correspond pas à {sw}x{sh} en RAW10 compacté')
 x0 = (sw - w) // 2 // 4 * 4		# multiple de 4 : début d'un groupe de 5 octets
 y0 = (sh - h) // 2 // 2 * 2
+if packed:
+    out = b''.join(d[(y0 + y) * stride + x0 * 5 // 4:(y0 + y) * stride + (x0 + w) * 5 // 4]
+                   for y in range(h))
+    open(dst, 'wb').write(out)
+    print(f'{w}x{h} compacté pris en ({x0},{y0}) dans {sw}x{sh} -> {dst} ({len(out)} octets)')
+    sys.exit(0)
 out = bytearray(w * h * 2)
 total = 0
 for y in range(h):
