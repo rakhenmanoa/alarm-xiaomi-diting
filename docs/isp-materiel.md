@@ -245,6 +245,33 @@ centre 1920 × 1080 extrait par `tools/camera/raw10-to-bps.py image.raw 1920 108
 icp_selftest_frame_patch=3684,3`). La luminance montre la scène, sans cassure entre les bandes ;
 elle est sombre et plate (ni gamma, ni balance des blancs, ni conversion YUV programmés).
 
+**23 nov. 2026 : première photo en couleur.** Les coefficients des modules ne sont pas dans
+`BpsIQSettings` (qui ne porte que leurs interrupteurs) : CamX les écrit par un programme de
+registres. `icp_selftest_regs=adresse,valeur,…` joint à l'image un programme `REG_RANDOM` de
+type 72 (`PROGRAM_TYPE_GENERIC`, longueur codée « octets − 1 ») ; le firmware l'exécute.
+
+Les registres viennent de `camera.qcom.so` (sauvegarde HyperOS, `vendor/lib64/hw`, pas dans le
+dépôt) : sa section `.gnu_debugdata` (xz) contient la table des fonctions, dont les classes
+`BPS…Titan680` ; `CreateCmdList` donne l'adresse et le nombre de registres,
+`PackIQRegisterSetting` leur format, `Initialize` les valeurs par défaut, et les fonctions
+`…Setting::CalculateHWSetting` l'échelle.
+
+| Module | Interrupteur (`BpsIQSettings`) | Registres | Format |
+|---|---|---|---|
+| Conversion YUV (CST 1.2) | octet 664 | `0x5468`, 18 | par canal (Y, Cb, Cr), 6 registres : coeff. 0 et 1 (bits 0-12 et 16-28), coeff. 2 (bits 0-12), décalage ajouté (bits 19-31), 0, borne min (bits 20-31), borne max (bits 20-31). Coefficients signés 13 bits, 1,0 = 1 024, entrées dans l'ordre G, B, R. Domaine 12 bits : décalage de chrominance 2 048 pour 128 en sortie 8 bits. |
+| Balance des blancs (WB 2.0.1) | octet 988 | `0x3868`, 12 | gains G, B, R aux registres 0 à 2, bits 17-31, 1,0 = 1 024 ; le reste à 0 |
+| Matrice de couleurs (CC 1.3.1) | octet 652 | `0x4b68`, 10 | coefficients 12 bits signés, échelle 2^(7+q) (q aux bits 0-1 du registre 9), décalages bits 19-31 aux registres 6 à 8 |
+
+Valeurs CST utilisées (BT.601 de CamX, décalages 2 048) :
+`0x5468,0x750259,0x546c,0x132,0x5470,0x0,0x5474,0x0,0x5478,0x0,0x547c,0xfff00000,0x5480,0x1fe1eae,0x5484,0x1f54,0x5488,0x40000000,0x548c,0x0,0x5490,0x0,0x5494,0xfff00000,0x5498,0x1fad1e55,0x549c,0x1fe,0x54a0,0x40000000,0x54a4,0x0,0x54a8,0x0,0x54ac,0xfff00000`.
+Avec la balance des blancs calculée en « monde gris » sur l'image (B × 1,38, R × 1,43),
+la photo du HP1 sort avec des couleurs neutres (U et V moyens à 128), encore sombre : il
+manque le gamma (module GLUT, table chargée par un programme DMI) et la matrice de couleurs.
+
+**Le découpage dépend des modules activés** : activer la balance des blancs change les marges
+des bandes ; avec un découpage calculé sans elle, violation de taille. Recalculer le découpage
+avec les mêmes `--iq` que l'image (`bps-striping.py … --iq 492,1,664,1,780,255,788,255,988,1`).
+
 **Bibliothèque de découpage de CamX.** `tools/camera/bps-striping.py LIB.so LARGEUR HAUTEUR`
 exécute `libipebpsstriping.so` (sauvegarde HyperOS, `vendor/lib64`, pas dans le dépôt) dans un
 émulateur Unicorn : elle n'importe que la libc. Appels : `BPSStripingLibraryContextCreate(configIo,
