@@ -188,11 +188,13 @@ def main():
     ap.add_argument('--titan', type=lambda v: int(v, 0), default=0x60800)
     ap.add_argument('--hw', type=lambda v: int(v, 0), default=0x20000000)
     ap.add_argument('--fw832', action='store_true', help='convertir en bandes de 832 octets (DWARF du firmware, ne marche pas)')
+    ap.add_argument('--bayer', type=int, default=0, help='ordre Bayer : 0 R, 1 GR, 2 B, 3 GB')
     ap.add_argument('-v', '--verbose', action='store_true')
     a = ap.parse_args()
 
     cfg = bytearray(1240)		# BpsConfigIoData
     image(cfg, 0, 6, a.width, a.height)	# entrée BAYER_10
+    struct.pack_into('<I', cfg, 12, a.bayer)
     image(cfg, 1, 20, a.width, a.height)	# sortie pleine LINEAR_NV12
     iq = bytearray(1276)		# BpsIQSettings
     p = [int(v, 0) for v in a.iq.split(',') if v]
