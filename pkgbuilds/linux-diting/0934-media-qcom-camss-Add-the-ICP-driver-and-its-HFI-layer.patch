@@ -1410,10 +1410,10 @@ index 0000000..1aab001
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..939c952
+index 0000000..e4ec7cd
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,1192 @@
+@@ -0,0 +1,1200 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -2172,8 +2172,16 @@ index 0000000..939c952
 +			 name, total, n_lines, first, last, w0);
 +}
 +
-+#define ICP_SELFTEST_W		1920
-+#define ICP_SELFTEST_H		1080
++static uint icp_selftest_w = 1920;
++module_param(icp_selftest_w, uint, 0444);
++MODULE_PARM_DESC(icp_selftest_w, "Width of the BPS test image (multiple of 64)");
++
++static uint icp_selftest_h = 1080;
++module_param(icp_selftest_h, uint, 0444);
++MODULE_PARM_DESC(icp_selftest_h, "Height of the BPS test image (even)");
++
++#define ICP_SELFTEST_W		icp_selftest_w
++#define ICP_SELFTEST_H		icp_selftest_h
 +
 +/*
 + * Ask the BPS to process one synthetic Bayer frame with every IQ module
@@ -2319,9 +2327,9 @@ index 0000000..939c952
 +		memset(cfg, 0, ICP_SELFTEST_MAX_BYTES);
 +		if (is_bps) {
 +			icp_selftest_image(cfg, HFI_BPS_INPUT_IMAGE,
-+					   icp_selftest_bps_in, 1920, 1080);
++					   icp_selftest_bps_in, icp_selftest_w, icp_selftest_h);
 +			icp_selftest_image(cfg, HFI_BPS_OUTPUT_IMAGE_FULL,
-+					   icp_selftest_bps_out, 1920, 1080);
++					   icp_selftest_bps_out, icp_selftest_w, icp_selftest_h);
 +		} else {
 +			icp_selftest_image(cfg, HFI_IPE_INPUT_IMAGE_FULL,
 +					   icp_selftest_ipe_fmt, 1920, 1080);
