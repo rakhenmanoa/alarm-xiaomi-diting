@@ -176,9 +176,37 @@ Outils : `tools/camera/cdm-decode.py` (commandes de registres), `dwarf_funcs.py`
 `dwarf_params.py` (fonctions et paramètres du firmware), `xtensa-dis.py` (désassemblage
 partiel : les instructions larges FLIX de 8 octets ne sont pas décodées).
 
-Reste à comprendre : la cause de la violation matérielle. Pistes : réglages d'image
-incohérents avec une sortie NV12 (conversion de couleurs et sous-échantillonnage de la
-chrominance désactivés), ou recadrages inutiles activés.
+**23 nov. 2026 : première image traitée de bout en bout par le BPS.** En 960 × 480, avec le
+dématriçage coupé (`icp_selftest_w=960 icp_selftest_h=480
+icp_selftest_iq_patch=664,1,780,255,788,255`), le firmware répond `0x0` et les deux plans NV12
+sont écrits en entier (luminance 480 lignes, chrominance 240). Le contenu n'a pas encore de sens
+(réglages d'image presque tous à zéro), mais toute la chaîne fonctionne.
+
+Ce qui a mené là :
+
+- **Moteurs d'écriture.** Avec `icp_fw_dump=0`, le firmware n'écrase plus le tampon CDM par son
+  rapport, et `cdm-decode.py` montre le programme de registres réel. Client 0 (luminance) à
+  `0x1000`, client 1 (chrominance) à `0x1100` : `+0x04` adresse, `+0x0c` largeur | hauteur << 16,
+  `+0x14` pas de ligne, `+0x18` empaquetage. Leur hauteur vient de la paire de lignes de sortie
+  de la passe ; la première ligne de la paire est ignorée.
+- **`WrStatus`** (décodage du pilote Android de l'IFE, même famille de bus) : bit 31 violation de
+  taille d'image, bit 28 violation de contrainte (hauteur impaire en NV12), bit 0 probablement le
+  client 0. `0x101` en fin de travail réussi.
+- **Recadrages.** Sur les 16 recadrages du découpage, trois sont programmés : n° 1 → `0x5860`
+  (sortie DS4 probable), n° 4 → `0x6060` (sortie pleine, luminance), n° 5 → `0x6260` (sortie
+  pleine, chrominance, largeur divisée par deux par le firmware). Les autres seuls donnent un
+  délai dépassé (`0xa0007`). Le second champ de ces modules (lignes) reprend la plage de pixels
+  de la passe, pas sa plage de lignes.
+- **Largeur maximale d'une bande : environ 1 000 pixels.** À 1 088 pixels et plus, la luminance se
+  bloque dès la 2e ligne ; à 1 024, délai dépassé ; à 960, elle passe. Une image de 1 920 pixels
+  demande donc au moins deux bandes.
+- **Le dématriçage cause la violation restante.** Activé, la luminance signale une violation de
+  taille quelle que soit la hauteur annoncée (476 à 480). Coupé, le travail aboutit. Hypothèse :
+  il lui faut des marges aux bords de la bande (pixels et lignes en plus à l'entrée, retirés par
+  les recadrages), que CamX calcule dans son découpage et que le nôtre ne prévoit pas.
+
+Prochaines étapes : marges du dématriçage, découpage en deux bandes pour 1 920 pixels, puis
+réglages d'image (balance des blancs, matrice de couleurs, conversion YUV) pour une image utile.
 
 Reste à faire : BPS et IPE (les fichiers `camss-bps-cmd.*` de la RFC manquent), puis le
 branchement sur libcamera.
