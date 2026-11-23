@@ -186,6 +186,7 @@ def main():
     ap.add_argument('--iq', default='492,1,664,1,780,255,788,255', help='paires octet,valeur dans BpsIQSettings')
     ap.add_argument('--titan', type=lambda v: int(v, 0), default=0x60800)
     ap.add_argument('--hw', type=lambda v: int(v, 0), default=0x20000000)
+    ap.add_argument('--raw', action='store_true', help='garder les bandes de 848 octets de la bibliothèque')
     ap.add_argument('-v', '--verbose', action='store_true')
     a = ap.parse_args()
 
@@ -218,16 +219,19 @@ def main():
     if (size - FW_HDR) % LIB_STRIPE:
         sys.exit(f'taille inattendue {size} : bande de {LIB_STRIPE} octets ?')
     fw = bytearray(lib[:FW_HDR])
-    for i in range(nstripes):
+    stride = LIB_STRIPE if a.raw else FW_STRIPE
+    for i in range(nstripes if not a.raw else 0):
         s = lib[FW_HDR + i * LIB_STRIPE:FW_HDR + (i + 1) * LIB_STRIPE]
         fw += s[:LIB_COMMON] + bytes(FW_STRIPE - LIB_COMMON)
+    if a.raw:
+        fw = bytearray(lib)
     open(a.output, 'wb').write(fw)
 
     lines = struct.unpack_from('<14H', fw, 8)
     print(f'{a.width}x{a.height} : {nstripes} bande(s), lignes entrée {lines[0]}-{lines[1]}, '
           f'sortie {lines[4]}-{lines[5]}, {len(fw)} octets dans {a.output}')
     for i in range(nstripes):
-        s = FW_HDR + i * FW_STRIPE
+        s = FW_HDR + i * stride
         px = struct.unpack_from('<14H', fw, s)
         print(f'  bande {i} : entrée {px[0]}-{px[1]}, sortie {px[4]}-{px[5]}, '
               f'bords {fw[s + 28]},{fw[s + 29]}')
