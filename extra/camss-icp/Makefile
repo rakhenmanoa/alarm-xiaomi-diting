@@ -4,7 +4,7 @@ KDIR ?= /usr/lib/modules/$(shell uname -r)/build
 PATCH ?= $(CURDIR)/../../pkgbuilds/linux-diting/0934-media-qcom-camss-Add-the-ICP-driver-and-its-HFI-layer.patch
 
 obj-m += qcom-camss-icp.o
-qcom-camss-icp-objs := camss-icp.o camss-icp-hfi.o
+qcom-camss-icp-objs := camss-icp.o camss-icp-hfi.o camss-bps.o
 
 all:
 	$(MAKE) -C $(KDIR) M=$(CURDIR) modules
@@ -14,7 +14,7 @@ all:
 extraire:
 	rm -rf .tmp && mkdir .tmp
 	-patch -Np1 -d .tmp --no-backup-if-mismatch < $(PATCH) >/dev/null
-	cp .tmp/drivers/media/platform/qcom/camss/camss-icp*.[ch] .
+	cp .tmp/drivers/media/platform/qcom/camss/camss-icp*.[ch] .tmp/drivers/media/platform/qcom/camss/camss-bps.c .
 	rm -rf .tmp
 
 clean:

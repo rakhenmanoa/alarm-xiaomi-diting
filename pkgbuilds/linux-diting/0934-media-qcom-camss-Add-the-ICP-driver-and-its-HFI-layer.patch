@@ -5,13 +5,19 @@ Boots the Image Control Processor of the Titan camera subsystem (SM8475)
 and talks to its firmware through the HFI queues: SYS_INIT, ping and
 IPE/BPS handle creation. Based on the Linaro RFC "ICP boots, stats"
 (2026-07-03), whose camss-icp-hfi.c was missing, rewritten here from the
-GPL downstream camera-kernel hfi.c. IPE and BPS are not built yet.
+GPL downstream camera-kernel hfi.c.
+
+camss-bps.c registers the BPS as a V4L2 memory to memory device: packed
+RAW10 Bayer on the OUTPUT queue, NV12 on the CAPTURE queue. The IQ
+settings, register and gamma programs and the striping are computed in
+user space and passed as one blob ("BPS Parameters" control, or a
+default firmware file); the driver only forwards them. IPE not built yet.
 
 diff --git a/drivers/media/platform/qcom/camss/Kconfig b/drivers/media/platform/qcom/camss/Kconfig
 index 4eda48c..195855a 100644
 --- a/drivers/media/platform/qcom/camss/Kconfig
 +++ b/drivers/media/platform/qcom/camss/Kconfig
-@@ -7,3 +7,16 @@ config VIDEO_QCOM_CAMSS
+@@ -7,3 +7,18 @@ config VIDEO_QCOM_CAMSS
  	select VIDEO_V4L2_SUBDEV_API
  	select VIDEOBUF2_DMA_SG
  	select V4L2_FWNODE
@@ -22,6 +28,8 @@ index 4eda48c..195855a 100644
 +	depends on QCOM_MDT_LOADER
 +	depends on QCOM_SCM
 +	depends on VIDEO_DEV
++	select V4L2_MEM2MEM_DEV
++	select VIDEOBUF2_DMA_CONTIG
 +	help
 +	  Boots the Image Control Processor (ICP) of the Titan camera
 +	  subsystem and talks to its firmware through the HFI queues. This
@@ -37,8 +45,949 @@ index 27898b3..056ea29 100644
  
  obj-$(CONFIG_VIDEO_QCOM_CAMSS) += qcom-camss.o
 +
-+qcom-camss-icp-objs += camss-icp.o camss-icp-hfi.o
++qcom-camss-icp-objs += camss-icp.o camss-icp-hfi.o camss-bps.o
 +obj-$(CONFIG_VIDEO_QCOM_CAMSS_HARD_ISP) += qcom-camss-icp.o
+diff --git a/drivers/media/platform/qcom/camss/camss-bps.c b/drivers/media/platform/qcom/camss/camss-bps.c
+new file mode 100644
+index 0000000..b808815
+--- /dev/null
++++ b/drivers/media/platform/qcom/camss/camss-bps.c
+@@ -0,0 +1,935 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * V4L2 memory to memory driver for the BPS (Bayer Processing Segment) of
++ * the Titan camera subsystem, driven through the ICP firmware.
++ *
++ * OUTPUT queue: packed 10 bit Bayer frames (MIPI RAW10, as the CSI
++ * receiver writes them). CAPTURE queue: NV12. The image quality settings
++ * (IQ structure, register program, gamma tables) and the striping of the
++ * frame are computed in user space and handed to the driver as a single
++ * parameters blob, either through the "BPS Parameters" control or, as a
++ * default, from a firmware file. The driver only forwards them.
++ */
++#include <linux/delay.h>
++#include <linux/dma-mapping.h>
++#include <linux/firmware.h>
++#include <linux/module.h>
++#include <linux/slab.h>
++#include <linux/workqueue.h>
++
++#include <media/v4l2-ctrls.h>
++#include <media/v4l2-device.h>
++#include <media/v4l2-event.h>
++#include <media/v4l2-ioctl.h>
++#include <media/v4l2-mem2mem.h>
++#include <media/videobuf2-dma-contig.h>
++
++#include "camss-icp.h"
++#include "camss-icp-hfi.h"
++
++#define BPS_NAME		"qcom-camss-bps"
++
++#define BPS_MIN_W		64
++#define BPS_MIN_H		64
++#define BPS_MAX_W		8192
++#define BPS_MAX_H		6144
++#define BPS_DEF_W		1920
++#define BPS_DEF_H		1080
++/* Spare lines after each buffer: the firmware may read or write past the image */
++#define BPS_PAD_LINES		16
++
++/* Offsets of the indirect payloads in the HFI shared memory */
++#define BPS_SHM_FRAME		0x4000
++#define BPS_SHM_IQ		0x6000
++#define BPS_SHM_PROG		0x7000
++#define BPS_SHM_SL		0x8000
++#define BPS_SHM_SL_SIZE		0x4000
++#define BPS_SHM_REGS		0xc000
++#define BPS_SHM_REGS_SIZE	0x1000
++#define BPS_SHM_GLUT		0xd000
++#define BPS_GLUT_SIZE		0xc00
++#define BPS_GLUT_TABLE		0x400
++#define BPS_GLUT_DMI_ADDR	0x5208
++
++/* CDM program types, as CamX uses them on Titan 680 */
++#define BPS_PROG_GENERIC	72
++#define BPS_PROG_GLUT		7
++
++#define BPS_TIMEOUT_MS		5000
++
++/*
++ * Parameters blob, little endian. All offsets are from the start of the
++ * blob; a section of length 0 is absent.
++ */
++#define BPS_PARAMS_MAGIC	0x50535042	/* "BPSP" */
++#define BPS_PARAMS_VERSION	1
++#define BPS_PARAMS_MAX		SZ_32K
++
++struct bps_params_section {
++	__le32 offset;
++	__le32 length;
++} __packed;
++
++struct bps_params_header {
++	__le32 magic;
++	__le32 version;
++	__le32 width;		/* frame size the striping was computed for */
++	__le32 height;
++	struct bps_params_section iq;	/* BpsIQSettings, up to 1276 bytes */
++	struct bps_params_section regs;	/* (register, value) pairs of u32 */
++	struct bps_params_section glut;	/* 3 gamma tables of 256 u32 */
++	struct bps_params_section sl;	/* BpsStripingLibOutMultiFrame */
++} __packed;
++
++#define V4L2_CID_CAMSS_BPS_PARAMS	(V4L2_CID_USER_BASE + 0x10f0)
++
++static char *bps_params_file = "bps-params.bin";
++module_param(bps_params_file, charp, 0644);
++MODULE_PARM_DESC(bps_params_file,
++		 "Firmware file with the default BPS parameters (empty: none)");
++
++struct bps_fmt {
++	u32 fourcc;
++	u32 bayer_order;	/* firmware BayerPixelOrder */
++};
++
++/* Only GB has been checked on hardware */
++static const struct bps_fmt bps_out_fmts[] = {
++	{ V4L2_PIX_FMT_SRGGB10P, 0 },
++	{ V4L2_PIX_FMT_SGRBG10P, 1 },
++	{ V4L2_PIX_FMT_SBGGR10P, 2 },
++	{ V4L2_PIX_FMT_SGBRG10P, 3 },
++};
++
++struct camss_bps {
++	struct device *dev;
++	struct icp_hfi *hfi;
++	struct v4l2_device v4l2_dev;
++	struct video_device vdev;
++	struct v4l2_m2m_dev *m2m_dev;
++	struct workqueue_struct *wq;
++	struct mutex lock;	/* ioctls and vb2 queues */
++};
++
++struct bps_ctx {
++	struct v4l2_fh fh;
++	struct camss_bps *bps;
++	struct v4l2_ctrl_handler hdl;
++
++	struct v4l2_pix_format out;	/* OUTPUT queue: Bayer */
++	struct v4l2_pix_format cap;	/* CAPTURE queue: NV12 */
++	const struct bps_fmt *out_fmt;
++	u32 out_seq, cap_seq;
++
++	struct work_struct work;
++
++	/* firmware session, opened on the first frame */
++	bool configured;
++	u32 fw_handle;
++	void *cdm;
++	dma_addr_t cdm_dma;
++	size_t cdm_size;
++
++	struct mutex params_lock;
++	u8 *params;
++	size_t params_len;
++};
++
++static struct bps_ctx *file_to_ctx(struct file *file)
++{
++	return container_of(file_to_v4l2_fh(file), struct bps_ctx, fh);
++}
++
++static const struct bps_fmt *bps_find_fmt(u32 fourcc)
++{
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_SIZE(bps_out_fmts); i++)
++		if (bps_out_fmts[i].fourcc == fourcc)
++			return &bps_out_fmts[i];
++	return NULL;
++}
++
++/* --- parameters ------------------------------------------------------- */
++
++static int bps_params_check(struct camss_bps *bps, const u8 *blob, size_t len)
++{
++	const struct bps_params_header *h = (const void *)blob;
++	const struct bps_params_section *s;
++	static const size_t max[] = {
++		HFI_BPS_IQ_SETTINGS_SIZE, BPS_SHM_REGS_SIZE - 4,
++		BPS_GLUT_SIZE, BPS_SHM_SL_SIZE,
++	};
++	int i;
++
++	if (len < sizeof(*h) || le32_to_cpu(h->magic) != BPS_PARAMS_MAGIC ||
++	    le32_to_cpu(h->version) != BPS_PARAMS_VERSION)
++		return -EINVAL;
++
++	for (i = 0, s = &h->iq; i < 4; i++, s++) {
++		u32 off = le32_to_cpu(s->offset), n = le32_to_cpu(s->length);
++
++		if (!n)
++			continue;
++		if (off > len || n > len - off || n > max[i])
++			return -EINVAL;
++	}
++	if (le32_to_cpu(h->regs.length) % 8)
++		return -EINVAL;
++	if (h->glut.length && le32_to_cpu(h->glut.length) != BPS_GLUT_SIZE)
++		return -EINVAL;
++
++	return 0;
++}
++
++static int bps_params_set(struct bps_ctx *ctx, const u8 *blob, size_t len)
++{
++	int ret = bps_params_check(ctx->bps, blob, len);
++
++	if (ret)
++		return ret;
++
++	mutex_lock(&ctx->params_lock);
++	memcpy(ctx->params, blob, len);
++	ctx->params_len = len;
++	mutex_unlock(&ctx->params_lock);
++
++	return 0;
++}
++
++static void bps_params_load_default(struct bps_ctx *ctx)
++{
++	const struct firmware *fw;
++	int ret;
++
++	if (!bps_params_file || !*bps_params_file)
++		return;
++
++	ret = firmware_request_nowarn(&fw, bps_params_file, ctx->bps->dev);
++	if (ret)
++		return;
++
++	if (fw->size > BPS_PARAMS_MAX ||
++	    bps_params_set(ctx, fw->data, fw->size))
++		dev_warn(ctx->bps->dev, "%s: invalid BPS parameters\n",
++			 bps_params_file);
++	else
++		dev_dbg(ctx->bps->dev, "default parameters from %s (%zu bytes)\n",
++			bps_params_file, fw->size);
++	release_firmware(fw);
++}
++
++static int bps_s_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct bps_ctx *ctx = container_of(ctrl->handler, struct bps_ctx, hdl);
++
++	switch (ctrl->id) {
++	case V4L2_CID_CAMSS_BPS_PARAMS:
++		/* a short array (the initial value) keeps the current parameters */
++		if (ctrl->new_elems < sizeof(struct bps_params_header))
++			return 0;
++		return bps_params_set(ctx, ctrl->p_new.p_u8, ctrl->new_elems);
++	}
++
++	return -EINVAL;
++}
++
++static const struct v4l2_ctrl_ops bps_ctrl_ops = {
++	.s_ctrl = bps_s_ctrl,
++};
++
++static const struct v4l2_ctrl_config bps_ctrl_params = {
++	.ops = &bps_ctrl_ops,
++	.id = V4L2_CID_CAMSS_BPS_PARAMS,
++	.name = "BPS Parameters",
++	.type = V4L2_CTRL_TYPE_U8,
++	.flags = V4L2_CTRL_FLAG_DYNAMIC_ARRAY,
++	.min = 0,
++	.max = 0xff,
++	.step = 1,
++	.def = 0,
++	.dims = { BPS_PARAMS_MAX },
++};
++
++/* --- firmware session ------------------------------------------------- */
++
++static u64 bps_hfi_ctx(struct bps_ctx *ctx)
++{
++	return (u64)(uintptr_t)ctx;
++}
++
++static void bps_image(struct hfi_image_desc *img, u32 format, u32 bayer_order,
++		      u32 width, u32 height, u32 stride)
++{
++	img->info.format = format;
++	img->info.width = width;
++	img->info.height = height;
++	img->info.bayer_order = bayer_order;
++	img->buf_layout[0].stride = stride;
++	img->buf_layout[0].height = height;
++	if (format == HFI_IMAGE_FORMAT_LINEAR_NV12) {
++		img->buf_layout[1].stride = stride;
++		img->buf_layout[1].height = height / 2;
++	}
++}
++
++static int bps_fw_open(struct bps_ctx *ctx)
++{
++	struct camss_bps *bps = ctx->bps;
++	struct hfi_bps_config_io *cfg;
++	u32 reply[3] = {};
++	int ret;
++
++	cfg = kzalloc(sizeof(*cfg), GFP_KERNEL);
++	if (!cfg)
++		return -ENOMEM;
++
++	bps_image(&cfg->images[HFI_BPS_INPUT_IMAGE], HFI_IMAGE_FORMAT_MIPI_10,
++		  ctx->out_fmt->bayer_order, ctx->out.width, ctx->out.height,
++		  ctx->out.bytesperline);
++	bps_image(&cfg->images[HFI_BPS_OUTPUT_IMAGE_FULL],
++		  HFI_IMAGE_FORMAT_LINEAR_NV12, 0, ctx->cap.width,
++		  ctx->cap.height, ctx->cap.bytesperline);
++
++	ret = icp_hfi_create_handle(bps->hfi, HFI_DEV_TYPE_BPS, bps_hfi_ctx(ctx),
++				    &ctx->fw_handle, 1000);
++	if (ret) {
++		dev_err(bps->dev, "create handle: %d\n", ret);
++		goto out;
++	}
++
++	ret = icp_hfi_config_io(bps->hfi, HFI_DEV_TYPE_BPS, bps_hfi_ctx(ctx),
++				ctx->fw_handle, cfg, sizeof(*cfg), reply,
++				BPS_TIMEOUT_MS);
++	if (ret) {
++		dev_err(bps->dev, "config io %ux%u: %d (fw rc 0x%x)\n",
++			ctx->out.width, ctx->out.height, ret, reply[0]);
++		goto err_handle;
++	}
++
++	/* the firmware tells how much command buffer memory it needs */
++	ctx->cdm_size = PAGE_ALIGN(reply[1] ?: SZ_512K);
++	ctx->cdm = dma_alloc_coherent(bps->dev, ctx->cdm_size, &ctx->cdm_dma,
++				      GFP_KERNEL);
++	if (!ctx->cdm) {
++		ret = -ENOMEM;
++		goto err_handle;
++	}
++
++	dev_dbg(bps->dev, "session %#x: %ux%u, CDM buffer %zu bytes\n",
++		ctx->fw_handle, ctx->out.width, ctx->out.height, ctx->cdm_size);
++	ctx->configured = true;
++	goto out;
++
++err_handle:
++	icp_hfi_destroy_handle(bps->hfi, HFI_DEV_TYPE_BPS, bps_hfi_ctx(ctx),
++			       ctx->fw_handle, 1000);
++out:
++	kfree(cfg);
++	return ret;
++}
++
++static void bps_fw_close(struct bps_ctx *ctx)
++{
++	struct camss_bps *bps = ctx->bps;
++
++	if (!ctx->configured)
++		return;
++
++	icp_hfi_destroy_handle(bps->hfi, HFI_DEV_TYPE_BPS, bps_hfi_ctx(ctx),
++			       ctx->fw_handle, 1000);
++	dma_free_coherent(bps->dev, ctx->cdm_size, ctx->cdm, ctx->cdm_dma);
++	ctx->cdm = NULL;
++	ctx->configured = false;
++}
++
++/* CdmProgram entry after the 8 byte CDMProgramArray header */
++static void bps_add_prog(void *array, u32 iova, u32 len, u32 type)
++{
++	u32 *n = array + 4;
++	u8 *p = array + 8 + *n * 24;
++	u64 base_len = iova | ((u64)(len - 1) << 44);
++
++	memset(p, 0, 24);
++	memcpy(p, &base_len, 8);
++	memcpy(p + 8, &type, 4);
++	(*n)++;
++}
++
++/* Copy the parameters into the shared memory and fill the frame */
++static int bps_fill_frame(struct bps_ctx *ctx, struct hfi_bps_frame_process *frame)
++{
++	struct icp_hfi *hfi = ctx->bps->hfi;
++	const struct bps_params_header *h;
++	u32 iq_iova, prog_iova, sl_iova, off, len, i;
++	void *iq, *prog, *sl;
++	int ret = 0;
++
++	iq = icp_hfi_shmem(hfi, BPS_SHM_IQ, HFI_BPS_IQ_SETTINGS_SIZE, &iq_iova);
++	prog = icp_hfi_shmem(hfi, BPS_SHM_PROG, 8 + 4 * 24, &prog_iova);
++	sl = icp_hfi_shmem(hfi, BPS_SHM_SL, BPS_SHM_SL_SIZE, &sl_iova);
++	if (!iq || !prog || !sl)
++		return -ENOMEM;
++
++	memset(iq, 0, HFI_BPS_IQ_SETTINGS_SIZE);
++	memset(prog, 0, 8 + 4 * 24);
++	memset(sl, 0, BPS_SHM_SL_SIZE);
++
++	mutex_lock(&ctx->params_lock);
++	if (!ctx->params_len) {
++		dev_warn_once(ctx->bps->dev, "no BPS parameters, the output will be empty\n");
++		goto fill;
++	}
++	h = (const void *)ctx->params;
++
++	if ((h->width && le32_to_cpu(h->width) != ctx->out.width) ||
++	    (h->height && le32_to_cpu(h->height) != ctx->out.height))
++		dev_warn_once(ctx->bps->dev,
++			      "parameters computed for %ux%u, frame is %ux%u\n",
++			      le32_to_cpu(h->width), le32_to_cpu(h->height),
++			      ctx->out.width, ctx->out.height);
++
++	memcpy(iq, ctx->params + le32_to_cpu(h->iq.offset),
++	       le32_to_cpu(h->iq.length));
++	memcpy(sl, ctx->params + le32_to_cpu(h->sl.offset),
++	       le32_to_cpu(h->sl.length));
++
++	len = le32_to_cpu(h->regs.length);
++	if (len) {
++		u32 n = len / 8, regs_iova;
++		u32 *cmd = icp_hfi_shmem(hfi, BPS_SHM_REGS, 4 + len, &regs_iova);
++
++		if (!cmd) {
++			ret = -ENOMEM;
++			goto unlock;
++		}
++		/* CDM REG_RANDOM: header, then (register, value) pairs */
++		cmd[0] = (4 << 24) | n;
++		memcpy(cmd + 1, ctx->params + le32_to_cpu(h->regs.offset), len);
++		bps_add_prog(prog, regs_iova, 4 + len, BPS_PROG_GENERIC);
++	}
++
++	off = le32_to_cpu(h->glut.offset);
++	if (h->glut.length) {
++		u32 lut_iova, cmd_iova;
++		void *lut = icp_hfi_shmem(hfi, BPS_SHM_GLUT, BPS_GLUT_SIZE, &lut_iova);
++		u32 *cmd = icp_hfi_shmem(hfi, BPS_SHM_GLUT + BPS_GLUT_SIZE, 3 * 12,
++					 &cmd_iova);
++
++		if (!lut || !cmd) {
++			ret = -ENOMEM;
++			goto unlock;
++		}
++		memcpy(lut, ctx->params + off, BPS_GLUT_SIZE);
++		/* CDM DMI: length - 1 and opcode, data address, selector and register */
++		for (i = 0; i < 3; i++) {
++			cmd[3 * i] = (1 << 24) | (BPS_GLUT_TABLE - 1);
++			cmd[3 * i + 1] = lut_iova + i * BPS_GLUT_TABLE;
++			cmd[3 * i + 2] = ((i + 1) << 24) | BPS_GLUT_DMI_ADDR;
++		}
++		bps_add_prog(prog, cmd_iova, 3 * 12, BPS_PROG_GLUT);
++	}
++
++fill:
++	memset(frame, 0, sizeof(*frame));
++	frame->max_num_cores = 1;
++	frame->cdm_buffer_addr = lower_32_bits(ctx->cdm_dma);
++	frame->cdm_buffer_size = ctx->cdm_size;
++	frame->iq_settings_addr = iq_iova;
++	frame->cdm_program_array_addr = prog_iova;
++	frame->striping_lib_out_addr = sl_iova;
++	frame->num_frame_sets = 1;
++	frame->bayer_order = ctx->out_fmt->bayer_order;
++unlock:
++	mutex_unlock(&ctx->params_lock);
++	return ret;
++}
++
++/* --- mem2mem ---------------------------------------------------------- */
++
++static void bps_work(struct work_struct *work)
++{
++	struct bps_ctx *ctx = container_of(work, struct bps_ctx, work);
++	struct camss_bps *bps = ctx->bps;
++	struct vb2_v4l2_buffer *src, *dst;
++	struct hfi_bps_frame_process *frame;
++	enum vb2_buffer_state state = VB2_BUF_STATE_ERROR;
++	dma_addr_t in, out;
++	u32 frame_iova, reply[3] = {};
++	int ret;
++
++	src = v4l2_m2m_next_src_buf(ctx->fh.m2m_ctx);
++	dst = v4l2_m2m_next_dst_buf(ctx->fh.m2m_ctx);
++	if (!src || !dst)
++		goto finish;
++
++	if (!ctx->configured && bps_fw_open(ctx))
++		goto done;
++
++	frame = icp_hfi_shmem(bps->hfi, BPS_SHM_FRAME, sizeof(*frame), &frame_iova);
++	if (!frame || bps_fill_frame(ctx, frame))
++		goto done;
++
++	in = vb2_dma_contig_plane_dma_addr(&src->vb2_buf, 0);
++	out = vb2_dma_contig_plane_dma_addr(&dst->vb2_buf, 0);
++	frame->request_id = ctx->cap_seq;
++	frame->frame_sets[0][HFI_BPS_INPUT_IMAGE].buf_ptr[0] = lower_32_bits(in);
++	frame->frame_sets[0][HFI_BPS_OUTPUT_IMAGE_FULL].buf_ptr[0] = lower_32_bits(out);
++	frame->frame_sets[0][HFI_BPS_OUTPUT_IMAGE_FULL].buf_ptr[1] =
++		lower_32_bits(out) + ctx->cap.bytesperline * ctx->cap.height;
++
++	ret = icp_hfi_async_indirect(bps->hfi, HFI_IPEBPS_CMD_OPCODE_BPS_FRAME_PROCESS,
++				     bps_hfi_ctx(ctx), ctx->fw_handle, frame_iova,
++				     reply, BPS_TIMEOUT_MS);
++	if (ret) {
++		dev_err(bps->dev, "frame %u: %d (fw rc 0x%x)\n", ctx->cap_seq,
++			ret, reply[0]);
++		icp_hfi_flush_debug_queue(bps->hfi);
++		goto done;
++	}
++	state = VB2_BUF_STATE_DONE;
++
++done:
++	src = v4l2_m2m_src_buf_remove(ctx->fh.m2m_ctx);
++	dst = v4l2_m2m_dst_buf_remove(ctx->fh.m2m_ctx);
++	src->sequence = ctx->out_seq++;
++	dst->sequence = ctx->cap_seq++;
++	vb2_set_plane_payload(&dst->vb2_buf, 0, ctx->cap.sizeimage);
++	v4l2_m2m_buf_copy_metadata(src, dst);
++	v4l2_m2m_buf_done(src, state);
++	v4l2_m2m_buf_done(dst, state);
++finish:
++	v4l2_m2m_job_finish(bps->m2m_dev, ctx->fh.m2m_ctx);
++}
++
++static void bps_device_run(void *priv)
++{
++	struct bps_ctx *ctx = priv;
++
++	/* the firmware calls sleep: run them from a work item */
++	queue_work(ctx->bps->wq, &ctx->work);
++}
++
++static const struct v4l2_m2m_ops bps_m2m_ops = {
++	.device_run = bps_device_run,
++};
++
++/* --- vb2 -------------------------------------------------------------- */
++
++static struct v4l2_pix_format *bps_pix(struct bps_ctx *ctx, u32 type)
++{
++	return V4L2_TYPE_IS_OUTPUT(type) ? &ctx->out : &ctx->cap;
++}
++
++static int bps_queue_setup(struct vb2_queue *vq, unsigned int *nbuffers,
++			   unsigned int *nplanes, unsigned int sizes[],
++			   struct device *alloc_devs[])
++{
++	struct bps_ctx *ctx = vb2_get_drv_priv(vq);
++	struct v4l2_pix_format *pix = bps_pix(ctx, vq->type);
++
++	if (*nplanes)
++		return sizes[0] < pix->sizeimage ? -EINVAL : 0;
++
++	*nplanes = 1;
++	sizes[0] = pix->sizeimage;
++	return 0;
++}
++
++static int bps_buf_prepare(struct vb2_buffer *vb)
++{
++	struct bps_ctx *ctx = vb2_get_drv_priv(vb->vb2_queue);
++	struct v4l2_pix_format *pix = bps_pix(ctx, vb->vb2_queue->type);
++
++	if (vb2_plane_size(vb, 0) < pix->sizeimage)
++		return -EINVAL;
++	if (V4L2_TYPE_IS_CAPTURE(vb->vb2_queue->type))
++		vb2_set_plane_payload(vb, 0, pix->sizeimage);
++	return 0;
++}
++
++static void bps_buf_queue(struct vb2_buffer *vb)
++{
++	struct bps_ctx *ctx = vb2_get_drv_priv(vb->vb2_queue);
++
++	v4l2_m2m_buf_queue(ctx->fh.m2m_ctx, to_vb2_v4l2_buffer(vb));
++}
++
++static int bps_start_streaming(struct vb2_queue *q, unsigned int count)
++{
++	struct bps_ctx *ctx = vb2_get_drv_priv(q);
++
++	if (V4L2_TYPE_IS_OUTPUT(q->type))
++		ctx->out_seq = 0;
++	else
++		ctx->cap_seq = 0;
++	return 0;
++}
++
++static void bps_stop_streaming(struct vb2_queue *q)
++{
++	struct bps_ctx *ctx = vb2_get_drv_priv(q);
++	struct vb2_v4l2_buffer *vbuf;
++
++	/* the m2m core waits for the running job before calling us */
++	for (;;) {
++		vbuf = V4L2_TYPE_IS_OUTPUT(q->type) ?
++			v4l2_m2m_src_buf_remove(ctx->fh.m2m_ctx) :
++			v4l2_m2m_dst_buf_remove(ctx->fh.m2m_ctx);
++		if (!vbuf)
++			break;
++		v4l2_m2m_buf_done(vbuf, VB2_BUF_STATE_ERROR);
++	}
++
++	/* a new format may follow: close the firmware session */
++	bps_fw_close(ctx);
++}
++
++static const struct vb2_ops bps_qops = {
++	.queue_setup = bps_queue_setup,
++	.buf_prepare = bps_buf_prepare,
++	.buf_queue = bps_buf_queue,
++	.start_streaming = bps_start_streaming,
++	.stop_streaming = bps_stop_streaming,
++};
++
++static int bps_queue_init(void *priv, struct vb2_queue *src_vq,
++			  struct vb2_queue *dst_vq)
++{
++	struct bps_ctx *ctx = priv;
++	int ret;
++
++	src_vq->type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
++	src_vq->io_modes = VB2_MMAP | VB2_DMABUF;
++	src_vq->drv_priv = ctx;
++	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
++	src_vq->ops = &bps_qops;
++	src_vq->mem_ops = &vb2_dma_contig_memops;
++	src_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
++	src_vq->lock = &ctx->bps->lock;
++	src_vq->dev = ctx->bps->dev;
++
++	ret = vb2_queue_init(src_vq);
++	if (ret)
++		return ret;
++
++	dst_vq->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
++	dst_vq->io_modes = VB2_MMAP | VB2_DMABUF;
++	dst_vq->drv_priv = ctx;
++	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
++	dst_vq->ops = &bps_qops;
++	dst_vq->mem_ops = &vb2_dma_contig_memops;
++	dst_vq->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_COPY;
++	dst_vq->lock = &ctx->bps->lock;
++	dst_vq->dev = ctx->bps->dev;
++
++	return vb2_queue_init(dst_vq);
++}
++
++/* --- formats ---------------------------------------------------------- */
++
++static void bps_set_sizes(struct v4l2_pix_format *out, struct v4l2_pix_format *cap)
++{
++	u32 min_bpl;
++
++	out->width = clamp(ALIGN(out->width, 16), BPS_MIN_W, BPS_MAX_W);
++	out->height = clamp(ALIGN(out->height, 2), BPS_MIN_H, BPS_MAX_H);
++	out->field = V4L2_FIELD_NONE;
++	out->colorspace = V4L2_COLORSPACE_RAW;
++	min_bpl = out->width * 5 / 4;
++	/* keep the stride of the CSI receiver, if it pads the lines */
++	if (out->bytesperline < min_bpl || out->bytesperline > 2 * min_bpl)
++		out->bytesperline = min_bpl;
++	out->bytesperline = ALIGN(out->bytesperline, 16);
++	out->sizeimage = out->bytesperline * (out->height + BPS_PAD_LINES);
++
++	cap->pixelformat = V4L2_PIX_FMT_NV12;
++	cap->width = out->width;
++	cap->height = out->height;
++	cap->field = V4L2_FIELD_NONE;
++	cap->colorspace = V4L2_COLORSPACE_SRGB;
++	cap->ycbcr_enc = V4L2_YCBCR_ENC_601;
++	cap->quantization = V4L2_QUANTIZATION_FULL_RANGE;
++	cap->xfer_func = V4L2_XFER_FUNC_SRGB;
++	cap->bytesperline = cap->width;
++	cap->sizeimage = cap->bytesperline * (cap->height * 3 / 2 + BPS_PAD_LINES);
++}
++
++static int bps_querycap(struct file *file, void *priv, struct v4l2_capability *cap)
++{
++	strscpy(cap->driver, BPS_NAME, sizeof(cap->driver));
++	strscpy(cap->card, "Qualcomm Titan BPS", sizeof(cap->card));
++	return 0;
++}
++
++static int bps_enum_fmt_out(struct file *file, void *priv, struct v4l2_fmtdesc *f)
++{
++	if (f->index >= ARRAY_SIZE(bps_out_fmts))
++		return -EINVAL;
++	f->pixelformat = bps_out_fmts[f->index].fourcc;
++	return 0;
++}
++
++static int bps_enum_fmt_cap(struct file *file, void *priv, struct v4l2_fmtdesc *f)
++{
++	if (f->index)
++		return -EINVAL;
++	f->pixelformat = V4L2_PIX_FMT_NV12;
++	return 0;
++}
++
++static int bps_enum_framesizes(struct file *file, void *priv,
++			       struct v4l2_frmsizeenum *fs)
++{
++	if (fs->index || (fs->pixel_format != V4L2_PIX_FMT_NV12 &&
++			  !bps_find_fmt(fs->pixel_format)))
++		return -EINVAL;
++
++	fs->type = V4L2_FRMSIZE_TYPE_STEPWISE;
++	fs->stepwise.min_width = BPS_MIN_W;
++	fs->stepwise.max_width = BPS_MAX_W;
++	fs->stepwise.step_width = 16;
++	fs->stepwise.min_height = BPS_MIN_H;
++	fs->stepwise.max_height = BPS_MAX_H;
++	fs->stepwise.step_height = 2;
++	return 0;
++}
++
++static int bps_g_fmt(struct file *file, void *priv, struct v4l2_format *f)
++{
++	struct bps_ctx *ctx = file_to_ctx(file);
++
++	f->fmt.pix = *bps_pix(ctx, f->type);
++	return 0;
++}
++
++static int bps_try_fmt_out(struct file *file, void *priv, struct v4l2_format *f)
++{
++	struct v4l2_pix_format cap = {};
++
++	if (!bps_find_fmt(f->fmt.pix.pixelformat))
++		f->fmt.pix.pixelformat = bps_out_fmts[3].fourcc;
++	bps_set_sizes(&f->fmt.pix, &cap);
++	return 0;
++}
++
++/* The output has the size of the input: the CAPTURE format follows */
++static int bps_try_fmt_cap(struct file *file, void *priv, struct v4l2_format *f)
++{
++	struct bps_ctx *ctx = file_to_ctx(file);
++
++	f->fmt.pix = ctx->cap;
++	return 0;
++}
++
++static int bps_s_fmt_out(struct file *file, void *priv, struct v4l2_format *f)
++{
++	struct bps_ctx *ctx = file_to_ctx(file);
++	struct vb2_queue *vq;
++
++	vq = v4l2_m2m_get_vq(ctx->fh.m2m_ctx, f->type);
++	if (vb2_is_busy(vq) ||
++	    vb2_is_busy(v4l2_m2m_get_dst_vq(ctx->fh.m2m_ctx)))
++		return -EBUSY;
++
++	bps_try_fmt_out(file, priv, f);
++	ctx->out = f->fmt.pix;
++	ctx->out_fmt = bps_find_fmt(ctx->out.pixelformat);
++	bps_set_sizes(&ctx->out, &ctx->cap);
++	return 0;
++}
++
++static int bps_s_fmt_cap(struct file *file, void *priv, struct v4l2_format *f)
++{
++	return bps_try_fmt_cap(file, priv, f);
++}
++
++static const struct v4l2_ioctl_ops bps_ioctl_ops = {
++	.vidioc_querycap = bps_querycap,
++
++	.vidioc_enum_fmt_vid_out = bps_enum_fmt_out,
++	.vidioc_g_fmt_vid_out = bps_g_fmt,
++	.vidioc_try_fmt_vid_out = bps_try_fmt_out,
++	.vidioc_s_fmt_vid_out = bps_s_fmt_out,
++
++	.vidioc_enum_fmt_vid_cap = bps_enum_fmt_cap,
++	.vidioc_g_fmt_vid_cap = bps_g_fmt,
++	.vidioc_try_fmt_vid_cap = bps_try_fmt_cap,
++	.vidioc_s_fmt_vid_cap = bps_s_fmt_cap,
++
++	.vidioc_enum_framesizes = bps_enum_framesizes,
++
++	.vidioc_reqbufs = v4l2_m2m_ioctl_reqbufs,
++	.vidioc_querybuf = v4l2_m2m_ioctl_querybuf,
++	.vidioc_qbuf = v4l2_m2m_ioctl_qbuf,
++	.vidioc_dqbuf = v4l2_m2m_ioctl_dqbuf,
++	.vidioc_prepare_buf = v4l2_m2m_ioctl_prepare_buf,
++	.vidioc_create_bufs = v4l2_m2m_ioctl_create_bufs,
++	.vidioc_expbuf = v4l2_m2m_ioctl_expbuf,
++	.vidioc_streamon = v4l2_m2m_ioctl_streamon,
++	.vidioc_streamoff = v4l2_m2m_ioctl_streamoff,
++
++	.vidioc_subscribe_event = v4l2_ctrl_subscribe_event,
++	.vidioc_unsubscribe_event = v4l2_event_unsubscribe,
++};
++
++/* --- file operations -------------------------------------------------- */
++
++static int bps_open(struct file *file)
++{
++	struct camss_bps *bps = video_drvdata(file);
++	struct bps_ctx *ctx;
++	int ret;
++
++	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
++	if (!ctx)
++		return -ENOMEM;
++
++	ctx->params = kvzalloc(BPS_PARAMS_MAX, GFP_KERNEL);
++	if (!ctx->params) {
++		ret = -ENOMEM;
++		goto err_free;
++	}
++
++	ctx->bps = bps;
++	mutex_init(&ctx->params_lock);
++	INIT_WORK(&ctx->work, bps_work);
++
++	ctx->out.pixelformat = V4L2_PIX_FMT_SGBRG10P;
++	ctx->out.width = BPS_DEF_W;
++	ctx->out.height = BPS_DEF_H;
++	ctx->out_fmt = bps_find_fmt(ctx->out.pixelformat);
++	bps_set_sizes(&ctx->out, &ctx->cap);
++
++	v4l2_fh_init(&ctx->fh, video_devdata(file));
++
++	v4l2_ctrl_handler_init(&ctx->hdl, 1);
++	v4l2_ctrl_new_custom(&ctx->hdl, &bps_ctrl_params, NULL);
++	if (ctx->hdl.error) {
++		ret = ctx->hdl.error;
++		goto err_ctrl;
++	}
++	ctx->fh.ctrl_handler = &ctx->hdl;
++
++	bps_params_load_default(ctx);
++
++	mutex_lock(&bps->lock);
++	ctx->fh.m2m_ctx = v4l2_m2m_ctx_init(bps->m2m_dev, ctx, bps_queue_init);
++	mutex_unlock(&bps->lock);
++	if (IS_ERR(ctx->fh.m2m_ctx)) {
++		ret = PTR_ERR(ctx->fh.m2m_ctx);
++		goto err_ctrl;
++	}
++
++	v4l2_fh_add(&ctx->fh, file);
++	return 0;
++
++err_ctrl:
++	v4l2_ctrl_handler_free(&ctx->hdl);
++	v4l2_fh_exit(&ctx->fh);
++	kvfree(ctx->params);
++err_free:
++	kfree(ctx);
++	return ret;
++}
++
++static int bps_release(struct file *file)
++{
++	struct bps_ctx *ctx = file_to_ctx(file);
++	struct camss_bps *bps = ctx->bps;
++
++	v4l2_fh_del(&ctx->fh, file);
++	v4l2_fh_exit(&ctx->fh);
++	mutex_lock(&bps->lock);
++	v4l2_m2m_ctx_release(ctx->fh.m2m_ctx);
++	mutex_unlock(&bps->lock);
++	flush_work(&ctx->work);
++	bps_fw_close(ctx);
++	v4l2_ctrl_handler_free(&ctx->hdl);
++	kvfree(ctx->params);
++	kfree(ctx);
++	return 0;
++}
++
++static const struct v4l2_file_operations bps_fops = {
++	.owner = THIS_MODULE,
++	.open = bps_open,
++	.release = bps_release,
++	.poll = v4l2_m2m_fop_poll,
++	.unlocked_ioctl = video_ioctl2,
++	.mmap = v4l2_m2m_fop_mmap,
++};
++
++static void bps_vdev_release(struct video_device *vdev)
++{
++	struct camss_bps *bps = container_of(vdev, struct camss_bps, vdev);
++
++	v4l2_m2m_release(bps->m2m_dev);
++	v4l2_device_unregister(&bps->v4l2_dev);
++	destroy_workqueue(bps->wq);
++	kfree(bps);
++}
++
++struct camss_bps *camss_bps_register(struct device *dev, struct icp_hfi *hfi)
++{
++	struct camss_bps *bps;
++	int ret;
++
++	bps = kzalloc(sizeof(*bps), GFP_KERNEL);
++	if (!bps)
++		return ERR_PTR(-ENOMEM);
++
++	bps->dev = dev;
++	bps->hfi = hfi;
++	mutex_init(&bps->lock);
++
++	bps->wq = alloc_ordered_workqueue(BPS_NAME, 0);
++	if (!bps->wq) {
++		ret = -ENOMEM;
++		goto err_free;
++	}
++
++	ret = v4l2_device_register(dev, &bps->v4l2_dev);
++	if (ret)
++		goto err_wq;
++
++	bps->m2m_dev = v4l2_m2m_init(&bps_m2m_ops);
++	if (IS_ERR(bps->m2m_dev)) {
++		ret = PTR_ERR(bps->m2m_dev);
++		goto err_v4l2;
++	}
++
++	strscpy(bps->vdev.name, BPS_NAME, sizeof(bps->vdev.name));
++	bps->vdev.vfl_dir = VFL_DIR_M2M;
++	bps->vdev.fops = &bps_fops;
++	bps->vdev.ioctl_ops = &bps_ioctl_ops;
++	bps->vdev.minor = -1;
++	bps->vdev.release = bps_vdev_release;
++	bps->vdev.lock = &bps->lock;
++	bps->vdev.v4l2_dev = &bps->v4l2_dev;
++	bps->vdev.device_caps = V4L2_CAP_VIDEO_M2M | V4L2_CAP_STREAMING;
++	video_set_drvdata(&bps->vdev, bps);
++
++	ret = video_register_device(&bps->vdev, VFL_TYPE_VIDEO, -1);
++	if (ret)
++		goto err_m2m;
++
++	dev_info(dev, "BPS registered as /dev/video%d\n", bps->vdev.num);
++	return bps;
++
++err_m2m:
++	v4l2_m2m_release(bps->m2m_dev);
++err_v4l2:
++	v4l2_device_unregister(&bps->v4l2_dev);
++err_wq:
++	destroy_workqueue(bps->wq);
++err_free:
++	kfree(bps);
++	return ERR_PTR(ret);
++}
++
++void camss_bps_unregister(struct camss_bps *bps)
++{
++	if (!IS_ERR_OR_NULL(bps))
++		video_unregister_device(&bps->vdev);
++}
 diff --git a/drivers/media/platform/qcom/camss/camss-icp-hfi.c b/drivers/media/platform/qcom/camss/camss-icp-hfi.c
 new file mode 100644
 index 0000000..26efa78
@@ -1410,10 +2359,10 @@ index 0000000..1aab001
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..95b8241
+index 0000000..f61fad7
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,1374 @@
+@@ -0,0 +1,1390 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -1483,6 +2432,10 @@ index 0000000..95b8241
 +static bool icp_selftest;
 +module_param(icp_selftest, bool, 0444);
 +MODULE_PARM_DESC(icp_selftest, "Create, configure and destroy a BPS and an IPE firmware session at probe");
++
++static bool icp_m2m = true;
++module_param(icp_m2m, bool, 0444);
++MODULE_PARM_DESC(icp_m2m, "Register the BPS V4L2 memory to memory device");
 +
 +static uint icp_selftest_engines = 3;
 +module_param(icp_selftest_engines, uint, 0444);
@@ -1627,6 +2580,8 @@ index 0000000..95b8241
 +	size_t fw_size;
 +
 +	const struct camss_icp_resources *icp_res;
++
++	struct camss_bps *bps;
 +};
 +
 +struct icp_hfi *icp_hfi_get(struct device *dev)
@@ -2640,6 +3595,14 @@ index 0000000..95b8241
 +	if (icp_selftest)
 +		icp_run_selftest(icp);
 +
++	if (icp_m2m) {
++		icp->bps = camss_bps_register(icp->dev, &icp->hfi);
++		if (IS_ERR(icp->bps)) {
++			dev_err(icp->dev, "BPS video device: %ld\n", PTR_ERR(icp->bps));
++			icp->bps = NULL;
++		}
++	}
++
 +	return 0;
 +
 +err_rpm:
@@ -2656,6 +3619,8 @@ index 0000000..95b8241
 +	struct camss_icp *icp = platform_get_drvdata(pdev);
 +	const struct camss_icp_resources *icp_res;
 +	int i;
++
++	camss_bps_unregister(icp->bps);
 +
 +	debugfs_remove_recursive(icp_debugfs);
 +	icp_debugfs = NULL;
@@ -2790,10 +3755,10 @@ index 0000000..95b8241
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.h b/drivers/media/platform/qcom/camss/camss-icp.h
 new file mode 100644
-index 0000000..68039df
+index 0000000..e33c6c6
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.h
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,63 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
 + * ICP provides HFI interface used by IPE and BPS V4L2 m2m drivers.
@@ -2850,6 +3815,11 @@ index 0000000..68039df
 +
 +struct icp_hfi *icp_hfi_get(struct device *dev);
 +void icp_hfi_put(struct icp_hfi *hfi);
++
++/* BPS V4L2 memory to memory device, on top of the HFI session API */
++struct camss_bps;
++struct camss_bps *camss_bps_register(struct device *dev, struct icp_hfi *hfi);
++void camss_bps_unregister(struct camss_bps *bps);
 +
 +#endif /* __CAMSS_ICP_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss.c b/drivers/media/platform/qcom/camss/camss.c
