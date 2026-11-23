@@ -1410,10 +1410,10 @@ index 0000000..1aab001
 +#endif /* __CAMSS_ICP_HFI_H__ */
 diff --git a/drivers/media/platform/qcom/camss/camss-icp.c b/drivers/media/platform/qcom/camss/camss-icp.c
 new file mode 100644
-index 0000000..a7d654c
+index 0000000..7187a9d
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp.c
-@@ -0,0 +1,1206 @@
+@@ -0,0 +1,1229 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm ICP (Image Control Processor) driver for X1E80100
@@ -1528,6 +1528,10 @@ index 0000000..a7d654c
 +static uint icp_selftest_sl_crops = 0xffff;
 +module_param(icp_selftest_sl_crops, uint, 0444);
 +MODULE_PARM_DESC(icp_selftest_sl_crops, "Mask of the 16 BPS crop instances enabled over the whole image");
++
++static char *icp_selftest_sl_file;
++module_param(icp_selftest_sl_file, charp, 0444);
++MODULE_PARM_DESC(icp_selftest_sl_file, "Firmware file holding the BPS striping output (from tools/camera/bps-striping.py)");
 +
 +static uint icp_selftest_sl_stripes_off = 4736;
 +module_param(icp_selftest_sl_stripes_off, uint, 0444);
@@ -2044,7 +2048,7 @@ index 0000000..a7d654c
 +#define ICP_SELFTEST_SHM_IQ	0x6000
 +#define ICP_SELFTEST_SHM_CDM	0x7000
 +#define ICP_SELFTEST_SHM_SL	0x8000
-+#define ICP_SELFTEST_SL_SIZE	0x2000
++#define ICP_SELFTEST_SL_SIZE	0x4000
 +
 +/*
 + * BpsStripingLibOutMultiFrame of the CICP.FW.5.0 firmware, filled field by
@@ -2233,6 +2237,25 @@ index 0000000..a7d654c
 +			   icp_selftest_iq_patch_num);
 +	memset(prog, 0, sizeof(*prog));
 +	icp_selftest_striping(sl, ICP_SELFTEST_W, ICP_SELFTEST_H);
++	if (icp_selftest_sl_file && *icp_selftest_sl_file) {
++		const struct firmware *fw;
++
++		ret = request_firmware(&fw, icp_selftest_sl_file, icp->dev);
++		if (ret || fw->size > ICP_SELFTEST_SL_SIZE) {
++			dev_err(icp->dev, "selftest: striping file %s: %d\n",
++				icp_selftest_sl_file, ret ?: -EFBIG);
++			if (!ret)
++				release_firmware(fw);
++			goto out;
++		}
++		memset(sl, 0, ICP_SELFTEST_SL_SIZE);
++		memcpy(sl, fw->data, fw->size);
++		dev_info(icp->dev, "selftest: striping from %s (%zu bytes, %u stripes)\n",
++			 icp_selftest_sl_file, fw->size, *(u16 *)sl);
++		release_firmware(fw);
++		icp_selftest_apply((u32 *)sl, ICP_SELFTEST_SL_SIZE, icp_selftest_sl_patch,
++				   icp_selftest_sl_patch_num);
++	}
 +
 +	memset(frame, 0, sizeof(*frame));
 +	frame->max_num_cores = 1;
