@@ -7,9 +7,8 @@ utilisable par libcamera et plasma-camera. Rien de ceci n'est encore écrit.
 ## Noyau : périphérique V4L2 mémoire à mémoire
 
 - Un nœud `/dev/videoN` pour le BPS, sur le modèle des ISP hors ligne du noyau principal.
-- File d'entrée (OUTPUT) : Bayer brut, idéalement le RAW10 compacté (SGBRG10_CSI2P) tel que
-  l'IFE l'écrit, pour éviter toute conversion (format firmware `IMAGE_FORMAT_MIPI_10`, à
-  vérifier).
+- File d'entrée (OUTPUT) : Bayer brut en RAW10 compacté (SGBRG10_CSI2P), tel que l'IFE
+  l'écrit, sans conversion (format firmware `IMAGE_FORMAT_MIPI_10`, vérifié).
 - File de sortie (CAPTURE) : NV12.
 - File de paramètres (tampon méta par image) : `BpsIQSettings`, programme de registres
   (`REG_RANDOM`), tables gamma (DMI), bloc de découpage. Le pilote les copie dans la mémoire
@@ -35,7 +34,11 @@ précalculé par `tools/camera/bps-striping.py` (émulateur Unicorn) pour les co
 
 ## Étapes
 
-1. Vérifier l'entrée RAW10 compactée (`icp_selftest_bps_in=2`).
+1. ~~Vérifier l'entrée RAW10 compactée~~ : fait le 23 nov. 2026. Avec `icp_selftest_bps_in=2`,
+   le centre de la photo brute en RAW10 compacté (`raw10-to-bps.py … --compacte`, pas de ligne
+   2 400 octets) et le découpage calculé pour ce format (`bps-striping.py … --in-format 2`),
+   le BPS rend la même image qu'avec l'entrée 16 bits. Le pilote pourra donc prendre les tampons
+   de l'IFE tels quels.
 2. Pilote V4L2 mémoire à mémoire minimal (une image, paramètres fixes), testé avec
    `v4l2-ctl`.
 3. Gestionnaire libcamera et IPA.
