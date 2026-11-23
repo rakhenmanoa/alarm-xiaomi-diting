@@ -268,6 +268,17 @@ Avec la balance des blancs calculée en « monde gris » sur l'image (B × 1,38,
 la photo du HP1 sort avec des couleurs neutres (U et V moyens à 128), encore sombre : il
 manque le gamma (module GLUT, table chargée par un programme DMI) et la matrice de couleurs.
 
+**Gamma (GLUT, `BPSGamma151Titan680`).** Interrupteur à l'octet 660 de `BpsIQSettings`. Trois
+tables de 256 entrées de 32 bits (1 Ko), chargées par trois commandes CDM DMI (mot 0 : `1 << 24
+| (0x400 − 1)`, mot 1 : adresse de la table, mot 2 : `sélecteur (1, 2, 3) << 24 | 0x5208`),
+dans un programme de type 7 (`BPS_GLUT_LUT_PROGRAM`). Entrée : valeur 12 bits (bits 0-11) et
+écart signé avec l'entrée suivante (bits 12-23). `tools/camera/bps-gamma.py sortie.bin 2.2 1.0
+64` écrit les tables (gamma 2,2, noir à 64 sur 10 bits retiré dans la table) ; chargement par
+`icp_selftest_glut_file=`. Avec le gamma, la luminance moyenne de la photo passe de ~40 à 109 ;
+avec le noir mesuré (67), les noirs redeviennent noirs. Le module de soustraction du noir
+(`BPSBLS121Titan680`, 6 registres à `0x3e68`, interrupteur à l'octet 1060) n'est pas encore
+utilisé : son échelle interne n'est pas vérifiée.
+
 **Le découpage dépend des modules activés** : activer la balance des blancs change les marges
 des bandes ; avec un découpage calculé sans elle, violation de taille. Recalculer le découpage
 avec les mêmes `--iq` que l'image (`bps-striping.py … --iq 492,1,664,1,780,255,788,255,988,1`).
