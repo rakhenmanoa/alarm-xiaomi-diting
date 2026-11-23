@@ -220,6 +220,12 @@ découpage calculé par la bibliothèque de CamX (`sl-960x480.bin`, 3 bandes de 
 pixels lus), le dématriçage et la conversion YUV actifs, le firmware répond `0x0`,
 `WrStatus 0x101`, et les deux plans NV12 sont écrits en entier.
 
+**23 nov. 2026 : pleine résolution.** En 1920 × 1080, 5 bandes (`sl-1920x1080.bin`),
+dématriçage actif : `0x0`, `WrStatus 0x101`, luminance 1 080 lignes et chrominance 540 lignes
+écrites en entier (3 110 400 octets). Commande :
+`icp_selftest_w=1920 icp_selftest_h=1080 icp_selftest_sl_file=sl-1920x1080.bin
+icp_selftest_iq_patch=492,1,664,1,780,255,788,255`.
+
 **Bibliothèque de découpage de CamX.** `tools/camera/bps-striping.py LIB.so LARGEUR HAUTEUR`
 exécute `libipebpsstriping.so` (sauvegarde HyperOS, `vendor/lib64`, pas dans le dépôt) dans un
 émulateur Unicorn : elle n'importe que la libc. Appels : `BPSStripingLibraryContextCreate(configIo,
