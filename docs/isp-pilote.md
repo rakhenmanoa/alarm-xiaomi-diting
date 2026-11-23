@@ -2,8 +2,8 @@
 
 État au 23 nov. 2026 : le BPS traite une photo du HP1 en 1920 × 1080 par l'autotest du module
 `qcom-camss-icp` (voir `isp-materiel.md`). Ce document décrit comment en faire un pilote
-utilisable par libcamera et plasma-camera. La partie noyau (étape 2) est écrite et compile,
-pas encore essayée sur le téléphone.
+utilisable par libcamera et plasma-camera. La partie noyau (étape 2) fonctionne : première
+image convertie par `/dev/video18` le 23 nov. 2026.
 
 ## Noyau : périphérique V4L2 mémoire à mémoire
 
@@ -40,8 +40,11 @@ précalculé par `tools/camera/bps-striping.py` (émulateur Unicorn) pour les co
    2 400 octets) et le découpage calculé pour ce format (`bps-striping.py … --in-format 2`),
    le BPS rend la même image qu'avec l'entrée 16 bits. Le pilote pourra donc prendre les tampons
    de l'IFE tels quels.
-2. Pilote V4L2 mémoire à mémoire minimal, testé avec `v4l2-ctl` : écrit le 23 nov. 2026
-   (`camss-bps.c`, dans le module `qcom-camss-icp`), à essayer.
+2. ~~Pilote V4L2 mémoire à mémoire minimal, testé avec `v4l2-ctl`~~ : fait le 23 nov. 2026
+   (`camss-bps.c`, dans le module `qcom-camss-icp`). La photo du HP1 (centre 1920 × 1080,
+   RAW10 compacté) sort en NV12 identique à celle de l'autotest : couleurs, gamma, aucune
+   cassure entre bandes, bas de l'image intact avec le plan UV collé au plan Y. Traitement
+   d'environ 4 ms, session firmware ouverte et fermée par le flux.
 
 3. Gestionnaire libcamera et IPA.
 
@@ -85,6 +88,12 @@ v4l2-ctl -d /dev/videoN --set-fmt-video-out=width=1920,height=1080,pixelformat=p
     --stream-out-mmap --stream-mmap --stream-from=hp1-pad.raw --stream-to=sortie.nv12 \
     --stream-count=1
 ```
+
+Sur le téléphone, le module se compile hors de l'arbre avec
+`make KDIR=~/linux-7.2.10 KBUILD_MODPOST_WARN=1` (pas de `Module.symvers` dans l'arbre) et
+demande `modprobe -a v4l2-mem2mem videobuf2-dma-contig` avant `insmod`. Pour regarder la
+sortie : `ffmpeg -f rawvideo -pix_fmt nv12 -s 1920x1080 -i sortie.nv12 -frames:v 1 sortie.png`
+(le message sur un paquet trop court vient des 16 lignes de réserve, sans conséquence).
 
 `hp1-pad.raw` : le centre compacté (`raw10-to-bps.py … --compacte`) suivi de 16 lignes nulles
 (16 × 2 400 octets), pour faire `sizeimage`.
