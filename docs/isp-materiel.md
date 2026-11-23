@@ -236,6 +236,15 @@ Avec la conversion YUV activée, tout vaut 0 : ses coefficients ne sont pas dans
 (liste vide chez nous). Une entrée réelle se charge avec `icp_selftest_in_file=` (Bayer
 10 bits dans des mots de 16 bits, depuis `/lib/firmware`).
 
+**23 nov. 2026 : première vraie photo traitée par le BPS.** Image brute du HP1 capturée avec
+`cam -c 1 -s role=viewfinder -s role=raw,width=1920,height=1080 --capture=30
+--file=hp1-#.raw` (avec un flux brut seul, l'image est entièrement à zéro : l'exposition
+automatique ne tourne pas ; avec l'aperçu, le capteur passe en 4096 × 3072, SGBRG10_CSI2P),
+centre 1920 × 1080 extrait par `tools/camera/raw10-to-bps.py image.raw 1920 1080 hp1.bin 4096
+3072`, chargé avec `icp_selftest_in_file=hp1.bin`, ordre Bayer GB (`icp_selftest_patch=12,3
+icp_selftest_frame_patch=3684,3`). La luminance montre la scène, sans cassure entre les bandes ;
+elle est sombre et plate (ni gamma, ni balance des blancs, ni conversion YUV programmés).
+
 **Bibliothèque de découpage de CamX.** `tools/camera/bps-striping.py LIB.so LARGEUR HAUTEUR`
 exécute `libipebpsstriping.so` (sauvegarde HyperOS, `vendor/lib64`, pas dans le dépôt) dans un
 émulateur Unicorn : elle n'importe que la libc. Appels : `BPSStripingLibraryContextCreate(configIo,
