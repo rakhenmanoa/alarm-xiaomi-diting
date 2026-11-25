@@ -120,6 +120,14 @@ BPS et une session IPE dans le firmware : les quatre opérations réussissent. L
 `hfi_cmd_async` de la RFC avait un champ `fw_handle` en trop après l'opcode (absent du
 `hfi_cmd_ipebps_async` Android), d'où l'échec de destruction signalé dans la RFC.
 
+**Après un démarrage à froid, réveiller la caméra avant de charger le module.** Le firmware démarre
+(`HFI ready`) mais la première commande, `create handle`, expire (`-110`) tant que le sous-système
+caméra n'a pas été alimenté. Une capture avec `cam` suffit : `cam -c 1 -s role=viewfinder -s
+role=raw,width=1920,height=1080 --capture=5 --file=/tmp/reveil-#.raw`, puis `insmod`. Constaté le
+25 nov. 2026 : sans elle, deux essais ont échoué, et le `rmmod` fait sur un firmware muet a
+bloqué le téléphone (redémarrage forcé). Ne jamais faire `rmmod` après un `create handle: -110` :
+redémarrer.
+
 **Redémarrage sans reboot.** `rmmod` puis `insmod` fonctionne : les registres de handshake
 (GP1 à GP3) sont remis à zéro avant chaque démarrage, sinon le firmware retrouve
 l'ancienne demande d'initialisation et ne répond plus.
