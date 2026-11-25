@@ -281,11 +281,14 @@ avec le noir mesuré (67), les noirs redeviennent noirs. Le module de soustracti
 25 nov. 2026 (`tools/camera/bps-bls.py`) : niveau de noir à `0x3e68` (champ de 18 bits, bits
 14-31), gain Q11 `2^N / (2^N - noir)` à `0x3e6c`, quatre seuils par canal à `0x3e70-0x3e7c`
 (plafond `2^N - 1`). Vérifié sur le téléphone le 25 nov. 2026 : le décalage se donne à l'échelle N = 17 (noir 67 sur
-10 bits -> 8 576 ; à N = 14 il est sans effet, à N = 18 deux fois trop fort) et les seuils
-doivent rester à `0x4000` (plus haut, l'image devient noire). Niveau à retenir : 50, pas 67 : à 62
-il reste des taches rouge sombre dans les zones sombres, à 58 quelques points, à 50 plus rien
-(le noir diffère selon les canaux ; à terme, niveaux par canal, rôle des quatre « Threshold
-config » encore à éclaircir).
+10 bits -> 8 576 ; à N = 14 il est sans effet, à N = 18 deux fois trop fort). Les quatre « Threshold
+config » sont des seuils de noir par canal, même échelle : sous le seuil, le canal est forcé à 0
+(0x3e70 Gr, 0x3e74 Gb, 0x3e78 B, 0x3e7c R). Valeurs à retenir : décalage 62 et seuils
+0x4000, 0x4000, 0x4000, 0x4a00. Le rouge a un noir plus bas : avec 62 et seuils égaux, G et B tombent
+à 0 dans les ombres et le rouge, amplifié par son gain de balance des blancs, reste : taches rouge
+sombre. Le seuil rouge 0x4a00 les supprime (0,0 % de pixels sombres et rouges) pour 0,7 de
+luminance moyenne ; en dessous de 0x4800 il reste des taches. Un seuil plus haut écrase les ombres
+(0x8000) puis tout (0x1ffff).
 
 **Matrice de couleurs.** `tools/camera/bps-ccm.py c0 … c8 [q]` convertit une matrice RVB 3x3
 en registres CC 1.3.1 (interrupteur à l'octet 652). Les matrices du HP1 sont dans
