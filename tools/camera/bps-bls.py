@@ -9,21 +9,25 @@ DumpRegConfig (camera.qcom.so, sauvegarde HyperOS) :
   0x3e70..0x3e80  « Threshold config 0..3 » seuils par canal, champ de 18 bits (bits 14-31),
                                   ordre matériel : seuil 0 → 0x3e7c, 1 → 0x3e74, 2 → 0x3e70,
                                   3 → 0x3e78 ; plafond du champ 2^N - 1 (N = 18 pour Titan 680)
-N est l'échelle interne (18 bits pour les versions matérielles 0x60800 et 0x70800, 14 sinon) ;
-le noir mesuré sur 10 bits est multiplié par 2^(N-10). L'interrupteur est l'octet 1060 de
+Mesuré sur le téléphone le 25 nov. 2026 (HP1, photo de test, gamma sans noir) : le décalage doit
+être donné à l'échelle N = 17 (noir de 67 sur 10 bits -> 8576) ; à N = 14 il est sans effet, à N = 18
+il est deux fois trop fort. Les seuils, eux, doivent rester <= 0x4000 (un plafond plus haut noircit
+l'image, même avec un décalage nul) : seuil par défaut 0x4000.
+Le noir mesuré sur 10 bits est multiplié par 2^(N-10). L'interrupteur est l'octet 1060 de
 BpsIQSettings (--iq 1060,1, et le découpage doit être recalculé avec cet interrupteur).
 
-Usage : bps-bls.py NOIR10 [N=18] [SEUIL10]   (affiche la liste adresse,valeur pour --regs)
+Usage : bps-bls.py NOIR10 [N=17] [SEUIL10]   (affiche la liste adresse,valeur pour --regs)
         NOIR10 : niveau de noir sur 10 bits (ex. 67)"""
 import sys
 
 noir10 = float(sys.argv[1])
-n = int(sys.argv[2]) if len(sys.argv) > 2 else 18
+n = int(sys.argv[2]) if len(sys.argv) > 2 else 17
 full = 1 << n
 noir = min(round(noir10 * (full >> 10)), full - 1)
 gain = max(0, min(0x1ffff, int(full / (full - noir) * 2048)))   # Q11
-s10 = float(sys.argv[3]) if len(sys.argv) > 3 else None   # seuil sur 10 bits (sinon plafond)
-seuil = ((full - 1) if s10 is None else round(s10 * (full >> 10))) << 14 & 0xffffffff
+# seuils : plafonnés à 14 bits (0x3fff) ; plus hauts (N = 17 ou 18), ils écrasent toute l'image
+s10 = float(sys.argv[3]) if len(sys.argv) > 3 else None
+seuil = (0x4000 if s10 is None else round(s10 * (full >> 10))) << 14 & 0xffffffff
 regs = {
     0x3e68: noir << 14 & 0xffffffff,
     0x3e6c: gain,

@@ -280,8 +280,9 @@ avec le noir mesuré (67), les noirs redeviennent noirs. Le module de soustracti
 (`BPSBLS121Titan680`, 6 registres à `0x3e68`, interrupteur à l'octet 1060) : format décodé le
 25 nov. 2026 (`tools/camera/bps-bls.py`) : niveau de noir à `0x3e68` (champ de 18 bits, bits
 14-31), gain Q11 `2^N / (2^N - noir)` à `0x3e6c`, quatre seuils par canal à `0x3e70-0x3e7c`
-(plafond `2^N - 1`). Échelle interne N = 18 supposée (versions matérielles 0x60800/0x70800), pas
-encore vérifiée sur le téléphone.
+(plafond `2^N - 1`). Vérifié sur le téléphone le 25 nov. 2026 : le décalage se donne à l'échelle N = 17 (noir 67 sur
+10 bits -> 8 576 ; à N = 14 il est sans effet, à N = 18 deux fois trop fort) et les seuils
+doivent rester à `0x4000` (plus haut, l'image devient noire).
 
 **Matrice de couleurs.** `tools/camera/bps-ccm.py c0 … c8 [q]` convertit une matrice RVB 3x3
 en registres CC 1.3.1 (interrupteur à l'octet 652). Les matrices du HP1 sont dans
