@@ -13,7 +13,7 @@ N est l'échelle interne (18 bits pour les versions matérielles 0x60800 et 0x70
 le noir mesuré sur 10 bits est multiplié par 2^(N-10). L'interrupteur est l'octet 1060 de
 BpsIQSettings (--iq 1060,1, et le découpage doit être recalculé avec cet interrupteur).
 
-Usage : bps-bls.py NOIR10 [N=18] [GAIN_AUTO=1]   (affiche la liste adresse,valeur pour --regs)
+Usage : bps-bls.py NOIR10 [N=18] [SEUIL10]   (affiche la liste adresse,valeur pour --regs)
         NOIR10 : niveau de noir sur 10 bits (ex. 67)"""
 import sys
 
@@ -22,7 +22,8 @@ n = int(sys.argv[2]) if len(sys.argv) > 2 else 18
 full = 1 << n
 noir = min(round(noir10 * (full >> 10)), full - 1)
 gain = max(0, min(0x1ffff, int(full / (full - noir) * 2048)))   # Q11
-seuil = (full - 1) << 14 & 0xffffffff
+s10 = float(sys.argv[3]) if len(sys.argv) > 3 else None   # seuil sur 10 bits (sinon plafond)
+seuil = ((full - 1) if s10 is None else round(s10 * (full >> 10))) << 14 & 0xffffffff
 regs = {
     0x3e68: noir << 14 & 0xffffffff,
     0x3e6c: gain,
