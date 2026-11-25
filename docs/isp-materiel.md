@@ -277,8 +277,11 @@ dans un programme de type 7 (`BPS_GLUT_LUT_PROGRAM`). Entrée : valeur 12 bits (
 64` écrit les tables (gamma 2,2, noir à 64 sur 10 bits retiré dans la table) ; chargement par
 `icp_selftest_glut_file=`. Avec le gamma, la luminance moyenne de la photo passe de ~40 à 109 ;
 avec le noir mesuré (67), les noirs redeviennent noirs. Le module de soustraction du noir
-(`BPSBLS121Titan680`, 6 registres à `0x3e68`, interrupteur à l'octet 1060) n'est pas encore
-utilisé : son échelle interne n'est pas vérifiée.
+(`BPSBLS121Titan680`, 6 registres à `0x3e68`, interrupteur à l'octet 1060) : format décodé le
+25 nov. 2026 (`tools/camera/bps-bls.py`) : niveau de noir à `0x3e68` (champ de 18 bits, bits
+14-31), gain Q11 `2^N / (2^N - noir)` à `0x3e6c`, quatre seuils par canal à `0x3e70-0x3e7c`
+(plafond `2^N - 1`). Échelle interne N = 18 supposée (versions matérielles 0x60800/0x70800), pas
+encore vérifiée sur le téléphone.
 
 **Matrice de couleurs.** `tools/camera/bps-ccm.py c0 … c8 [q]` convertit une matrice RVB 3x3
 en registres CC 1.3.1 (interrupteur à l'octet 652). Les matrices du HP1 sont dans
