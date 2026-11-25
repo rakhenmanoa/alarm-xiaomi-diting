@@ -291,7 +291,8 @@ avec le noir mesuré (67), les noirs redeviennent noirs. Le module de soustracti
 (plafond `2^N - 1`). Vérifié sur le téléphone le 25 nov. 2026 : le décalage se donne à l'échelle N = 17 (noir 67 sur
 10 bits -> 8 576 ; à N = 14 il est sans effet, à N = 18 deux fois trop fort). Les quatre « Threshold
 config » sont des seuils de noir par canal, même échelle : sous le seuil, le canal est forcé à 0
-(0x3e70 Gr, 0x3e74 Gb, 0x3e78 B, 0x3e7c R). Seuils à laisser à 0x4000, sans effet : relever le seuil d'un canal (rouge 0x4a00 : taches rouges
+(0x3e70 Gr, 0x3e74 Gb, 0x3e78 B, 0x3e7c R). Niveau de noir à retenir : **54** (sur 10 bits, `bps-bls.py 54`) : 0,0 % de pixels sombres colorés ;
+58 en laisse 0,001 %, 62 0,062 % (taches rouges visibles). Seuils à laisser à 0x4000, sans effet : relever le seuil d'un canal (rouge 0x4a00 : taches rouges
 remplacées par de grandes plaques turquoise) ou des quatre (0x4400 : 1,3 % de pixels sombres colorés,
 0x4c00 : 7 %) ajoute du bruit coloré dans les ombres, parce que la coupure agit sur les échantillons
 bruts avant le dématriçage. Mesure : part de pixels `Y < 70` avec `|U-128| > 25` ou `|V-128| > 25`.

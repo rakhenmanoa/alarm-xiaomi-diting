@@ -25,8 +25,9 @@ L'ISP matériel du diting (Titan 680, SM8475) traite des images sous Linux.
 - **Découpage en bandes** : calculé par la bibliothèque de CamX `libipebpsstriping.so`
   exécutée dans Unicorn (`tools/camera/bps-striping.py`). Il dépend de la taille, du format
   d'entrée, de l'ordre Bayer et des modules activés.
-- **Pas encore** : libcamera (qui traite toujours sur le CPU), réglages automatiques, noir
-  matériel (BLS), IPE, JPEG.
+- **Noir matériel (BLS 1.2.1)** : en marche depuis le 25 nov. 2026 (`tools/camera/bps-bls.py 54`,
+  interrupteur 1060, découpage recalculé avec `1060,1`, gamma sans noir `glut-sans-noir.bin`).
+- **Pas encore** : libcamera (qui traite toujours sur le CPU), réglages automatiques, IPE, JPEG.
 
 ## Ce qu'il faut avoir sous la main
 
@@ -54,16 +55,20 @@ cd ~/alarm-xiaomi-diting/extra/camss-icp
 git pull
 make extraire && make KDIR=~/linux-7.2.10 KBUILD_MODPOST_WARN=1
 sudo modprobe -a v4l2-mem2mem videobuf2-dma-contig
+# après un démarrage à froid : réveiller la caméra AVANT le module, sinon « create handle: -110 »
+cam -c 1 -s role=viewfinder -s role=raw,width=1920,height=1080 --capture=5 --file=/tmp/reveil-#.raw
 sudo rmmod qcom_camss_icp; sudo insmod qcom-camss-icp.ko && sudo dmesg | tail -20
+# jamais de rmmod après « create handle: -110 » (le téléphone se fige) : redémarrer
 ```
 
 Conversion d'essai et visualisation :
 
 ```
 python3 ../../tools/camera/bps-params.py /tmp/bps-params.bin --taille 1920x1080 \
-    --iq 492,1,652,1,660,1,664,1,780,255,788,255,988,1 --cst --wb 1,1.415,1.513 \
+    --iq 492,1,652,1,660,1,664,1,780,255,788,255,988,1,1060,1 --cst --wb 1,1.415,1.513 \
     --regs $(python3 ../../tools/camera/bps-ccm.py 1 0 0 0 1 0 0 0 1) \
-    --gamma /lib/firmware/glut-noir.bin --sl /lib/firmware/sl-1920x1080-mipi.bin
+    --regs $(python3 ../../tools/camera/bps-bls.py 54) \
+    --gamma /lib/firmware/glut-sans-noir.bin --sl /lib/firmware/sl-1920x1080-bls.bin
 sudo cp /tmp/bps-params.bin /lib/firmware/
 cat /lib/firmware/hp1p.bin <(head -c 38400 /dev/zero) > /tmp/hp1-pad.raw
 v4l2-ctl -d /dev/video18 --set-fmt-video-out=width=1920,height=1080,pixelformat=pGAA \
@@ -123,18 +128,14 @@ une caméra utilisable par les applications.
 4. Limites attendues : réglages fixes (balance des blancs et exposition figées), la taille de
    sortie du convertisseur doit être celle de l'entrée.
 
-### 4. Soustraction du noir en matériel (BLS 1.2.1)
+### 4. ~~Soustraction du noir en matériel (BLS 1.2.1)~~ : fait le 25 nov. 2026
 
-Aujourd'hui le noir (67 sur 10 bits) est retiré dans la table gamma, après la balance des
-blancs, ce qui fausse les gains.
-
-1. Dans `camera.qcom.so` (joindre le fichier) : `BPSBLS121Titan680::PackIQRegisterSetting` et
-   `BLS12Setting::CalculateHWSetting` donnent le format des 6 registres à `0x3e68`
-   (interrupteur à l'octet 1060 de `BpsIQSettings`). Méthode : comme pour WB/CC/CST, voir
-   `isp-materiel.md`.
-2. Recalculer le découpage avec `1060,1` dans `--iq` (le découpage dépend des modules).
-3. Vérifier : gamma sans noir (`bps-gamma.py sortie.bin 2.2 1.0 0`), noirs à 16 ou moins,
-   mur gris neutre avec des gains calculés sur les valeurs sans le noir.
+Format décodé dans `camera.qcom.so` et vérifié sur le téléphone (voir `isp-materiel.md`) :
+décalage à l'échelle 17 bits (noir 54 sur 10 bits), gain Q11, seuils de noir par canal à laisser à
+`0x4000`. Outil : `tools/camera/bps-bls.py NOIR10`. Le découpage se calcule avec `1060,1` dans
+`--iq` (fichier `/lib/firmware/sl-1920x1080-bls.bin`), le gamma sans noir avec
+`bps-gamma.py … 2.2 1.0 0`. Reste à faire : un noir par canal (le rouge a un noir plus bas que le
+vert et le bleu), en refaisant la mesure du noir par canal sur des photos du capteur couvert.
 
 ### 5. Matrice de couleurs selon l'éclairage
 
