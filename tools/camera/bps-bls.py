@@ -16,7 +16,7 @@ l'image, même avec un décalage nul) : seuil par défaut 0x4000.
 Le noir mesuré sur 10 bits est multiplié par 2^(N-10). L'interrupteur est l'octet 1060 de
 BpsIQSettings (--iq 1060,1, et le découpage doit être recalculé avec cet interrupteur).
 
-Usage : bps-bls.py NOIR10 [N=17] [SEUIL10]   (affiche la liste adresse,valeur pour --regs)
+Usage : bps-bls.py NOIR10 [N=17] [SEUIL10] [S0,S1,S2,S3]   (affiche la liste adresse,valeur pour --regs)
         NOIR10 : niveau de noir sur 10 bits (ex. 67)"""
 import sys
 
@@ -28,9 +28,13 @@ gain = max(0, min(0x1ffff, int(full / (full - noir) * 2048)))   # Q11
 # seuils : plafonnés à 14 bits (0x3fff) ; plus hauts (N = 17 ou 18), ils écrasent toute l'image
 s10 = float(sys.argv[3]) if len(sys.argv) > 3 else None
 seuil = (0x4000 if s10 is None else round(s10 * (full >> 10))) << 14 & 0xffffffff
+if len(sys.argv) > 4:   # SEUILS : quatre valeurs de champ (18 bits, non décalées) pour 0x3e70,74,78,7c
+    t = [int(v, 0) << 14 & 0xffffffff for v in sys.argv[4].split(',')]
+else:
+    t = [seuil] * 4
 regs = {
     0x3e68: noir << 14 & 0xffffffff,
     0x3e6c: gain,
-    0x3e70: seuil, 0x3e74: seuil, 0x3e78: seuil, 0x3e7c: seuil,
+    0x3e70: t[0], 0x3e74: t[1], 0x3e78: t[2], 0x3e7c: t[3],
 }
 print(','.join(f'{a:#x},{v:#x}' for a, v in sorted(regs.items())))
