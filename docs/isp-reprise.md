@@ -113,14 +113,21 @@ But : traiter la photo brute entière, sans recadrage.
 4. Si la photo est trop grande pour une passe, la bibliothèque produit plusieurs passes : à
    vérifier dans sa sortie (`-v`).
 
-### 2. Paramètres selon la taille, dans le pilote
+### 2. Paramètres selon la taille, dans le pilote (écrit le 27 nov. 2026, à tester)
 
 Le découpage n'est valable que pour une taille. Faire chercher au pilote, à la mise en route
 du flux, `bps-params-LARGEURxHAUTEUR.bin` avant `bps-params.bin` (fonction
 `bps_params_load_default` de `camss-bps.c`, à appeler aussi au changement de format). Ainsi
 libcamera peut s'en servir sans IPA, avec un fichier par taille installé dans `/lib/firmware`.
 
-### 3. Premier branchement sur libcamera (convertisseur du gestionnaire `simple`)
+### 3. Premier branchement sur libcamera (convertisseur du gestionnaire `simple`) — écrit le 27 nov. 2026, à tester
+
+Fait sur la branche `isp-libcamera` : dans `camss-bps.c` (patch 0934), un périphérique média
+`qcom-camss-bps` et le chargement de `bps-params-LxH.bin` à chaque changement de format ;
+patch libcamera 0017 (`libcamera-diting` pkgrel 13), où le BPS ne remplace l'ISP logiciel que si
+`LIBCAMERA_QCOM_BPS=1` est dans l'environnement (les autres caméras et l'usage normal ne changent
+pas). Prérequis : le découpage en 4096 × 3072 (étape 1), taille du flux brut du HP1.
+
 
 Le gestionnaire `simple` de libcamera sait déjà envoyer les images capturées à un
 convertisseur mémoire à mémoire (`V4L2M2MConverter`). C'est le chemin le plus court vers

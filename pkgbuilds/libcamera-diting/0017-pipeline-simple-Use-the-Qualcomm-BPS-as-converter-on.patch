@@ -1,0 +1,87 @@
+From 6524ddf750977ea461d7df7b3f01507de7062693 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 27 Nov 2026 10:55:20 +0300
+Subject: [PATCH] pipeline: simple: Use the Qualcomm BPS as converter on
+ request
+
+The CAMSS BPS (hardware Bayer processing segment, behind the ICP firmware)
+is exposed by the qcom-camss-bps driver as a memory-to-memory device. List
+it among the V4L2 M2M converters, and let the simple pipeline handler use
+it for qcom-camss instead of the software ISP when LIBCAMERA_QCOM_BPS is set
+in the environment. Its settings are fixed for now (no 3A), hence opt-in.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../converter/converter_v4l2_m2m.cpp          |  1 +
+ src/libcamera/pipeline/simple/simple.cpp      | 22 +++++++++++++++----
+ 2 files changed, 19 insertions(+), 4 deletions(-)
+
+diff --git a/src/libcamera/converter/converter_v4l2_m2m.cpp b/src/libcamera/converter/converter_v4l2_m2m.cpp
+index 37377ab..0b2b6df 100644
+--- a/src/libcamera/converter/converter_v4l2_m2m.cpp
++++ b/src/libcamera/converter/converter_v4l2_m2m.cpp
+@@ -818,6 +818,7 @@ bool V4L2M2MConverter::supportsRequests()
+ static std::initializer_list<std::string> compatibles = {
+ 	"mtk-mdp",
+ 	"pxp",
++	"qcom-camss-bps",
+ };
+ 
+ REGISTER_CONVERTER("v4l2_m2m", V4L2M2MConverter, compatibles)
+diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
+index 5c6efab..34552be 100644
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -1920,8 +1920,18 @@ bool SimplePipelineHandler::matchDevice(std::shared_ptr<MediaDevice> media,
+ 					DeviceEnumerator *enumerator)
+ {
+ 	unsigned int numStreams = 1;
++	std::vector<std::pair<const char *, unsigned int>> converters = info.converters;
++	bool swIspEnabled = info.swIspEnabled;
+ 
+-	for (const auto &[name, streams] : info.converters) {
++	/*
++	 * Qualcomm CAMSS: the hardware BPS (qcom-camss-bps, memory-to-memory)
++	 * replaces the software ISP when LIBCAMERA_QCOM_BPS is set. It has
++	 * fixed settings (no 3A yet), so it stays opt-in.
++	 */
++	if (!strcmp(info.driver, "qcom-camss") && utils::secure_getenv("LIBCAMERA_QCOM_BPS"))
++		converters = { { "qcom-camss-bps", 1 } };
++
++	for (const auto &[name, streams] : converters) {
+ 		DeviceMatch converterMatch(name);
+ 		converter_ = acquireMediaDevice(enumerator, converterMatch);
+ 		if (converter_) {
+@@ -1930,7 +1940,10 @@ bool SimplePipelineHandler::matchDevice(std::shared_ptr<MediaDevice> media,
+ 		}
+ 	}
+ 
+-	if (info.swIspEnabled) {
++	if (converter_)
++		swIspEnabled = false;
++
++	if (swIspEnabled) {
+ 		/*
+ 		 * When the software ISP is enabled, the simple pipeline handler
+ 		 * exposes the raw stream, giving a total of two streams. This
+@@ -1940,14 +1953,15 @@ bool SimplePipelineHandler::matchDevice(std::shared_ptr<MediaDevice> media,
+ 		numStreams = 2;
+ 	}
+ 
+-	swIspEnabled_ = info.swIspEnabled;
++	swIspEnabled_ = swIspEnabled;
+ 	const GlobalConfiguration &configuration = cameraManager()->_d()->configuration();
+ 	for (GlobalConfiguration::Configuration entry :
+ 	     configuration.configuration()["pipelines"]["simple"]["supported_devices"]
+ 		     .asList()) {
+ 		auto name = entry["driver"].get<std::string>();
+ 		if (name == info.driver) {
+-			swIspEnabled_ = entry["software_isp"].get<bool>().value_or(swIspEnabled_);
++			swIspEnabled_ = entry["software_isp"].get<bool>().value_or(swIspEnabled_) &&
++					!converter_;
+ 			LOG(SimplePipeline, Debug)
+ 				<< "Configuration file overrides software ISP for "
+ 				<< info.driver << " to " << swIspEnabled_;
+-- 
+2.43.0
+

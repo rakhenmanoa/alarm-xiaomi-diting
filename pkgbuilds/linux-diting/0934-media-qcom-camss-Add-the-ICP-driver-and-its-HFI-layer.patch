@@ -52,7 +52,7 @@ new file mode 100644
 index 0000000..b808815
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-bps.c
-@@ -0,0 +1,935 @@
+@@ -0,0 +1,991 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * V4L2 memory to memory driver for the BPS (Bayer Processing Segment) of
@@ -72,6 +72,7 @@ index 0000000..b808815
 +#include <linux/slab.h>
 +#include <linux/workqueue.h>
 +
++#include <media/media-device.h>
 +#include <media/v4l2-ctrls.h>
 +#include <media/v4l2-device.h>
 +#include <media/v4l2-event.h>
@@ -160,6 +161,7 @@ index 0000000..b808815
 +	struct device *dev;
 +	struct icp_hfi *hfi;
 +	struct v4l2_device v4l2_dev;
++	struct media_device mdev;
 +	struct video_device vdev;
 +	struct v4l2_m2m_dev *m2m_dev;
 +	struct workqueue_struct *wq;
@@ -252,26 +254,44 @@ index 0000000..b808815
 +	return 0;
 +}
 +
-+static void bps_params_load_default(struct bps_ctx *ctx)
++static int bps_params_load_file(struct bps_ctx *ctx, const char *name)
 +{
 +	const struct firmware *fw;
 +	int ret;
 +
-+	if (!bps_params_file || !*bps_params_file)
-+		return;
-+
-+	ret = firmware_request_nowarn(&fw, bps_params_file, ctx->bps->dev);
++	ret = firmware_request_nowarn(&fw, name, ctx->bps->dev);
 +	if (ret)
-+		return;
++		return ret;
 +
 +	if (fw->size > BPS_PARAMS_MAX ||
-+	    bps_params_set(ctx, fw->data, fw->size))
-+		dev_warn(ctx->bps->dev, "%s: invalid BPS parameters\n",
-+			 bps_params_file);
-+	else
++	    bps_params_set(ctx, fw->data, fw->size)) {
++		dev_warn(ctx->bps->dev, "%s: invalid BPS parameters\n", name);
++		ret = -EINVAL;
++	} else {
 +		dev_dbg(ctx->bps->dev, "default parameters from %s (%zu bytes)\n",
-+			bps_params_file, fw->size);
++			name, fw->size);
++	}
 +	release_firmware(fw);
++	return ret;
++}
++
++/*
++ * Default parameters: bps-params-<width>x<height>.bin for the current input
++ * size if it exists (the striping only fits one size), else bps_params_file.
++ * Called at open and on every input format change, so that a client without
++ * its own parameters (libcamera, v4l2-ctl) gets the right ones.
++ */
++static void bps_params_load_default(struct bps_ctx *ctx)
++{
++	char name[48];
++
++	snprintf(name, sizeof(name), "bps-params-%ux%u.bin",
++		 ctx->out.width, ctx->out.height);
++	if (!bps_params_load_file(ctx, name))
++		return;
++
++	if (bps_params_file && *bps_params_file)
++		bps_params_load_file(ctx, bps_params_file);
 +}
 +
 +static int bps_s_ctrl(struct v4l2_ctrl *ctrl)
@@ -791,6 +811,7 @@ index 0000000..b808815
 +	ctx->out = f->fmt.pix;
 +	ctx->out_fmt = bps_find_fmt(ctx->out.pixelformat);
 +	bps_set_sizes(&ctx->out, &ctx->cap);
++	bps_params_load_default(ctx);
 +	return 0;
 +}
 +
@@ -920,6 +941,7 @@ index 0000000..b808815
 +	struct camss_bps *bps = container_of(vdev, struct camss_bps, vdev);
 +
 +	v4l2_m2m_release(bps->m2m_dev);
++	media_device_cleanup(&bps->mdev);
 +	v4l2_device_unregister(&bps->v4l2_dev);
 +	destroy_workqueue(bps->wq);
 +	kfree(bps);
@@ -944,9 +966,21 @@ index 0000000..b808815
 +		goto err_free;
 +	}
 +
++	/*
++	 * A media device of its own, named qcom-camss-bps: libcamera finds its
++	 * memory-to-memory converters by media device driver name.
++	 */
++	bps->mdev.dev = dev;
++	strscpy(bps->mdev.driver_name, BPS_NAME, sizeof(bps->mdev.driver_name));
++	strscpy(bps->mdev.model, BPS_NAME, sizeof(bps->mdev.model));
++	snprintf(bps->mdev.bus_info, sizeof(bps->mdev.bus_info), "platform:%s",
++		 dev_name(dev));
++	media_device_init(&bps->mdev);
++	bps->v4l2_dev.mdev = &bps->mdev;
++
 +	ret = v4l2_device_register(dev, &bps->v4l2_dev);
 +	if (ret)
-+		goto err_wq;
++		goto err_mdev;
 +
 +	bps->m2m_dev = v4l2_m2m_init(&bps_m2m_ops);
 +	if (IS_ERR(bps->m2m_dev)) {
@@ -969,13 +1003,31 @@ index 0000000..b808815
 +	if (ret)
 +		goto err_m2m;
 +
-+	dev_info(dev, "BPS registered as /dev/video%d\n", bps->vdev.num);
++	ret = v4l2_m2m_register_media_controller(bps->m2m_dev, &bps->vdev,
++						 MEDIA_ENT_F_PROC_VIDEO_PIXEL_FORMATTER);
++	if (ret)
++		goto err_vdev;
++
++	ret = media_device_register(&bps->mdev);
++	if (ret)
++		goto err_mc;
++
++	dev_info(dev, "BPS registered as /dev/video%d (media device %s)\n",
++		 bps->vdev.num, BPS_NAME);
 +	return bps;
 +
++err_mc:
++	v4l2_m2m_unregister_media_controller(bps->m2m_dev);
++err_vdev:
++	/* the release callback frees everything */
++	video_unregister_device(&bps->vdev);
++	return ERR_PTR(ret);
 +err_m2m:
 +	v4l2_m2m_release(bps->m2m_dev);
 +err_v4l2:
 +	v4l2_device_unregister(&bps->v4l2_dev);
++err_mdev:
++	media_device_cleanup(&bps->mdev);
 +err_wq:
 +	destroy_workqueue(bps->wq);
 +err_free:
@@ -985,8 +1037,12 @@ index 0000000..b808815
 +
 +void camss_bps_unregister(struct camss_bps *bps)
 +{
-+	if (!IS_ERR_OR_NULL(bps))
-+		video_unregister_device(&bps->vdev);
++	if (IS_ERR_OR_NULL(bps))
++		return;
++
++	media_device_unregister(&bps->mdev);
++	v4l2_m2m_unregister_media_controller(bps->m2m_dev);
++	video_unregister_device(&bps->vdev);
 +}
 diff --git a/drivers/media/platform/qcom/camss/camss-icp-hfi.c b/drivers/media/platform/qcom/camss/camss-icp-hfi.c
 new file mode 100644
