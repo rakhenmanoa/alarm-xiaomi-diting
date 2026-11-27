@@ -53,7 +53,7 @@ reprise du travail : [isp-reprise.md](../../docs/isp-reprise.md).
 | Matrice de couleurs (CC 1.3.1) | ✅ | matrices du fichier de réglage interpolées selon la température de couleur (`chromatix-cc13.py`) |
 | Gamma (GLUT 1.5.1) | 🟡 | gamma 2,2 fixe, léger voile dans les noirs à vérifier |
 | Conversion YUV (CST 1.2) | ✅ | BT.601 plage pleine, NV12 |
-| Réduction du bruit (ABF 4.1) | ⬜ | valeurs dans le fichier de réglage, format des registres à décoder |
+| Réduction du bruit (ABF 4.1.1) | 🟡 | registres, table et octets relevés ; valeurs calculées par le code de CamX exécuté dans unicorn (`camx-abf.py`) depuis le réglage Xiaomi ; section `luts` du pilote ; à essayer sur image, puis suivre le gain du capteur |
 | Pixels défectueux / PDAF (BPC-PDPC 3.1.1) | ➖ | inutile en 12 Mpx : sur image uniforme et image noire (`raw-defauts.py`), 4 pixels hors seuil sur 12,6 millions, aucun motif de pixels de phase ni pixel chaud ; le HP1 les corrige lui-même en mode regroupé. Format relevé (table 512 octets à 0x3008, registres 0x3068-0x30d8) pour les modes 50/200 Mpx |
 | Ombrage de l'objectif (LSC 4.1.1) | ✅ | tables (DMI 0x3608, programme 5), 13 registres à 0x3668 et octets 444-488 de `BpsIQSettings` relevés ; `bps-lsc.py` depuis l'EEPROM, section `lsc` du bloc (version 2) ; découpage avec LSC calculé ; validé sur image uniforme : coins de 0,3 à 0,8 du centre, teinte des coins corrigée ; en service en 4096 × 3072, 1920 × 1080 à faire |
 | Mappage de tons (GTM, LTM) | ⬜ | |
@@ -115,6 +115,8 @@ Sources : [Xiaomi 12T Pro, fiche technique](https://www.mi.com/global/xiaomi-12t
 | `raw10-to-bps.py` | recadrage et compactage d'une image brute pour le BPS |
 | `hp1-eeprom.py` | décode l'EEPROM de calibration du HP1 (ombrage, balance des blancs, PDAF) |
 | `raw-defauts.py` | repère dans une image brute les pixels défectueux et le motif des pixels de phase |
+| `camx-abf.py` | réglages du débruitage calculés par CamX (unicorn) selon le gain |
+| `bps-bloc.py` | décrit un bloc de paramètres ou y ajoute registres, octets, tables DMI, découpage |
 | `bps-lsc.py` | tables, registres et réglages du module d'ombrage (LSC) depuis l'EEPROM |
 | `dwarf_*.py`, `xtensa-dis.py`, `cdm-decode.py` | lecture du firmware de l'ICP et des programmes CDM |
 | `camx-infos.py`, `chromatix_regs.py`, `dt-*.py` | fichiers de CamX, réglages, device tree Android |

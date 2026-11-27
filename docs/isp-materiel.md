@@ -446,3 +446,33 @@ uniforme, 4 pixels hors seuil sur 12,6 millions, aucun motif régulier ; image n
 l'objectif, gain au plus haut), aucun pixel chaud. En mode regroupé 4 × 4, le HP1 corrige
 lui-même pixels de phase et défauts : module PDPC inutile en 12 Mpx. À reprendre pour les
 modes 50 et 200 Mpx (remosaïquage).
+
+## Débruitage (BPC-ABF 4.1.1, `BPSBPCABF411Titan680`)
+
+Le calcul de CamX est bien dans `camera.qcom.so`, mais appelé par une table de fonctions
+(`0x13d3820`, remplie par relocations RELR : lire la valeur dans le fichier donne l'adresse) :
+`BPCABF411Interpolation::RunInterpolation` (`0x10d3d98`) et
+`BPCABF411Setting::CalculateHWSetting` (`0xd4b218`). Ce dernier n'appelle que `logf`, `llroundl`
+et `__extenddftf2` : `tools/camera/camx-abf.py` l'exécute dans unicorn avec la région du
+fichier de réglage interpolée selon le gain (déclencheurs : gain DRC, rapport HDR, gain total
+du capteur 1 à 256 ; l'instance 65 a 27 régions).
+
+- Région `bpcabf41_rgn_dataType` (428 octets) : sbpc_fmax, sbpc_fmin, sbpc_maxshft,
+  sbpc_minshft, sbpc_offset, blk_pix_matching_rb, _g, noise_stdlut_level_tab[65],
+  distance_ker_tab[6], curve_offset_tab[4], noise_prsv_anchor_lo, _hi, noise_prsv_lo_tab[2],
+  _hi_tab[2], radial_gain_tab[10], edge_softness, hot/cold_pixel_correction_disable,
+  same_channel_recovery, fmax, fmin, bpc_offset, bcc_offset, correction_threshold.
+- Réserve du module (dans le nœud `bpcabf41_bps_v2`, u32 26 à 31) : cross_process_en puis 5
+  ancres radiales (0 ; 0,4 ; 0,6 ; 0,8 ; 1).
+- Entrée `BPCABF411InputData` lue : 0x14 ABF, 0x18 BPC, 0x1c BPC simple (activations), 0x24
+  banque, 0x28 largeur et 0x2c hauteur (u16), 0x30 noir (16 bits : noir10 × 64), 0x34 et 0x38
+  début de l'image (s16), 0x58 ordre Bayer, 0x60 version Titan (0x60800), 0xc0/0x15c gain de
+  bruit facultatif, 0xcc décalage.
+- Sortie déballée rangée en 23 registres : `0x3c68` BPC, `0x3c6c` ABF, `0x3c80`-`0x3c8c`
+  détection et récupération BPC, `0x3ca0`-`0x3cbc` BPC simple, filtre, préservation du bruit,
+  `0x3cc8`-`0x3ce8` réduction radiale (ancres, bases, pentes, décalages, centre, r²) ; table de
+  bruit de 64 mots en DMI `0x3c08` sélecteur 1, programme 4 (`BPS_ABF_LUT_PROGRAM`).
+- `BpsIQSettings` : 384 EN, 388 BPC_EN, 392 ABF_EN, 396 SINGLE_BPC_EN. Le découpage doit être
+  recalculé avec 384,1,392,1 (recouvrement des bandes).
+- Pilote : bloc de paramètres version 3 avec une section `luts` générique (programme, DMI,
+  données) ; `tools/camera/bps-bloc.py` ajoute registres, octets et tables à un bloc existant.

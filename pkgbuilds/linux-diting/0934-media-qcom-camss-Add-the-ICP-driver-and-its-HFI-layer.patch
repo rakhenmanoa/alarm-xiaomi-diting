@@ -52,7 +52,7 @@ new file mode 100644
 index 0000000..b808815
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-bps.c
-@@ -0,0 +1,1106 @@
+@@ -0,0 +1,1212 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * V4L2 memory to memory driver for the BPS (Bayer Processing Segment) of
@@ -69,6 +69,7 @@ index 0000000..b808815
 +#include <linux/dma-mapping.h>
 +#include <linux/firmware.h>
 +#include <linux/module.h>
++#include <linux/unaligned.h>
 +#include <linux/slab.h>
 +#include <linux/workqueue.h>
 +
@@ -113,6 +114,17 @@ index 0000000..b808815
 +#define BPS_LSC_DMI_ADDR	0x3608
 +
 +/* CDM program types, as CamX uses them on Titan 680 */
++/*
++ * Other DMI tables (version 3 "luts" section): entries
++ * {u32 program; u32 dmi (selector << 24 | register); u32 bytes; data},
++ * consecutive entries of the same program are sent as one program.
++ */
++#define BPS_SHM_LUTS		0xf000
++#define BPS_LUTS_SIZE		0x4000
++#define BPS_SHM_LUTS_CMD	0x13000
++#define BPS_LUTS_MAX_CMDS	32
++#define BPS_MAX_PROGS		8
++
 +#define BPS_PROG_GENERIC	72
 +#define BPS_PROG_GLUT		7
 +#define BPS_PROG_LSC		5	/* BPS_LENS_ROLLOFF_LUT_PROGRAM */
@@ -124,7 +136,7 @@ index 0000000..b808815
 + * blob; a section of length 0 is absent.
 + */
 +#define BPS_PARAMS_MAGIC	0x50535042	/* "BPSP" */
-+#define BPS_PARAMS_VERSION	2	/* version 1 has no lsc section */
++#define BPS_PARAMS_VERSION	3	/* 1: no lsc section, 2: no luts section */
 +#define BPS_PARAMS_MAX		SZ_32K
 +
 +struct bps_params_section {
@@ -142,6 +154,7 @@ index 0000000..b808815
 +	struct bps_params_section glut;	/* 3 gamma tables of 256 u32 */
 +	struct bps_params_section sl;	/* BpsStripingLibOutMultiFrame */
 +	struct bps_params_section lsc;	/* version 2: 3 roll-off tables */
++	struct bps_params_section luts;	/* version 3: other DMI tables */
 +} __packed;
 +
 +#define BPS_PARAMS_V1_HEADER	offsetof(struct bps_params_header, lsc)
@@ -149,6 +162,39 @@ index 0000000..b808815
 +static bool bps_params_has_lsc(const struct bps_params_header *h)
 +{
 +	return le32_to_cpu(h->version) >= 2 && h->lsc.length;
++}
++
++static bool bps_params_has_luts(const struct bps_params_header *h)
++{
++	return le32_to_cpu(h->version) >= 3 && h->luts.length;
++}
++
++/* Walks the luts section; returns the number of entries or -EINVAL. */
++static int bps_luts_walk(const u8 *luts, u32 len,
++			 void (*fn)(void *arg, u32 prog, u32 dmi, const u8 *data,
++				    u32 bytes),
++			 void *arg)
++{
++	u32 off = 0;
++	int n = 0;
++
++	while (off < len) {
++		u32 prog, dmi, bytes;
++
++		if (len - off < 12)
++			return -EINVAL;
++		prog = get_unaligned_le32(luts + off);
++		dmi = get_unaligned_le32(luts + off + 4);
++		bytes = get_unaligned_le32(luts + off + 8);
++		off += 12;
++		if (!bytes || bytes % 4 || bytes > len - off ||
++		    prog > 14 || ++n > BPS_LUTS_MAX_CMDS)
++			return -EINVAL;
++		if (fn)
++			fn(arg, prog, dmi, luts + off, bytes);
++		off += bytes;
++	}
++	return n;
 +}
 +
 +#define V4L2_CID_CAMSS_BPS_PARAMS	(V4L2_CID_USER_BASE + 0x10f0)
@@ -230,6 +276,7 @@ index 0000000..b808815
 +	static const size_t max[] = {
 +		HFI_BPS_IQ_SETTINGS_SIZE, BPS_SHM_REGS_SIZE - 4,
 +		BPS_GLUT_SIZE, BPS_SHM_SL_SIZE, BPS_LSC_SIZE,
++		BPS_LUTS_SIZE + 12 * BPS_LUTS_MAX_CMDS,
 +	};
 +	u32 version;
 +	int i, nsec;
@@ -240,8 +287,8 @@ index 0000000..b808815
 +	version = le32_to_cpu(h->version);
 +	if (version < 1 || version > BPS_PARAMS_VERSION)
 +		return -EINVAL;
-+	nsec = version == 1 ? 4 : 5;
-+	if (version >= 2 && len < sizeof(*h))
++	nsec = version + 3;
++	if (len < 16 + 8 * nsec)
 +		return -EINVAL;
 +
 +	for (i = 0, s = &h->iq; i < nsec; i++, s++) {
@@ -258,6 +305,14 @@ index 0000000..b808815
 +		return -EINVAL;
 +	if (bps_params_has_lsc(h) && le32_to_cpu(h->lsc.length) != BPS_LSC_SIZE)
 +		return -EINVAL;
++	if (bps_params_has_luts(h)) {
++		u32 n = le32_to_cpu(h->luts.length);
++		int cmds = bps_luts_walk(blob + le32_to_cpu(h->luts.offset), n,
++					 NULL, NULL);
++
++		if (cmds < 0 || n - 12 * cmds > BPS_LUTS_SIZE)
++			return -EINVAL;
++	}
 +
 +	return 0;
 +}
@@ -448,10 +503,46 @@ index 0000000..b808815
 +	u8 *p = array + 8 + *n * 24;
 +	u64 base_len = iova | ((u64)(len - 1) << 44);
 +
++	if (*n >= BPS_MAX_PROGS)
++		return;
 +	memset(p, 0, 24);
 +	memcpy(p, &base_len, 8);
 +	memcpy(p + 8, &type, 4);
 +	(*n)++;
++}
++
++struct bps_luts_fill {
++	void *prog;
++	u8 *lut;
++	u32 lut_iova, lut_off;
++	u32 *cmd;
++	u32 cmd_iova, ncmd, first, type;
++};
++
++static void bps_luts_flush(struct bps_luts_fill *f)
++{
++	if (f->ncmd > f->first)
++		bps_add_prog(f->prog, f->cmd_iova + 12 * f->first,
++			     12 * (f->ncmd - f->first), f->type);
++	f->first = f->ncmd;
++}
++
++static void bps_luts_add(void *arg, u32 type, u32 dmi, const u8 *data, u32 bytes)
++{
++	struct bps_luts_fill *f = arg;
++	u32 *cmd = f->cmd + 3 * f->ncmd;
++
++	if (f->lut_off + bytes > BPS_LUTS_SIZE)
++		return;
++	if (f->ncmd > f->first && type != f->type)
++		bps_luts_flush(f);
++	f->type = type;
++	memcpy(f->lut + f->lut_off, data, bytes);
++	cmd[0] = (1 << 24) | (bytes - 1);
++	cmd[1] = f->lut_iova + f->lut_off;
++	cmd[2] = dmi;
++	f->lut_off += ALIGN(bytes, 64);
++	f->ncmd++;
 +}
 +
 +/* Copy the parameters into the shared memory and fill the frame */
@@ -464,13 +555,13 @@ index 0000000..b808815
 +	int ret = 0;
 +
 +	iq = icp_hfi_shmem(hfi, BPS_SHM_IQ, HFI_BPS_IQ_SETTINGS_SIZE, &iq_iova);
-+	prog = icp_hfi_shmem(hfi, BPS_SHM_PROG, 8 + 4 * 24, &prog_iova);
++	prog = icp_hfi_shmem(hfi, BPS_SHM_PROG, 8 + BPS_MAX_PROGS * 24, &prog_iova);
 +	sl = icp_hfi_shmem(hfi, BPS_SHM_SL, BPS_SHM_SL_SIZE, &sl_iova);
 +	if (!iq || !prog || !sl)
 +		return -ENOMEM;
 +
 +	memset(iq, 0, HFI_BPS_IQ_SETTINGS_SIZE);
-+	memset(prog, 0, 8 + 4 * 24);
++	memset(prog, 0, 8 + BPS_MAX_PROGS * 24);
 +	memset(sl, 0, BPS_SHM_SL_SIZE);
 +
 +	mutex_lock(&ctx->params_lock);
@@ -546,6 +637,21 @@ index 0000000..b808815
 +			cmd[3 * i + 2] = ((i + 1) << 24) | BPS_LSC_DMI_ADDR;
 +		}
 +		bps_add_prog(prog, cmd_iova, 3 * 12, BPS_PROG_LSC);
++	}
++
++	if (bps_params_has_luts(h)) {
++		struct bps_luts_fill f = { .prog = prog };
++
++		f.lut = icp_hfi_shmem(hfi, BPS_SHM_LUTS, BPS_LUTS_SIZE, &f.lut_iova);
++		f.cmd = icp_hfi_shmem(hfi, BPS_SHM_LUTS_CMD, 12 * BPS_LUTS_MAX_CMDS,
++				      &f.cmd_iova);
++		if (!f.lut || !f.cmd) {
++			ret = -ENOMEM;
++			goto unlock;
++		}
++		bps_luts_walk(ctx->params + le32_to_cpu(h->luts.offset),
++			      le32_to_cpu(h->luts.length), bps_luts_add, &f);
++		bps_luts_flush(&f);
 +	}
 +
 +fill:

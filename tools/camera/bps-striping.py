@@ -57,7 +57,7 @@ class Emu:
         self.exports = {s.name: BASE + s['st_value'] for s in syms.iter_symbols() if s['st_shndx'] != 'SHN_UNDEF' and s.name}
         for sec in ('.rela.plt', '.rela.dyn'):
             r = self.elf.get_section_by_name(sec)
-            if not r: continue
+            if not r or not hasattr(r, 'iter_relocations'): continue  # APS2 (Android) non lu
             for rel in r.iter_relocations():
                 sym = syms.get_symbol(rel['r_info_sym'])
                 t = rel['r_info_type']
