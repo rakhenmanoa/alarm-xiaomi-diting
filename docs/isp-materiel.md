@@ -423,3 +423,12 @@ stable (R/V et B/V à ± 5 %). Le pas de 2^20 pour `x_delta` est donc plausible.
 image uniforme (papier contre l'objectif) pour régler la force et vérifier la symétrie.
 Piège : `v4l2-ctl --stream-to` écrit le tampon entier (image + 64 Ko) ; couper avec
 `head -c 18874368` avant `ffmpeg`.
+
+**27 nov. 2026 : image uniforme (papier contre l'objectif, même brut passé deux fois).** Luminosité
+linéaire des coins rapportée au centre : 0,27 à 0,31 sans correction, 0,74 à 0,87 avec (force 0,85,
+résidu attendu ≈ 0,8). Teinte des coins (R/V rapporté au centre) : 0,74 sans, 0,92 à 0,96 avec ;
+B/V : 0,94 → 1,01. Le format est donc validé (`x_delta` au pas de 2^20, ordre des canaux, table
+de l'EEPROM étalée sur tout le champ). Le côté droit reste un peu plus sombre, comme sans
+correction : éclairage du papier venu de la fenêtre. Fichier en service :
+`/lib/firmware/bps-params-4096x3072.bin` avec la section `lsc` ; reste à faire le 1920 × 1080
+(découpage propre) et, plus tard, des tables selon l'éclairage comme CamX.
