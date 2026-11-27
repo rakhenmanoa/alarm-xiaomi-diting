@@ -160,9 +160,10 @@ matrices selon l'indice de luminosité et la température de couleur.
    donne la matrice identité) × 5 plages de température de couleur (2500 à 10000 K).
 2. Essai sur la photo de test : `--regs $(bps-ccm.py $(chromatix-cc13.py TUNED.bin --lux L
    --cct K))` à la place de la matrice identité, pour quelques températures de couleur.
-3. Reste : estimer la température de couleur à partir des gains de balance des blancs
-   (points de référence AWB `refPtV1` du même fichier : rapports R/V, B/V de 10 éclairages)
-   et l'indice de luminosité à partir de l'exposition, dans l'IPA (étape 6).
+3. Température de couleur estimée à partir des gains (27 nov. 2026) : `chromatix-cc13.py TUNED.bin
+   --lux 300 --gains 1,1.71,1.91` (points de référence `refPtV1` du fichier, projection sur le
+   lieu D75-D65-D50-A-Horizon ; 5600 K environ pour la photo de test). Reste l'indice de
+   luminosité à partir de l'exposition, dans l'IPA (étape 6).
 
 ### 6. IPA libcamera (réglages automatiques)
 

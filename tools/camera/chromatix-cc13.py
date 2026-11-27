@@ -10,6 +10,17 @@ interpolation selon l'éclairage, comme le fait CamX.
       couleur, matrice de chaque région
   chromatix-cc13.py TUNED.bin --lux 300 --cct 4000 [--instance N] [-v]
       matrice interpolée, 9 nombres en ordre RVB (à passer à bps-ccm.py)
+  chromatix-cc13.py TUNED.bin --lux 300 --gains 1,1.71,1.91 [-v]
+      idem, la température de couleur estimée à partir des gains de balance des blancs
+      (G, B, R, comme --wb de bps-params.py) ; --cct-seule n'affiche que l'estimation
+
+Estimation de la température de couleur : points de référence de la balance des blancs du
+fichier (nœud refPtV1 : 10 couples R/V, B/V de l'éclairage, noir retiré). Leur ordre n'est pas
+nommé dans le fichier ; on retient comme lieu des corps noirs/lumière du jour les points 1, 2, 3, 7
+et 8, lus comme D75, D65, D50, A et Horizon (log R/V régulier en fonction de 1/T, vérifié le
+27 nov. 2026). La couleur mesurée (R/V = 1/gain R, B/V = 1/gain B) est projetée sur cette ligne
+brisée en coordonnées logarithmiques et la température interpolée en mired (1e6/T). L'écart à la
+ligne (dist) signale un éclairage hors corps noir (néon, LED verdâtre).
 
 Format (rétro-ingénierie du fichier du HP1, 27 nov. 2026) :
 - à 0xac, cinq u32 : table des nœuds, taille, -, zone de données, taille ;
@@ -98,6 +109,38 @@ class Tuned:
         return out
 
 
+LIEU = [(1, 7500), (2, 6500), (3, 5000), (7, 2856), (8, 2300)]
+
+
+def ref_points(t):
+    for nid in t.order:
+        if t.nodes[nid][0] == 'refPtV1':
+            b = t.raw(nid)
+            f = struct.unpack('<%df' % (len(b) // 4), b)[6:]
+            return [(f[2 * i], f[2 * i + 1]) for i in range(len(f) // 2) if f[2 * i] > 0]
+    raise SystemExit('refPtV1 introuvable dans le fichier de réglage')
+
+
+def cct_depuis_gains(t, gains):
+    import math
+    g, gb, gr = gains
+    x, y = math.log(g / gr), math.log(g / gb)          # log R/V, log B/V
+    pts = ref_points(t)
+    lieu = [(math.log(pts[i][0]), math.log(pts[i][1]), 1e6 / k) for i, k in LIEU]
+    best = None
+    for (x0, y0, m0), (x1, y1, m1) in zip(lieu, lieu[1:]):
+        dx, dy = x1 - x0, y1 - y0
+        u = ((x - x0) * dx + (y - y0) * dy) / (dx * dx + dy * dy)
+        first, last = (x0, y0) == lieu[0][:2], (x1, y1) == lieu[-1][:2]
+        uc = max(0.0 if not first else -1.0, min(1.0 if not last else 2.0, u))
+        px, py = x0 + uc * dx, y0 + uc * dy
+        d = math.hypot(x - px, y - py)
+        if best is None or d < best[0]:
+            best = (d, m0 + uc * (m1 - m0))
+    d, mired = best
+    return 1e6 / max(mired, 50), d
+
+
 def weights(ent, v):
     if v <= ent[0][1]:
         return [(0, 1.0)]
@@ -125,6 +168,8 @@ def main():
     p.add_argument('--led', type=float, default=0.0)
     p.add_argument('--lux', type=float, help='indice de luminosité AEC (petit = lumineux)')
     p.add_argument('--cct', type=float, help='température de couleur en kelvins')
+    p.add_argument('--gains', help='G,B,R de la balance des blancs : estime la température de couleur')
+    p.add_argument('--cct-seule', action='store_true', help='n\'afficher que la température estimée')
     p.add_argument('-v', action='store_true', help='détail de l\'interpolation sur stderr')
     a = p.parse_args()
 
@@ -149,6 +194,15 @@ def main():
             print(plages, ' '.join(f'{x:+.4f}' for x in v[:9]),
                   '| k', ' '.join(f'{x:g}' for x in v[9:12]))
         return
+    if a.gains:
+        cct, dist = cct_depuis_gains(t, [float(v) for v in a.gains.split(',')])
+        if a.cct_seule:
+            print(f'{cct:.0f}')
+            return
+        if a.v:
+            print(f'température de couleur estimée : {cct:.0f} K (écart au lieu {dist:.3f})',
+                  file=sys.stderr)
+        a.cct = cct
     if a.lux is None or a.cct is None:
         sys.exit('--lux et --cct sont nécessaires (ou --liste, --table)')
     n = t.depth(root)
