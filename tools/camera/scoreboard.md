@@ -114,6 +114,7 @@ Sources : [Xiaomi 12T Pro, fiche technique](https://www.mi.com/global/xiaomi-12t
 | `raw10-phases.py` | moyennes des 4 positions Bayer d'une image RAW10 (noir, ordre, gains) |
 | `raw10-to-bps.py` | recadrage et compactage d'une image brute pour le BPS |
 | `hp1-eeprom.py` | décode l'EEPROM de calibration du HP1 (ombrage, balance des blancs, PDAF) |
+| `raw-defauts.py` | repère dans une image brute les pixels défectueux et le motif des pixels de phase |
 | `bps-lsc.py` | tables, registres et réglages du module d'ombrage (LSC) depuis l'EEPROM |
 | `dwarf_*.py`, `xtensa-dis.py`, `cdm-decode.py` | lecture du firmware de l'ICP et des programmes CDM |
 | `camx-infos.py`, `chromatix_regs.py`, `dt-*.py` | fichiers de CamX, réglages, device tree Android |
