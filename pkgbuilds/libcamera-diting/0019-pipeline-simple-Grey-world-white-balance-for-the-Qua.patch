@@ -1,0 +1,215 @@
+From 37d304b5c19a3c800cf22f7b2d544f608c6119a7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 27 Nov 2026 13:21:39 +0300
+Subject: [PATCH] pipeline: simple: Grey world white balance for the Qualcomm
+ BPS
+
+Measure the mean linear colour of the mid tones of the processed NV12
+image and move the white balance gains of the BPS towards neutral, in
+half steps. The gains are rewritten in the parameter block the driver
+loads (/lib/firmware/bps-params-<w>x<h>.bin) and sent back through its
+BPS parameters control, the way CamX sends its IQ settings per request.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/libcamera/pipeline/simple/simple.cpp | 148 ++++++++++++++++++++++-
+ 1 file changed, 147 insertions(+), 1 deletion(-)
+
+diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
+index 3c71d66..fe9fbdf 100644
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <algorithm>
++#include <fstream>
+ #include <array>
+ #include <cmath>
+ #include <iterator>
+@@ -41,6 +42,7 @@
+ #include "libcamera/internal/camera_sensor.h"
+ #include "libcamera/internal/camera_sensor_properties.h"
+ #include "libcamera/internal/converter.h"
++#include "libcamera/internal/converter/converter_v4l2_m2m.h"
+ #include "libcamera/internal/delayed_controls.h"
+ #include "libcamera/internal/device_enumerator.h"
+ #include "libcamera/internal/formats.h"
+@@ -309,6 +311,18 @@ public:
+ 	int32_t bpsExposureMax_ = 1;
+ 	int32_t bpsGainMin_ = 1;
+ 	int32_t bpsGainMax_ = 1;
++
++	/*
++	 * White balance for the BPS: the parameter block of the driver
++	 * (bps-params-<w>x<h>.bin), whose white balance gain registers are
++	 * rewritten and sent back through the BPS parameters control.
++	 */
++	void bpsAwbLoad();
++	void bpsAwbApply();
++	std::vector<uint8_t> bpsParams_;
++	std::array<size_t, 3> bpsWbOffsets_ = {};	/* G, B, R values in bpsParams_ */
++	std::array<double, 3> bpsWbGains_ = { 1.0, 1.0, 1.0 };
++	bool bpsAwb_ = false;
+ 	int setupLinks();
+ 	int setupFormats(V4L2SubdeviceFormat *format,
+ 			 V4L2Subdevice::Whence whence,
+@@ -1075,6 +1089,89 @@ void SimpleCameraData::bpsAeStart()
+ 		<< bpsExposureMax_ << ", gain " << bpsGainMin_ << "-" << bpsGainMax_;
+ }
+ 
++void SimpleCameraData::bpsAwbLoad()
++{
++	bpsAwb_ = false;
++	bpsParams_.clear();
++
++	const Size &size = streams_[0].configuration().size;
++	const std::string names[] = {
++		"/lib/firmware/bps-params-" + std::to_string(size.width) + "x" +
++			std::to_string(size.height) + ".bin",
++		"/lib/firmware/bps-params.bin",
++	};
++
++	for (const std::string &name : names) {
++		std::ifstream file(name, std::ios::binary);
++		if (!file)
++			continue;
++		bpsParams_.assign(std::istreambuf_iterator<char>(file),
++				  std::istreambuf_iterator<char>());
++		break;
++	}
++
++	/* Header: magic, version, width, height, then (offset, length) x 4 */
++	if (bpsParams_.size() < 48)
++		return;
++
++	auto u32 = [this](size_t off) {
++		uint32_t v;
++		memcpy(&v, bpsParams_.data() + off, sizeof(v));
++		return v;
++	};
++
++	const uint32_t regsOff = u32(24), regsLen = u32(28);
++	if (regsOff + regsLen > bpsParams_.size())
++		return;
++
++	/* White balance 2.0: gains for G, B, R at 0x3868, 0x386c, 0x3870 */
++	unsigned int found = 0;
++	for (size_t off = regsOff; off + 8 <= regsOff + regsLen; off += 8) {
++		const uint32_t reg = u32(off);
++		if (reg < 0x3868 || reg > 0x3870 || (reg - 0x3868) % 4)
++			continue;
++		const unsigned int idx = (reg - 0x3868) / 4;
++		bpsWbOffsets_[idx] = off + 4;
++		bpsWbGains_[idx] = (u32(off + 4) >> 17) / 1024.0;
++		found |= 1 << idx;
++	}
++
++	if (found != 7) {
++		LOG(SimplePipeline, Warning)
++			<< "BPS white balance: no gains in the parameter block";
++		return;
++	}
++
++	bpsAwb_ = true;
++	LOG(SimplePipeline, Info)
++		<< "BPS white balance: block of " << bpsParams_.size()
++		<< " bytes, gains G " << bpsWbGains_[0] << " B " << bpsWbGains_[1]
++		<< " R " << bpsWbGains_[2];
++}
++
++void SimpleCameraData::bpsAwbApply()
++{
++	auto *m2m = dynamic_cast<V4L2M2MConverter *>(converter_.get());
++	if (!m2m)
++		return;
++
++	for (unsigned int i = 0; i < 3; i++) {
++		uint32_t v = std::min(0x7fff, static_cast<int>(std::lround(bpsWbGains_[i] * 1024))) << 17;
++		memcpy(bpsParams_.data() + bpsWbOffsets_[i], &v, sizeof(v));
++	}
++
++	/* V4L2_CID_USER_BASE + 0x10f0, see camss-bps.c */
++	constexpr uint32_t kBpsParamsCid = 0x00980900 + 0x10f0;
++	ControlList ctrls;
++	ctrls.set(kBpsParamsCid, ControlValue(Span<const uint8_t>(bpsParams_)));
++	int ret = m2m->applyControls(&streams_[0], ctrls);
++	if (ret) {
++		LOG(SimplePipeline, Warning)
++			<< "BPS white balance: cannot set the parameters: " << ret;
++		bpsAwb_ = false;
++	}
++}
++
+ void SimpleCameraData::bpsAeProcess(const FrameBuffer *buffer)
+ {
+ 	/* The sensor applies new values two frames later: measure every third one */
+@@ -1127,6 +1224,53 @@ void SimpleCameraData::bpsAeProcess(const FrameBuffer *buffer)
+ 	const double mean = static_cast<double>(sum) / count;
+ 	const double brightRatio = static_cast<double>(bright) / count;
+ 
++	/*
++	 * White balance, grey world on the processed image: mean linear R, G,
++	 * B of the mid tones (BT.601 full range NV12, black of the BPS gamma
++	 * at about 48), then half steps of the gains towards a neutral mean.
++	 * The colour matrix keeps grey grey, so this converges on the gains.
++	 */
++	if (bpsAwb_ && map.planes().size() >= 2 &&
++	    map.planes()[1].size() >= static_cast<size_t>(stride) * height / 2) {
++		const uint8_t *uv = map.planes()[1].data();
++		auto lin = [](double v) {
++			return std::pow(std::clamp((v - 48.0) / 207.0, 0.0, 1.0), 2.2);
++		};
++		double sr = 0, sg = 0, sb = 0;
++		unsigned int n = 0;
++		for (unsigned int j = stepY / 2; j < height; j += stepY) {
++			const uint8_t *line = y + static_cast<size_t>(j) * stride;
++			const uint8_t *cl = uv + static_cast<size_t>(j / 2) * stride;
++			for (unsigned int i = stepX / 2; i < width; i += stepX) {
++				const double Y = line[i];
++				if (Y < 70 || Y > 235)
++					continue;
++				const double U = cl[(i & ~1u)] - 128.0;
++				const double V = cl[(i & ~1u) + 1] - 128.0;
++				sr += lin(Y + 1.402 * V);
++				sg += lin(Y - 0.344 * U - 0.714 * V);
++				sb += lin(Y + 1.772 * U);
++				n++;
++			}
++		}
++
++		if (n > count / 20 && sr > 0 && sb > 0) {
++			const double kb = std::clamp(std::sqrt(sg / sb), 0.8, 1.25);
++			const double kr = std::clamp(std::sqrt(sg / sr), 0.8, 1.25);
++			LOG(SimplePipeline, Debug)
++				<< "BPS white balance: R/G " << sr / sg << ", B/G " << sb / sg
++				<< " over " << n << " samples";
++			if (std::abs(kb - 1.0) > 0.01 || std::abs(kr - 1.0) > 0.01) {
++				bpsWbGains_[1] = std::clamp(bpsWbGains_[1] * kb, 0.5, 8.0);
++				bpsWbGains_[2] = std::clamp(bpsWbGains_[2] * kr, 0.5, 8.0);
++				LOG(SimplePipeline, Debug)
++					<< "BPS white balance: gains B " << bpsWbGains_[1]
++					<< " R " << bpsWbGains_[2];
++				bpsAwbApply();
++			}
++		}
++	}
++
+ 	/*
+ 	 * Target in the gamma-encoded output; the BPS gamma table keeps about
+ 	 * 48 for black, so measure above it. Half steps in the linear domain
+@@ -1862,8 +2006,10 @@ int SimplePipelineHandler::start(Camera *camera, [[maybe_unused]] const ControlL
+ 
+ 	data->delayedCtrls_->reset();
+ 	data->bpsAe_ = false;
+-	if (data->converter_ && utils::secure_getenv("LIBCAMERA_QCOM_BPS"))
++	if (data->converter_ && utils::secure_getenv("LIBCAMERA_QCOM_BPS")) {
+ 		data->bpsAeStart();
++		data->bpsAwbLoad();
++	}
+ 	if (frameStartEmitter) {
+ 		ret = frameStartEmitter->setFrameStartEnabled(true);
+ 		if (ret) {
+-- 
+2.43.0
+
