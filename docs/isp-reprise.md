@@ -67,8 +67,9 @@ Conversion d'essai et visualisation :
 
 ```
 python3 ../../tools/camera/bps-params.py /tmp/bps-params.bin --taille 1920x1080 \
-    --iq 492,1,652,1,660,1,664,1,780,255,788,255,988,1,992,3,1060,1 --cst --wb 1,1.415,1.513 \
-    --regs $(python3 ../../tools/camera/bps-ccm.py 1 0 0 0 1 0 0 0 1) \
+    --iq 492,1,652,1,660,1,664,1,780,255,788,255,988,1,992,3,1060,1 --cst \
+    --wb 1,1.71,1.91 --wb-noir 54 \
+    --regs $(python3 ../../tools/camera/bps-ccm.py $(python3 ../../tools/camera/chromatix-cc13.py TUNED.bin --lux 300 --cct 4000)) \
     --regs $(python3 ../../tools/camera/bps-bls.py 54) \
     --gamma /lib/firmware/glut-sans-noir.bin --sl /lib/firmware/sl-1920x1080-bls.bin
 sudo cp /tmp/bps-params.bin /lib/firmware/
@@ -140,6 +141,13 @@ décalage à l'échelle 17 bits (noir 54 sur 10 bits), gain Q11, seuils de noir 
 vert et le bleu), en refaisant la mesure du noir par canal sur des photos du capteur couvert.
 
 ### 5. Matrice de couleurs selon l'éclairage (en cours depuis le 27 nov. 2026)
+
+**Premier vrai rendu couleur le 27 nov. 2026** (mur neutre 118/117/118, ombres neutres, tissu beige
+orangé, fleur rouge) avec : récupération de canal coupée (`--iq 992,3`), gains calculés sur l'image
+brute sans le noir (`raw10-phases.py` : G/B, G/R du mur → `--wb 1,1.71,1.91`), noir gardé par la
+balance des blancs (`--wb-noir 54`, le BLS est placé après elle), seuils du BLS à 0 et matrice du
+fichier de réglage à 4000 K. `TUNED.bin` = `com.qti.tuned.diting_semco_s5khp1_wide.bin` de la
+sauvegarde.
 
 La matrice identité donne des couleurs proches ; celle prise au hasard (`1.74 -0.5794 …`,
 d'une variante IPE) sature et tire l'orange vers le rose. CamX interpole entre plusieurs

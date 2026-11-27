@@ -42,6 +42,8 @@ p.add_argument('--iq', default='')
 p.add_argument('--regs', action='append', default=[])
 p.add_argument('--cst', action='store_true')
 p.add_argument('--wb')
+p.add_argument('--wb-noir', type=float, default=0,
+               help='noir sur 10 bits gardé par la balance des blancs (54 pour le HP1, avec le BLS)')
 p.add_argument('--gamma')
 p.add_argument('--sl')
 a = p.parse_args()
@@ -62,7 +64,11 @@ if a.wb:
     gains = [float(v) for v in a.wb.split(',')]
     if len(gains) != 3:
         raise SystemExit('--wb : trois gains G,B,R')
-    wb = [min(0x7fff, round(g * 1024)) << 17 for g in gains] + [0] * 9
+    # registres 3 à 8 : noir préservé par la balance des blancs, sortie = (entrée - noir) × gain + noir,
+    # champ de 18 bits (bits 14-31) à l'échelle noir10 × 256 (mesuré le 27 nov. 2026) ; le BLS,
+    # placé après, retire ensuite le noir de façon égale sur les trois canaux
+    noir = min(0x3ffff, round(a.wb_noir * 256)) << 14 & 0xffffffff
+    wb = [min(0x7fff, round(g * 1024)) << 17 for g in gains] + [noir] * 6 + [0] * 3
     for i, v in enumerate(wb):
         regs += [0x3868 + 4 * i, v]
 for r in a.regs:

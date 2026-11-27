@@ -351,8 +351,13 @@ registre `0x3894` ne sert à rien (le firmware écrit par-dessus). Les registres
 (`0x4968`-`0x4974`) et ses interrupteurs (octets 492-512 : `EN`, `COSITED_RGB_EN`, `DIR_G_INTERP_DIS`,
 `DIR_RB_INTERP_DIS`, `DYN_G_CLAMP_EN`, `DYN_RB_CLAMP_EN`) n'y étaient pour rien. Une fois le vert
 réel, les seuils du BLS à `0x4000` mettaient le vert des ombres à 0 (taches violettes) : seuils à 0
-par défaut dans `bps-bls.py`. Les gains de balance des blancs et la matrice sont à refaire avec le
-vrai vert (`tools/camera/chromatix-cc13.py` pour la matrice selon l'éclairage).
+par défaut dans `bps-bls.py`. Ensuite, ombres magenta : le BLS agit **après** la balance des blancs, donc le noir multiplié
+par les gains laissait un excès de rouge et de bleu. Les registres 3 à 8 de la balance des blancs
+(`0x3874`-`0x3888`, champ de 18 bits aux bits 14-31, même valeur partout dans CamX) sont un noir
+préservé : sortie = (entrée − noir) × gain + noir, échelle noir10 × 256 (`--wb-noir 54` dans
+`bps-params.py`). Avec lui, les gains se calculent sur l'image brute sans le noir (1,71 et 1,91
+pour la photo de test) et mur comme ombres sont neutres. Matrice selon l'éclairage :
+`tools/camera/chromatix-cc13.py`.
 
 **23 nov. 2026 : pilote V4L2 du BPS.** Le BPS est un périphérique mémoire à mémoire
 (`camss-bps.c`, dans le module `qcom-camss-icp`) : RAW10 compacté en entrée, NV12 en sortie,
