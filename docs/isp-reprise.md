@@ -137,6 +137,16 @@ libcamera peut s'en servir sans IPA, avec un fichier par taille installé dans `
 
 ### 3. Premier branchement sur libcamera (convertisseur du gestionnaire `simple`) — écrit le 27 nov. 2026, à tester
 
+**27 nov. 2026 : premières images par libcamera.** `LIBCAMERA_QCOM_BPS=1 cam -c N -s
+role=viewfinder,pixelformat=NV12 --capture=3 --file=/tmp/bps-#.nv12` donne des images NV12
+1920 × 1080 traitées par le BPS (capteur HP1 en 1920 × 1080, tampons CSI importés). Elles sont
+très sombres : sans ISP logiciel, pas d'exposition automatique ; réglages du BPS figés
+(`bps-params.bin` 1920 × 1080). Corrections qu'il a fallu : `queue_setup` doit donner pour
+l'entrée la taille exacte de l'image (vb2 s'en sert comme minimum des tampons importés), et le
+pilote répond aux requêtes de sélection (recadrage = image entière). Suite : exposition
+(contrôles du capteur, puis IPA), `bps-params-1920x1080.bin` avec un découpage refait avec
+`992,3`, essai dans plasma-camera.
+
 Fait sur la branche `isp-libcamera` : dans `camss-bps.c` (patch 0934), un périphérique média
 `qcom-camss-bps` et le chargement de `bps-params-LxH.bin` à chaque changement de format ;
 patch libcamera 0017 (`libcamera-diting` pkgrel 13), où le BPS ne remplace l'ISP logiciel que si
