@@ -15,6 +15,7 @@ et dans le DWARF du firmware de l'ICP (LensRollOffParameters_480) :
   horizontaux − 2.
 
 Usage :
+  bps-lsc.py EEPROM.bin 4096x3072 --ajouter ANCIEN.bin NOUVEAU.bin --sl sl-avec-lsc.bin
   bps-lsc.py EEPROM.bin 4096x3072 --table lsc.bin     # écrit les tables, affiche les --regs
   bps-lsc.py EEPROM.bin 4096x3072 --iq                # affiche les --iq à ajouter
 Options : --force F (part de la chute de lumière corrigée, 1 = toute, défaut 0.85 ;
@@ -114,6 +115,50 @@ def iq(w, h):
     return [x for k, val in enumerate(vals) for x in (444 + 4 * k, val)]
 
 
+def ajouter(a, w, h):
+    """Reprend un bloc existant (version 1 ou 2) : octets 444-488, registres, tables, découpage."""
+    if not a.sl:
+        sys.exit('--ajouter demande --sl (découpage calculé avec les mêmes --iq et le LSC)')
+    blob = open(a.ajouter[0], 'rb').read()
+    magic, version, bw_, bh_ = struct.unpack_from('<4I', blob)
+    if magic != 0x50535042 or version not in (1, 2):
+        sys.exit('bloc de paramètres inconnu')
+    nsec = 4 if version == 1 else 5
+    sec = struct.unpack_from(f'<{2 * nsec}I', blob, 16)
+    parts = [blob[o:o + n] if n else b'' for o, n in zip(sec[0::2], sec[1::2])]
+    if nsec == 4:
+        parts.append(b'')
+    iq_b = bytearray(parts[0])
+    avant = [(o, v) for o in range(0, len(iq_b) - 3, 4)
+             if (v := struct.unpack_from('<I', iq_b, o)[0]) and not 444 <= o <= 488]
+    print('octets de BpsIQSettings déjà mis :', ','.join(f'{o},{v}' for o, v in avant))
+    if len(iq_b) < 492:
+        iq_b += bytes(492 - len(iq_b))
+    vals = iq(w, h)
+    for off, val in zip(vals[0::2], vals[1::2]):
+        struct.pack_into('<I', iq_b, off, val)
+    # retire d'anciens registres LSC, puis ajoute les nouveaux
+    r = list(struct.unpack(f'<{len(parts[1]) // 4}I', parts[1]))
+    paires = [(r[i], r[i + 1]) for i in range(0, len(r), 2) if not 0x3668 <= r[i] <= 0x3698]
+    nv = regs(w, h, a.noir)
+    paires += list(zip(nv[0::2], nv[1::2]))
+    regs_b = struct.pack(f'<{2 * len(paires)}I', *(x for p in paires for x in p))
+    b = open(a.eeprom, 'rb').read()
+    lsc_b = tables(gains(eeprom_lsc(b), w, h, a.force, not a.sans_couleur))
+    sl_b = open(a.sl, 'rb').read()
+    blobs = [bytes(iq_b), regs_b, parts[2], sl_b, lsc_b]
+    off, data, secs = 56, b'', []
+    for x in blobs:
+        secs += [off if x else 0, len(x)]
+        data += x + bytes(-len(x) % 4)
+        off += len(x) + (-len(x) % 4)
+    out = struct.pack('<4I10I', 0x50535042, 2, w, h, *secs) + data
+    if len(out) > 32768:
+        sys.exit(f'bloc de {len(out)} octets, 32768 au plus')
+    open(a.ajouter[1], 'wb').write(out)
+    print(f'{a.ajouter[1]} : {len(out)} octets, {len(paires)} registres, ombrage force {a.force}')
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -125,9 +170,15 @@ def main():
     ap.add_argument('--noir', type=float, default=64)
     ap.add_argument('--sans-couleur', action='store_true')
     ap.add_argument('--montrer', action='store_true', help='affiche la grille de gains (Gr)')
+    ap.add_argument('--ajouter', nargs=2, metavar=('ENTREE', 'SORTIE'),
+                    help="ajoute l'ombrage à un bloc de bps-params.py existant")
+    ap.add_argument('--sl', help='avec --ajouter : découpage recalculé avec le LSC (obligatoire)')
     a = ap.parse_args()
 
     w, h = (int(x) for x in a.taille.lower().split('x'))
+    if a.ajouter:
+        ajouter(a, w, h)
+        return
     if a.iq:
         print(','.join(str(x) for x in iq(w, h)))
         return
