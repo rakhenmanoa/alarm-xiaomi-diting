@@ -145,7 +145,17 @@ role=viewfinder,pixelformat=NV12 --capture=3 --file=/tmp/bps-#.nv12` donne des i
 très sombres : sans ISP logiciel, pas d'exposition automatique ; réglages du BPS figés
 (`bps-params.bin` 1920 × 1080). Corrections qu'il a fallu : `queue_setup` doit donner pour
 l'entrée la taille exacte de l'image (vb2 s'en sert comme minimum des tampons importés), et le
-pilote répond aux requêtes de sélection (recadrage = image entière). Le mode 1920 × 1080 du HP1 tourne à ≈ 120 i/s : images sombres (exposition ≤ 1/120 s), et
+pilote répond aux requêtes de sélection (recadrage = image entière). **HP1 en 4096 × 3072 par le BPS, à 30 i/s, en continu** (27 nov. 2026) :
+`LIBCAMERA_QCOM_BPS=1 cam -c N -s role=viewfinder,pixelformat=NV12,width=4096,height=3072`.
+Il a fallu relever le masque DMA du module après l'allocation de la mémoire HFI : les tampons
+d'image vont dans la région « io 1 » du firmware (0x10c00000-0xe0000000) ; sous 256 Mio, les
+tampons NV12 de 19 Mo ne se mappaient plus (« failed to map dmabuf »). Dans ce mode, blanking et
+gain changés **pendant le flux** sont appliqués (cadence 30 → 23,5 i/s, luminosité moyenne
+62 → 88 avec le gain 4× → 64×) : l'IPA pourra régler l'exposition à chaque image.
+Piège : après un `rmmod` du module en marche, le premier `insmod` échoue souvent (« probe …
+failed with error -110 », module chargé sans périphérique) ; `rmmod` puis capture `cam` puis
+`insmod` à nouveau marche.
+Le mode 1920 × 1080 du HP1 tourne à ≈ 120 i/s : images sombres (exposition ≤ 1/120 s), et
 le blanking comme le gain changés pendant le flux restent sans effet dans ce mode (la cadence ne
 bouge pas). Préférer 4096 × 3072 (30 i/s) pour le BPS.
 Exposition à la main : régler le capteur **avant** de lancer `cam`
