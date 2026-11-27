@@ -492,3 +492,8 @@ du programme 4, et y écrit le réglage le plus proche du gain du capteur (contr
 analogique / son minimum) à chaque changement ; balance des blancs et débruitage partent dans un
 seul envoi du bloc par image. Essai de force (×4 sur le gain 16) : −20 % de bruit mais autant de
 détail perdu ; on garde la force du réglage Xiaomi.
+
+Vérifié le 27 nov. 2026 (HP1 12 Mpx, objectif couvert pendant la capture) : « BPS noise reduction:
+17 settings, gains 1-256 », puis réglages 4, 8, 16, 32, 64 choisis au fil de la montée du gain
+(130 → 2048), sans erreur du BPS. Rappel après un redémarrage : le numéro `cam` du HP1 change
+(`N=$(cam -l | grep 'i2c-bus@1/camera@10' | cut -d: -f1)`) et le module se recharge à la main.
