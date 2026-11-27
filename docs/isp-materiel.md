@@ -484,3 +484,11 @@ sans le module (réglage Xiaomi du gain 16, instance 65) : aucune erreur, 4 prog
 Le réglage du BPS est volontairement léger : chez Qualcomm, le gros du débruitage se fait dans
 l'IPE (ANR, filtrage temporel). Piège rencontré : stockage plein (images ARGB de 50 Mo de `cam` dans
 `/tmp`) → fichiers de sortie tronqués sans message d'erreur clair.
+
+**Débruitage automatique (libcamera, patch 0020, `libcamera-diting` 0.7.0-18).** `camx-abf.py
+--gains /lib/firmware/bps-abf-4096x3072.bin` calcule 17 réglages (gains 1 à 256) ; libcamera les
+charge si le bloc `bps-params-LxH.bin` (version 3) contient déjà les 23 registres ABF et la table
+du programme 4, et y écrit le réglage le plus proche du gain du capteur (contrôle de gain
+analogique / son minimum) à chaque changement ; balance des blancs et débruitage partent dans un
+seul envoi du bloc par image. Essai de force (×4 sur le gain 16) : −20 % de bruit mais autant de
+détail perdu ; on garde la force du réglage Xiaomi.

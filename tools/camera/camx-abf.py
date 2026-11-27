@@ -8,6 +8,11 @@ de CamX lui-même, à partir du fichier de réglage du capteur.
               [--force F] [--table abf.bin] [-v]
       affiche les --regs (23 registres de 0x3c68 à 0x3ce8) et écrit la table de bruit
       (64 mots, DMI 0x3c08) ; --iq affiche les octets de BpsIQSettings à mettre
+  camx-abf.py camera.qcom.so TUNED.bin --gains bps-abf-4096x3072.bin [--instance N] [--noir 64]
+              [--taille 4096x3072] [--force F]
+      réglages pour une série de gains (1 à 256), lus par libcamera (patch 0020) qui prend
+      celui du gain réel du capteur ; format : « ABFG », version 1, nombre, puis
+      {float gain; u32 registres[23] (ordre de 0x3c68 à 0x3ce8); u32 table[64]}
 
 Méthode : la région du fichier de réglage (bpcabf41_rgn_dataType, 107 flottants) est
 interpolée selon le gain du capteur, comme CamX (gain DRC 1, rapport HDR 1), puis passée à
@@ -184,6 +189,7 @@ def main():
     ap.add_argument('--force', type=float, default=1.0)
     ap.add_argument('--table')
     ap.add_argument('--iq', action='store_true')
+    ap.add_argument('--gains', metavar='FICHIER')
     ap.add_argument('-v', '--verbose', action='store_true')
     a = ap.parse_args()
 
@@ -200,6 +206,18 @@ def main():
         return
     if a.iq:
         print('384,1,388,0,392,1,396,0')
+        return
+    if a.gains:
+        serie = [1, 1.5, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256]
+        out = struct.pack('<3I', 0x47464241, 1, len(serie))
+        for g in serie:
+            a.gain = g
+            o, _ = calculer(a.lib, t, a)
+            out += struct.pack('<f', g)
+            out += struct.pack('<23I', *(v for _, v in registres(o)))
+            out += table(o)
+        open(a.gains, 'wb').write(out)
+        print(f'{a.gains} : {len(serie)} réglages, {len(out)} octets')
         return
     o, rgn = calculer(a.lib, t, a)
     if a.verbose:

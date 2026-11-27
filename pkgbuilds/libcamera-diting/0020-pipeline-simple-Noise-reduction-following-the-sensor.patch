@@ -1,0 +1,230 @@
+From c59218f20a7b304779111558f1fe1bb0f94d7c7c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 27 Nov 2026 18:48:48 +0300
+Subject: [PATCH] pipeline: simple: Noise reduction following the sensor gain
+ for the Qualcomm BPS
+
+The BPS parameter block can carry the BPC-ABF noise reduction (23
+registers and a 64 entry DMI table). Load settings computed for a range
+of sensor gains from /lib/firmware/bps-abf-<w>x<h>.bin and write the
+nearest one into the block when the gain changes. Parameter updates of
+the white balance and of the noise reduction are sent once per frame.
+---
+ src/libcamera/pipeline/simple/simple.cpp | 167 ++++++++++++++++++++++-
+ 1 file changed, 162 insertions(+), 5 deletions(-)
+
+diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
+index fe9fbdf..41cf943 100644
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -319,10 +319,32 @@ public:
+ 	 */
+ 	void bpsAwbLoad();
+ 	void bpsAwbApply();
++	void bpsParamsSend();
++	void bpsAeMeasure(const FrameBuffer *buffer);
++	bool bpsParamsDirty_ = false;
+ 	std::vector<uint8_t> bpsParams_;
+ 	std::array<size_t, 3> bpsWbOffsets_ = {};	/* G, B, R values in bpsParams_ */
+ 	std::array<double, 3> bpsWbGains_ = { 1.0, 1.0, 1.0 };
+ 	bool bpsAwb_ = false;
++
++	/*
++	 * Noise reduction (ABF) following the sensor gain: settings computed
++	 * for a range of gains (bps-abf-<w>x<h>.bin, tools/camera/camx-abf.py),
++	 * the nearest one is written into the parameter block when the gain
++	 * changes.
++	 */
++	struct BpsAbfEntry {
++		float gain;
++		std::array<uint32_t, 23> regs;
++		std::array<uint32_t, 64> lut;
++	};
++	void bpsAbfLoad();
++	void bpsAbfUpdate();
++	std::vector<BpsAbfEntry> bpsAbfEntries_;
++	std::array<size_t, 23> bpsAbfRegOffsets_ = {};
++	size_t bpsAbfLutOffset_ = 0;
++	int bpsAbfCurrent_ = -1;
++	bool bpsAbf_ = false;
+ 	int setupLinks();
+ 	int setupFormats(V4L2SubdeviceFormat *format,
+ 			 V4L2Subdevice::Whence whence,
+@@ -1151,14 +1173,20 @@ void SimpleCameraData::bpsAwbLoad()
+ 
+ void SimpleCameraData::bpsAwbApply()
+ {
+-	auto *m2m = dynamic_cast<V4L2M2MConverter *>(converter_.get());
+-	if (!m2m)
+-		return;
+-
+ 	for (unsigned int i = 0; i < 3; i++) {
+ 		uint32_t v = std::min(0x7fff, static_cast<int>(std::lround(bpsWbGains_[i] * 1024))) << 17;
+ 		memcpy(bpsParams_.data() + bpsWbOffsets_[i], &v, sizeof(v));
+ 	}
++	bpsParamsDirty_ = true;
++}
++
++void SimpleCameraData::bpsParamsSend()
++{
++	bpsParamsDirty_ = false;
++
++	auto *m2m = dynamic_cast<V4L2M2MConverter *>(converter_.get());
++	if (!m2m || bpsParams_.empty())
++		return;
+ 
+ 	/* V4L2_CID_USER_BASE + 0x10f0, see camss-bps.c */
+ 	constexpr uint32_t kBpsParamsCid = 0x00980900 + 0x10f0;
+@@ -1167,12 +1195,140 @@ void SimpleCameraData::bpsAwbApply()
+ 	int ret = m2m->applyControls(&streams_[0], ctrls);
+ 	if (ret) {
+ 		LOG(SimplePipeline, Warning)
+-			<< "BPS white balance: cannot set the parameters: " << ret;
++			<< "BPS: cannot set the parameters: " << ret;
+ 		bpsAwb_ = false;
++		bpsAbf_ = false;
++	}
++}
++
++void SimpleCameraData::bpsAbfLoad()
++{
++	bpsAbf_ = false;
++	bpsAbfEntries_.clear();
++	bpsAbfCurrent_ = -1;
++
++	/* Header: magic, version, width, height, then (offset, length) x 6 */
++	if (bpsParams_.size() < 64)
++		return;
++
++	auto u32 = [this](size_t off) {
++		uint32_t v;
++		memcpy(&v, bpsParams_.data() + off, sizeof(v));
++		return v;
++	};
++	if (u32(4) < 3)
++		return;
++
++	/* The 23 registers of BPSBPCABF411Titan680, in the order of the file */
++	static constexpr std::array<uint32_t, 23> kRegs = {
++		0x3c68, 0x3c6c, 0x3c80, 0x3c84, 0x3c88, 0x3c8c, 0x3ca0, 0x3ca4,
++		0x3ca8, 0x3cac, 0x3cb0, 0x3cb4, 0x3cb8, 0x3cbc, 0x3cc8, 0x3ccc,
++		0x3cd0, 0x3cd4, 0x3cd8, 0x3cdc, 0x3ce0, 0x3ce4, 0x3ce8,
++	};
++	const uint32_t regsOff = u32(24), regsLen = u32(28);
++	if (regsOff + regsLen > bpsParams_.size())
++		return;
++	unsigned int found = 0;
++	for (size_t off = regsOff; off + 8 <= regsOff + regsLen; off += 8) {
++		auto it = std::find(kRegs.begin(), kRegs.end(), u32(off));
++		if (it == kRegs.end())
++			continue;
++		bpsAbfRegOffsets_[it - kRegs.begin()] = off + 4;
++		found++;
+ 	}
++	if (found != kRegs.size())
++		return;
++
++	/* DMI table of program 4 (BPS_ABF_LUT_PROGRAM) in the luts section */
++	const uint32_t lutsOff = u32(56), lutsLen = u32(60);
++	if (lutsOff + lutsLen > bpsParams_.size())
++		return;
++	bpsAbfLutOffset_ = 0;
++	for (size_t off = lutsOff; off + 12 <= lutsOff + lutsLen;) {
++		const uint32_t prog = u32(off), bytes = u32(off + 8);
++		if (prog == 4 && bytes == 64 * 4)
++			bpsAbfLutOffset_ = off + 12;
++		off += 12 + bytes;
++	}
++	if (!bpsAbfLutOffset_)
++		return;
++
++	const Size &size = streams_[0].configuration().size;
++	std::ifstream file("/lib/firmware/bps-abf-" + std::to_string(size.width) +
++				   "x" + std::to_string(size.height) + ".bin",
++			   std::ios::binary);
++	if (!file)
++		return;
++	std::vector<uint8_t> data((std::istreambuf_iterator<char>(file)),
++				  std::istreambuf_iterator<char>());
++
++	/* "ABFG", version 1, count, then { float gain; regs[23]; lut[64] } */
++	constexpr size_t kEntry = 4 * (1 + 23 + 64);
++	uint32_t hdr[3];
++	if (data.size() < sizeof(hdr))
++		return;
++	memcpy(hdr, data.data(), sizeof(hdr));
++	if (hdr[0] != 0x47464241 || hdr[1] != 1 ||
++	    data.size() < sizeof(hdr) + hdr[2] * kEntry)
++		return;
++	for (uint32_t i = 0; i < hdr[2]; i++) {
++		BpsAbfEntry e;
++		const uint8_t *p = data.data() + sizeof(hdr) + i * kEntry;
++		memcpy(&e.gain, p, 4);
++		memcpy(e.regs.data(), p + 4, 23 * 4);
++		memcpy(e.lut.data(), p + 4 * 24, 64 * 4);
++		bpsAbfEntries_.push_back(e);
++	}
++	if (bpsAbfEntries_.empty())
++		return;
++
++	bpsAbf_ = true;
++	LOG(SimplePipeline, Info)
++		<< "BPS noise reduction: " << bpsAbfEntries_.size()
++		<< " settings, gains " << bpsAbfEntries_.front().gain << "-"
++		<< bpsAbfEntries_.back().gain;
++}
++
++void SimpleCameraData::bpsAbfUpdate()
++{
++	if (!bpsAbf_)
++		return;
++
++	/* Sensor gain: the minimum of the analogue gain control is 1x */
++	const double gain = static_cast<double>(bpsGain_) / bpsGainMin_;
++	int best = 0;
++	double bestDist = 1e9;
++	for (size_t i = 0; i < bpsAbfEntries_.size(); i++) {
++		double d = std::abs(std::log(gain / bpsAbfEntries_[i].gain));
++		if (d < bestDist) {
++			bestDist = d;
++			best = i;
++		}
++	}
++	if (best == bpsAbfCurrent_)
++		return;
++
++	const BpsAbfEntry &e = bpsAbfEntries_[best];
++	for (size_t i = 0; i < e.regs.size(); i++)
++		memcpy(bpsParams_.data() + bpsAbfRegOffsets_[i], &e.regs[i], 4);
++	memcpy(bpsParams_.data() + bpsAbfLutOffset_, e.lut.data(), 64 * 4);
++	bpsAbfCurrent_ = best;
++	bpsParamsDirty_ = true;
++
++	LOG(SimplePipeline, Debug)
++		<< "BPS noise reduction: settings for gain " << e.gain
++		<< " (sensor gain " << gain << ")";
+ }
+ 
+ void SimpleCameraData::bpsAeProcess(const FrameBuffer *buffer)
++{
++	bpsAeMeasure(buffer);
++	bpsAbfUpdate();
++	if (bpsParamsDirty_)
++		bpsParamsSend();
++}
++
++void SimpleCameraData::bpsAeMeasure(const FrameBuffer *buffer)
+ {
+ 	/* The sensor applies new values two frames later: measure every third one */
+ 	if (bpsAeFrame_++ % 3)
+@@ -2009,6 +2165,7 @@ int SimplePipelineHandler::start(Camera *camera, [[maybe_unused]] const ControlL
+ 	if (data->converter_ && utils::secure_getenv("LIBCAMERA_QCOM_BPS")) {
+ 		data->bpsAeStart();
+ 		data->bpsAwbLoad();
++		data->bpsAbfLoad();
+ 	}
+ 	if (frameStartEmitter) {
+ 		ret = frameStartEmitter->setFrameStartEnabled(true);
+-- 
+2.43.0
+
