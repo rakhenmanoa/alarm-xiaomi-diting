@@ -145,7 +145,20 @@ role=viewfinder,pixelformat=NV12 --capture=3 --file=/tmp/bps-#.nv12` donne des i
 très sombres : sans ISP logiciel, pas d'exposition automatique ; réglages du BPS figés
 (`bps-params.bin` 1920 × 1080). Corrections qu'il a fallu : `queue_setup` doit donner pour
 l'entrée la taille exacte de l'image (vb2 s'en sert comme minimum des tampons importés), et le
-pilote répond aux requêtes de sélection (recadrage = image entière). **HP1 en 4096 × 3072 par le BPS, à 30 i/s, en continu** (27 nov. 2026) :
+pilote répond aux requêtes de sélection (recadrage = image entière). **27 nov. 2026, après-midi : exposition et balance des blancs automatiques avec le BPS**
+(patches libcamera 0018 et 0019, `libcamera-diting` 0.7.0-17). Avec `LIBCAMERA_QCOM_BPS=1`, le
+gestionnaire `simple` mesure chaque troisième image NV12 sortie : luminance → exposition puis gain
+du capteur (protection des hautes lumières à 5 %) ; couleur moyenne des tons moyens → gains de
+balance des blancs réécrits dans le bloc `bps-params-LxH.bin` et renvoyés au pilote par le
+contrôle `bps_parameters` (modèle CamX : réglages envoyés par requête). Essai HP1 12 MP : gains
+1,52/1,51 → B 1,58, R 1,80 en ~6 mesures, R/V et B/V à 1,0, image neutre et nette.
+Mise au point : pas d'autofocus sur ce chemin ; l'objectif garde la position réglée avant
+(`vcm=$(media-ctl -d /dev/media0 -e "ak7375 3-000c")`, `v4l2-ctl -d $vcm --set-ctrl
+focus_absolute=150` pour une pièce à quelques mètres ; plus haut = plus proche, 0-1023).
+Reste : matrice selon la température de couleur, autofocus, exposition au-delà de 1/30 s
+(blanking), essai dans plasma-camera.
+
+**HP1 en 4096 × 3072 par le BPS, à 30 i/s, en continu** (27 nov. 2026) :
 `LIBCAMERA_QCOM_BPS=1 cam -c N -s role=viewfinder,pixelformat=NV12,width=4096,height=3072`.
 Il a fallu relever le masque DMA du module après l'allocation de la mémoire HFI : les tampons
 d'image vont dans la région « io 1 » du firmware (0x10c00000-0xe0000000) ; sous 256 Mio, les
