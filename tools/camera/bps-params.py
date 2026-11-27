@@ -14,7 +14,7 @@ Usage : bps-params.py SORTIE.bin --taille 1920x1080 [options]
 
 Exemple (chaîne du 23 nov. 2026) :
   bps-params.py bps-params.bin --taille 1920x1080 \\
-      --iq 492,1,652,1,660,1,664,1,780,255,788,255,988,1 --cst --wb 1,1.415,1.513 \\
+      --iq 492,1,652,1,660,1,664,1,780,255,788,255,988,1,992,3 --cst --wb 1,1.415,1.513 \\
       --regs $(bps-ccm.py 1 0 0 0 1 0 0 0 1) --gamma gamma.bin --sl sl-1920x1080.bin"""
 import argparse
 import struct

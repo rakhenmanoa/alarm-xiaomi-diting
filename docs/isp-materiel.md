@@ -338,6 +338,22 @@ pour 960, 5 pour 1 920, rangées de droite à gauche), 4 pixels de marge par cô
 dématriçage, plages de lignes de la passe égales à l'image, recadrages de la passe en lignes
 (chrominance : 0 à H/2 − 1).
 
+**27 nov. 2026 : le vert était une copie du bleu (récupération de canal).** Avec la matrice du
+fichier de réglage, l'orange virait au rose. Mesures sur la photo de test : l'image brute est bien
+GBRG avec quatre positions distinctes (`tools/camera/raw10-phases.py`), mais en sortie du BPS le vert
+était identique au bleu, pixel pour pixel, et le gain « bleu » de la balance des blancs faisait bouger
+les deux. Cause, lue dans `BPSWB201Titan680::UpdateFirmwareData` (CamX) et le DWARF du firmware : la
+balance des blancs 2.0 a une **récupération de canal** (reconstruction des canaux saturés) réglée par
+`BpsIQSettings` octet 992 (`WbParameters.channelRecovery`) et 996 (`recoveryInterpRange`), que le
+firmware programme lui-même à partir de `0x3860`. CamX y met 3 (coupée) en usage normal ; à 0 elle
+est active avec des seuils nuls et remplace le vert. **Toujours passer `--iq 992,3`.** Écrire le
+registre `0x3894` ne sert à rien (le firmware écrit par-dessus). Les registres du dématriçage
+(`0x4968`-`0x4974`) et ses interrupteurs (octets 492-512 : `EN`, `COSITED_RGB_EN`, `DIR_G_INTERP_DIS`,
+`DIR_RB_INTERP_DIS`, `DYN_G_CLAMP_EN`, `DYN_RB_CLAMP_EN`) n'y étaient pour rien. Une fois le vert
+réel, les seuils du BLS à `0x4000` mettaient le vert des ombres à 0 (taches violettes) : seuils à 0
+par défaut dans `bps-bls.py`. Les gains de balance des blancs et la matrice sont à refaire avec le
+vrai vert (`tools/camera/chromatix-cc13.py` pour la matrice selon l'éclairage).
+
 **23 nov. 2026 : pilote V4L2 du BPS.** Le BPS est un périphérique mémoire à mémoire
 (`camss-bps.c`, dans le module `qcom-camss-icp`) : RAW10 compacté en entrée, NV12 en sortie,
 réglages d'image et découpage passés en un bloc (`tools/camera/bps-params.py`). La photo du HP1

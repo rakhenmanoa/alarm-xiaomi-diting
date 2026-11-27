@@ -10,7 +10,9 @@ DumpRegConfig (camera.qcom.so, sauvegarde HyperOS) :
                                   sous le seuil, l'échantillon brut du canal est forcé à 0 (mesuré le
                                   25 nov. 2026). Ordre : 0x3e70 vert Gr, 0x3e74 vert Gb, 0x3e78 bleu,
                                   0x3e7c rouge (R, Gr, Gb, B dans CamX). Même échelle que le décalage
-                                  (N = 17). À laisser à 0x4000 (sans effet) : un seuil plus haut, même
+                                  (N = 17). Défaut 0 depuis le 27 nov. 2026 : avec le vrai vert (récupération
+                                  de canal coupée, --iq 992,3), 0x4000 mettait le vert des ombres à 0
+                                  (taches violettes). Avant ce jour, 0x4000 semblait sans effet ; un seuil plus haut, même
                                   égal sur les quatre canaux, crée du bruit coloré dans les ombres
                                   (rouge, turquoise) ; 0x8000 écrase les ombres, 0x1ffff tout.
 N est l'échelle interne du décalage ; le noir mesuré sur 10 bits est multiplié par 2^(N-10).
@@ -31,7 +33,7 @@ noir = min(round(noir10 * (full >> 10)), full - 1)
 gain = max(0, min(0x1ffff, int(full / (full - noir) * 2048)))   # Q11
 # seuils : plafonnés à 14 bits (0x3fff) ; plus hauts (N = 17 ou 18), ils écrasent toute l'image
 s10 = float(sys.argv[3]) if len(sys.argv) > 3 else None
-seuil = (0x4000 if s10 is None else round(s10 * (full >> 10))) << 14 & 0xffffffff
+seuil = (0 if s10 is None else round(s10 * (full >> 10))) << 14 & 0xffffffff
 if len(sys.argv) > 4:   # SEUILS : quatre valeurs de champ (18 bits, non décalées) pour 0x3e70,74,78,7c
     t = [int(v, 0) << 14 & 0xffffffff for v in sys.argv[4].split(',')]
 else:

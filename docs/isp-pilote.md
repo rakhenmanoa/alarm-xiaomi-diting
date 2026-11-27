@@ -84,7 +84,7 @@ Bloc ≤ 32 Ko. Le pilote le prend :
 
 ```
 bps-params.py bps-params.bin --taille 1920x1080 \
-    --iq 492,1,652,1,660,1,664,1,780,255,788,255,988,1 --cst --wb 1,1.415,1.513 \
+    --iq 492,1,652,1,660,1,664,1,780,255,788,255,988,1,992,3 --cst --wb 1,1.415,1.513 \
     --regs $(bps-ccm.py 1 0 0 0 1 0 0 0 1) --gamma gamma.bin --sl sl-mipi-wb.bin
 v4l2-ctl -d /dev/videoN --set-fmt-video-out=width=1920,height=1080,pixelformat=pGAA \
     --stream-out-mmap --stream-mmap --stream-from=hp1-pad.raw --stream-to=sortie.nv12 \

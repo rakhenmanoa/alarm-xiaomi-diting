@@ -59,13 +59,15 @@ sudo modprobe -a v4l2-mem2mem videobuf2-dma-contig
 cam -c 1 -s role=viewfinder -s role=raw,width=1920,height=1080 --capture=5 --file=/tmp/reveil-#.raw
 sudo rmmod qcom_camss_icp; sudo insmod qcom-camss-icp.ko && sudo dmesg | tail -20
 # jamais de rmmod après « create handle: -110 » (le téléphone se fige) : redémarrer
+# le bloc caméra se met aussi en veille après une longue inactivité (~2 h) : même symptôme,
+# même remède (redémarrage) ; une capture cam avant chaque essai l'évite
 ```
 
 Conversion d'essai et visualisation :
 
 ```
 python3 ../../tools/camera/bps-params.py /tmp/bps-params.bin --taille 1920x1080 \
-    --iq 492,1,652,1,660,1,664,1,780,255,788,255,988,1,1060,1 --cst --wb 1,1.415,1.513 \
+    --iq 492,1,652,1,660,1,664,1,780,255,788,255,988,1,992,3,1060,1 --cst --wb 1,1.415,1.513 \
     --regs $(python3 ../../tools/camera/bps-ccm.py 1 0 0 0 1 0 0 0 1) \
     --regs $(python3 ../../tools/camera/bps-bls.py 54) \
     --gamma /lib/firmware/glut-sans-noir.bin --sl /lib/firmware/sl-1920x1080-bls.bin
@@ -91,7 +93,7 @@ But : traiter la photo brute entière, sans recadrage.
 
 1. Calculer le découpage (dans la conversation, avec `libipebpsstriping.so` jointe) :
    `bps-striping.py libipebpsstriping.so 4096 3072 -o sl-4096x3072.bin --in-format 2 --bayer 3
-   --iq 492,1,652,1,660,1,664,1,780,255,788,255,988,1`. Vérifier que le fichier tient dans
+   --iq 492,1,652,1,660,1,664,1,780,255,788,255,988,1,992,3`. Vérifier que le fichier tient dans
    16 Ko (limite `BPS_SHM_SL_SIZE` du pilote ; sinon l'agrandir dans `camss-bps.c`, avec les
    régions de mémoire partagée qui suivent).
 2. Bloc de paramètres avec `--taille 4096x3072` et ce découpage.
