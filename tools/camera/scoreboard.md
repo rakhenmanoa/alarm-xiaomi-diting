@@ -55,7 +55,7 @@ reprise du travail : [isp-reprise.md](../../docs/isp-reprise.md).
 | Conversion YUV (CST 1.2) | ✅ | BT.601 plage pleine, NV12 |
 | Réduction du bruit (ABF 4.1) | ⬜ | valeurs dans le fichier de réglage, format des registres à décoder |
 | Pixels défectueux / PDAF (BPC-PDPC 3.1.1) | ⬜ | idem |
-| Ombrage de l'objectif (LSC 4.1.1) | 🟡 | tables (DMI 0x3608, programme 5), 13 registres à 0x3668 et octets 444-488 de `BpsIQSettings` relevés ; `bps-lsc.py` depuis l'EEPROM, section `lsc` du bloc (version 2) ; découpage avec LSC calculé ; à tester sur image |
+| Ombrage de l'objectif (LSC 4.1.1) | 🟡 | tables (DMI 0x3608, programme 5), 13 registres à 0x3668 et octets 444-488 de `BpsIQSettings` relevés ; `bps-lsc.py` depuis l'EEPROM, section `lsc` du bloc (version 2) ; découpage avec LSC calculé ; essayé sur le téléphone (correction lisse, sans cassure entre bandes) ; reste à régler la force sur image uniforme |
 | Mappage de tons (GTM, LTM) | ⬜ | |
 | Sorties réduites DS4 / DS16 | ⬜ | pour un aperçu léger depuis le 12 Mpx, comme sous Android |
 | Statistiques matérielles (BG, BHIST) | ⬜ | pour remplacer la mesure sur l'image sortie |

@@ -414,3 +414,12 @@ DWARF du firmware (`LensRollOffParameters_480`, `_ProgramType`).
 - `tools/camera/bps-lsc.py` fait tout depuis l'EEPROM : en 4096 × 3072, blocs de 128 × 128,
   8 sous-blocs de 16, `x_delta` = 2^20 / 16 (hypothèse : pas de 2^20, à vérifier sur image).
 - Pilote : section `lsc` du bloc de paramètres (version 2 ; la version 1 reste acceptée).
+
+**27 nov. 2026 : essai sur le téléphone.** Même image brute 4096 × 3072 passée deux fois dans le
+BPS (`v4l2-ctl`), avec et sans la section `lsc` : aucune cassure aux 10 frontières de bandes (rapport
+identique à 0,005 près de part et d'autre), correction lisse, minimale au centre, qui monte vers les
+bords (≈ × 2 en linéaire à gauche, moins à droite, scène en partie saturée de ce côté) ; teinte
+stable (R/V et B/V à ± 5 %). Le pas de 2^20 pour `x_delta` est donc plausible. Reste une mesure sur
+image uniforme (papier contre l'objectif) pour régler la force et vérifier la symétrie.
+Piège : `v4l2-ctl --stream-to` écrit le tampon entier (image + 64 Ko) ; couper avec
+`head -c 18874368` avant `ffmpeg`.
