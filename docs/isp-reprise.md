@@ -137,16 +137,22 @@ décalage à l'échelle 17 bits (noir 54 sur 10 bits), gain Q11, seuils de noir 
 `bps-gamma.py … 2.2 1.0 0`. Reste à faire : un noir par canal (le rouge a un noir plus bas que le
 vert et le bleu), en refaisant la mesure du noir par canal sur des photos du capteur couvert.
 
-### 5. Matrice de couleurs selon l'éclairage
+### 5. Matrice de couleurs selon l'éclairage (en cours depuis le 27 nov. 2026)
 
-La matrice identité donne des couleurs proches ; celle du HP1 (`1.74 -0.5794 …`) sature et
-tire l'orange vers le rose. CamX interpole entre plusieurs matrices selon la température de
-couleur.
+La matrice identité donne des couleurs proches ; celle prise au hasard (`1.74 -0.5794 …`,
+d'une variante IPE) sature et tire l'orange vers le rose. CamX interpole entre plusieurs
+matrices selon l'indice de luminosité et la température de couleur.
 
-1. Décoder dans le fichier de réglage `com.qti.tuned.diting_semco_s5khp1_wide.bin` l'arbre
-   du module CC 1.3 (déclencheurs CCT et lux, matrices associées).
-2. Outil qui, pour une température de couleur, interpole la matrice ; essai sur des photos
-   sous éclairage connu (jour, ampoule).
+1. ~~Décoder l'arbre du module CC 1.3~~ : fait, `tools/camera/chromatix-cc13.py`
+   (format dans l'en-tête du script). Le fichier a 84 instances du module, en 5 groupes ;
+   l'instance BPS 929 a les mêmes matrices que l'IPE par défaut (instance 4) : c'est elle
+   par défaut. 19 régions : 5 plages d'indice de luminosité (la plus sombre, 600 et plus,
+   donne la matrice identité) × 5 plages de température de couleur (2500 à 10000 K).
+2. Essai sur la photo de test : `--regs $(bps-ccm.py $(chromatix-cc13.py TUNED.bin --lux L
+   --cct K))` à la place de la matrice identité, pour quelques températures de couleur.
+3. Reste : estimer la température de couleur à partir des gains de balance des blancs
+   (points de référence AWB `refPtV1` du même fichier : rapports R/V, B/V de 10 éclairages)
+   et l'indice de luminosité à partir de l'exposition, dans l'IPA (étape 6).
 
 ### 6. IPA libcamera (réglages automatiques)
 
