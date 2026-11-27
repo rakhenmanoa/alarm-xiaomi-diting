@@ -1,0 +1,209 @@
+From edf0dde687363544688178bf0abc1539e1237480 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 27 Nov 2026 12:47:23 +0300
+Subject: [PATCH] pipeline: simple: Exposure loop for the Qualcomm BPS
+ converter
+
+With the BPS as converter, the software ISP and its IPA are not used, so
+nothing drives the sensor exposure. Measure the luminance of the processed
+NV12 images (about 64 x 48 samples, every third frame) and adjust the
+sensor exposure, then the analogue gain, towards a fixed target, with half
+steps in the linear domain and highlight protection.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/libcamera/pipeline/simple/simple.cpp | 132 +++++++++++++++++++++++
+ 1 file changed, 132 insertions(+)
+
+diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
+index 34552be..c18111d 100644
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -7,6 +7,7 @@
+  */
+ 
+ #include <algorithm>
++#include <array>
+ #include <cmath>
+ #include <iterator>
+ #include <list>
+@@ -28,6 +29,7 @@
+ 
+ #include <libcamera/camera.h>
+ #include <libcamera/color_space.h>
++#include <libcamera/formats.h>
+ #include <libcamera/control_ids.h>
+ #include <libcamera/geometry.h>
+ #include <libcamera/pixel_format.h>
+@@ -43,6 +45,7 @@
+ #include "libcamera/internal/device_enumerator.h"
+ #include "libcamera/internal/formats.h"
+ #include "libcamera/internal/global_configuration.h"
++#include "libcamera/internal/mapped_framebuffer.h"
+ #include "libcamera/internal/media_device.h"
+ #include "libcamera/internal/pipeline_handler.h"
+ #include "libcamera/internal/request.h"
+@@ -290,6 +293,22 @@ public:
+ 	SimplePipelineHandler *pipe();
+ 
+ 	int init();
++
++	/*
++	 * Exposure loop for the Qualcomm BPS used as converter: there is no IPA
++	 * on that path, so measure the processed NV12 images and drive the
++	 * sensor exposure and gain directly.
++	 */
++	void bpsAeStart();
++	void bpsAeProcess(const FrameBuffer *buffer);
++	bool bpsAe_ = false;
++	unsigned int bpsAeFrame_ = 0;
++	int32_t bpsExposure_ = 0;
++	int32_t bpsGain_ = 0;
++	int32_t bpsExposureMin_ = 1;
++	int32_t bpsExposureMax_ = 1;
++	int32_t bpsGainMin_ = 1;
++	int32_t bpsGainMax_ = 1;
+ 	int setupLinks();
+ 	int setupFormats(V4L2SubdeviceFormat *format,
+ 			 V4L2Subdevice::Whence whence,
+@@ -377,6 +396,7 @@ private:
+ 	void metadataReady(uint32_t frame, const ControlList &metadata);
+ 	void setSensorControls(const ControlList &sensorControls, const ControlList &lensControls);
+ 	int32_t lastFocusPosition_ = -1;
++
+ };
+ 
+ class SimpleCameraConfiguration : public CameraConfiguration
+@@ -1026,10 +1046,119 @@ void SimpleCameraData::conversionInputDone(FrameBuffer *buffer)
+ 	}
+ }
+ 
++void SimpleCameraData::bpsAeStart()
++{
++	const ControlInfoMap &infos = sensor_->controls();
++	auto exp = infos.find(V4L2_CID_EXPOSURE);
++	auto gain = infos.find(V4L2_CID_ANALOGUE_GAIN);
++
++	bpsAe_ = false;
++	if (exp == infos.end() || gain == infos.end())
++		return;
++
++	bpsExposureMin_ = std::max(exp->second.min().get<int32_t>(), 1);
++	bpsExposureMax_ = std::max(exp->second.max().get<int32_t>(), bpsExposureMin_);
++	bpsGainMin_ = std::max(gain->second.min().get<int32_t>(), 1);
++	bpsGainMax_ = std::max(gain->second.max().get<int32_t>(), bpsGainMin_);
++
++	const std::array<uint32_t, 2> ids = { V4L2_CID_EXPOSURE, V4L2_CID_ANALOGUE_GAIN };
++	ControlList cur = sensor_->getControls(ids);
++	bpsExposure_ = std::clamp(cur.get(V4L2_CID_EXPOSURE).get<int32_t>(),
++				  bpsExposureMin_, bpsExposureMax_);
++	bpsGain_ = std::clamp(cur.get(V4L2_CID_ANALOGUE_GAIN).get<int32_t>(),
++			      bpsGainMin_, bpsGainMax_);
++	bpsAeFrame_ = 0;
++	bpsAe_ = true;
++
++	LOG(SimplePipeline, Info)
++		<< "BPS exposure loop: exposure " << bpsExposureMin_ << "-"
++		<< bpsExposureMax_ << ", gain " << bpsGainMin_ << "-" << bpsGainMax_;
++}
++
++void SimpleCameraData::bpsAeProcess(const FrameBuffer *buffer)
++{
++	/* The sensor applies new values two frames later: measure every third one */
++	if (bpsAeFrame_++ % 3)
++		return;
++
++	const StreamConfiguration &cfg = streams_[0].configuration();
++	if (cfg.pixelFormat != formats::NV12)
++		return;
++
++	MappedFrameBuffer map(buffer, MappedFrameBuffer::MapFlag::Read);
++	if (!map.isValid() || map.planes().empty())
++		return;
++
++	const uint8_t *y = map.planes()[0].data();
++	const unsigned int width = cfg.size.width;
++	const unsigned int height = cfg.size.height;
++	const unsigned int stride = cfg.stride ? cfg.stride : width;
++	if (map.planes()[0].size() < static_cast<size_t>(stride) * height)
++		return;
++
++	/* About 64 x 48 samples over the whole image */
++	const unsigned int stepX = std::max(width / 64, 1u);
++	const unsigned int stepY = std::max(height / 48, 1u);
++	uint64_t sum = 0;
++	unsigned int count = 0, bright = 0;
++	for (unsigned int j = stepY / 2; j < height; j += stepY) {
++		const uint8_t *line = y + static_cast<size_t>(j) * stride;
++		for (unsigned int i = stepX / 2; i < width; i += stepX) {
++			sum += line[i];
++			bright += line[i] >= 250;
++			count++;
++		}
++	}
++	if (!count)
++		return;
++
++	const double mean = static_cast<double>(sum) / count;
++	const double brightRatio = static_cast<double>(bright) / count;
++
++	/*
++	 * Target in the gamma-encoded output; the BPS gamma table keeps about
++	 * 48 for black, so measure above it. Half steps in the linear domain
++	 * keep the loop steady.
++	 */
++	constexpr double kBlack = 48.0;
++	constexpr double kTarget = 115.0;
++	double ratio = (kTarget - kBlack) / std::max(mean - kBlack, 1.0);
++	double factor = std::sqrt(std::pow(ratio, 2.2));
++	factor = std::clamp(factor, 0.5, 2.0);
++	if (brightRatio > 0.05 && factor > 1.0)
++		factor = 1.0;
++	if (std::abs(factor - 1.0) < 0.04)
++		return;
++
++	const double total = static_cast<double>(bpsExposure_) * bpsGain_ * factor;
++	int32_t exposure = std::clamp(static_cast<int32_t>(total / bpsGainMin_),
++				      bpsExposureMin_, bpsExposureMax_);
++	int32_t gain = std::clamp(static_cast<int32_t>(total / exposure),
++				  bpsGainMin_, bpsGainMax_);
++	if (exposure == bpsExposure_ && gain == bpsGain_)
++		return;
++
++	LOG(SimplePipeline, Debug)
++		<< "BPS exposure loop: mean " << mean << ", bright " << brightRatio
++		<< ", exposure " << bpsExposure_ << " -> " << exposure
++		<< ", gain " << bpsGain_ << " -> " << gain;
++
++	bpsExposure_ = exposure;
++	bpsGain_ = gain;
++
++	ControlList ctrls(sensor_->controls());
++	ctrls.set(V4L2_CID_EXPOSURE, exposure);
++	ctrls.set(V4L2_CID_ANALOGUE_GAIN, gain);
++	setSensorControls(ctrls, ControlList());
++}
++
+ void SimpleCameraData::conversionOutputDone(FrameBuffer *buffer)
+ {
+ 	SimplePipelineHandler *pipe = SimpleCameraData::pipe();
+ 
++	if (bpsAe_)
++		bpsAeProcess(buffer);
++
+ 	/* Complete the buffer and the request. */
+ 	Request *request = buffer->request();
+ 	if (pipe->completeBuffer(request, buffer))
+@@ -1715,6 +1844,9 @@ int SimplePipelineHandler::start(Camera *camera, [[maybe_unused]] const ControlL
+ 	video->bufferReady.connect(data, &SimpleCameraData::imageBufferReady);
+ 
+ 	data->delayedCtrls_->reset();
++	data->bpsAe_ = false;
++	if (data->converter_ && utils::secure_getenv("LIBCAMERA_QCOM_BPS"))
++		data->bpsAeStart();
+ 	if (frameStartEmitter) {
+ 		ret = frameStartEmitter->setFrameStartEnabled(true);
+ 		if (ret) {
+-- 
+2.43.0
+
