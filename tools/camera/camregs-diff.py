@@ -4,6 +4,8 @@
   camregs-diff.py s5khp1.camregs mode2 mode6
   camregs-diff.py s5khp1.camregs --liste
 
+Les adresses sont sur 32 bits : page choisie par 0xfcfc (0x4000 = registres
+CCI standard, 0x2000… = mémoire interne du capteur).
 Affiche les registres présents dans une seule des deux tables ou avec des valeurs
 différentes, triés par adresse. Les registres liés à l'exposition et au gain
 (0x0104 maintien, 0x0202-0x0205 pose et gain, 0x0340-0x0343 trame et ligne,
@@ -25,22 +27,28 @@ def lire(path):
         name = b[off:off + 16].split(b'\0')[0].decode()
         cnt, = struct.unpack_from('<I', b, off + 16)
         off += 20
-        regs = []
+        regs, page = [], 0x4000
         for _ in range(cnt):
             addr, val, width, _pad, delay = struct.unpack_from('<HHBBH', b, off)
             off += 8
             if width == 0:          # rafale de `val` octets
                 data = b[off:off + val]
                 off += (val + 3) & ~3
-                for i, x in enumerate(data):
-                    regs.append((addr + i, x, 1))
+                for i in range(0, len(data), 2):   # registres 16 bits
+                    regs.append(((page << 16) | (addr + i),
+                                 int.from_bytes(data[i:i + 2], 'big'), 2))
+            elif addr == 0xfcfc:        # page haute (Samsung)
+                page = val
             else:
-                regs.append((addr, val, width))
+                regs.append(((page << 16) | addr, val, width))
         tables[name] = regs
     return tables
 
 
 def marque(a):
+    if a >> 16 != 0x4000:
+        return ''
+    a &= 0xffff
     if a == 0x0104 or 0x0202 <= a <= 0x0205 or 0x0340 <= a <= 0x0343 or \
        0x0702 <= a <= 0x0705 or 0x0e00 <= a <= 0x0eff:
         return ' <-'
@@ -59,14 +67,14 @@ def main():
         da[addr] = (val, w)        # la dernière écriture compte
     for addr, val, w in b:
         db[addr] = (val, w)
-    print(f'{"adresse":8s} {sys.argv[2]:>8s} {sys.argv[3]:>8s}')
+    print(f'{"adresse":10s} {sys.argv[2]:>8s} {sys.argv[3]:>8s}')
     for addr in sorted(set(da) | set(db)):
         va, vb = da.get(addr), db.get(addr)
         if va == vb:
             continue
         fa = f'{va[0]:#06x}' if va else '-'
         fb = f'{vb[0]:#06x}' if vb else '-'
-        print(f'{addr:#06x}   {fa:>8s} {fb:>8s}{marque(addr)}')
+        print(f'{addr:#010x} {fa:>8s} {fb:>8s}{marque(addr)}')
 
 
 if __name__ == '__main__':
