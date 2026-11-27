@@ -103,9 +103,11 @@ disponible, ses paramètres sont décrits dans `isp-materiel.md`.
 
 ### 1. Photo en pleine taille (4096 × 3072) — fait le 27 nov. 2026 en 3264 × 2448
 
-**Première photo entière du HP1 traitée par le BPS** (3264 × 2448, 8 MP, nette et en couleur,
-une passe de 8 bandes). Selon la demande, libcamera met le capteur en 4096 × 3072 ou en
-3264 × 2448 (taille du fichier brut : 15 728 640 ou 9 987 840 octets) ; découpages calculés
+**Première photo entière traitée par le BPS** (3264 × 2448, 8 MP, nette et en couleur, une passe
+de 8 bandes). Correction du 27 nov. après-midi : cette photo venait du **S5K4H7 (grand-angle)**, pas
+du HP1 (numéros de caméra changés au redémarrage ; 3264 × 2448 est un mode du S5K4H7, GBRG aussi).
+Modes du HP1 vus par libcamera : 1920 × 1080 (≈ 120 i/s, exposition très courte), 4096 × 2304,
+4096 × 3072, 8192 × 6144 ; découpages calculés
 pour les deux (`sl-4096x3072.bin`, 10 bandes, et `sl-3264x2448.bin`, avec
 `--iq 492,1,652,1,660,1,664,1,780,255,788,255,988,1,992,3,1060,1`), dans `/lib/firmware`.
 Entrée : le fichier brut de `cam` plus 16 lignes nulles (16 × 4080 octets en 3264 de large).
@@ -143,7 +145,10 @@ role=viewfinder,pixelformat=NV12 --capture=3 --file=/tmp/bps-#.nv12` donne des i
 très sombres : sans ISP logiciel, pas d'exposition automatique ; réglages du BPS figés
 (`bps-params.bin` 1920 × 1080). Corrections qu'il a fallu : `queue_setup` doit donner pour
 l'entrée la taille exacte de l'image (vb2 s'en sert comme minimum des tampons importés), et le
-pilote répond aux requêtes de sélection (recadrage = image entière). Exposition à la main : régler le capteur **avant** de lancer `cam`
+pilote répond aux requêtes de sélection (recadrage = image entière). Le mode 1920 × 1080 du HP1 tourne à ≈ 120 i/s : images sombres (exposition ≤ 1/120 s), et
+le blanking comme le gain changés pendant le flux restent sans effet dans ce mode (la cadence ne
+bouge pas). Préférer 4096 × 3072 (30 i/s) pour le BPS.
+Exposition à la main : régler le capteur **avant** de lancer `cam`
 (`sd=$(media-ctl -d /dev/media0 -e "s5khp1 3-0010")`, puis `v4l2-ctl -d $sd --set-ctrl
 exposure=2584,analogue_gain=2048` : image lisible dans une pièce sombre). libcamera remet le
 blanking vertical au minimum à la configuration (exposition plafonnée à 2584 lignes en
