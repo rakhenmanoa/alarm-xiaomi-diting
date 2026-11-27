@@ -1,4 +1,4 @@
-From edf0dde687363544688178bf0abc1539e1237480 Mon Sep 17 00:00:00 2001
+From b557bebdaa0039904db26e4fe5927e66186bdca1 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Fri, 27 Nov 2026 12:47:23 +0300
 Subject: [PATCH] pipeline: simple: Exposure loop for the Qualcomm BPS
@@ -12,11 +12,11 @@ steps in the linear domain and highlight protection.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/libcamera/pipeline/simple/simple.cpp | 132 +++++++++++++++++++++++
- 1 file changed, 132 insertions(+)
+ src/libcamera/pipeline/simple/simple.cpp | 145 +++++++++++++++++++++++
+ 1 file changed, 145 insertions(+)
 
 diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
-index 34552be..c18111d 100644
+index 34552be..a8f28b5 100644
 --- a/src/libcamera/pipeline/simple/simple.cpp
 +++ b/src/libcamera/pipeline/simple/simple.cpp
 @@ -7,6 +7,7 @@
@@ -74,7 +74,7 @@ index 34552be..c18111d 100644
  };
  
  class SimpleCameraConfiguration : public CameraConfiguration
-@@ -1026,10 +1046,119 @@ void SimpleCameraData::conversionInputDone(FrameBuffer *buffer)
+@@ -1026,10 +1046,132 @@ void SimpleCameraData::conversionInputDone(FrameBuffer *buffer)
  	}
  }
  
@@ -118,15 +118,23 @@ index 34552be..c18111d 100644
 +		return;
 +
 +	MappedFrameBuffer map(buffer, MappedFrameBuffer::MapFlag::Read);
-+	if (!map.isValid() || map.planes().empty())
++	if (!map.isValid() || map.planes().empty()) {
++		LOG(SimplePipeline, Warning) << "BPS exposure loop: cannot map the output";
++		bpsAe_ = false;
 +		return;
++	}
 +
 +	const uint8_t *y = map.planes()[0].data();
 +	const unsigned int width = cfg.size.width;
 +	const unsigned int height = cfg.size.height;
 +	const unsigned int stride = cfg.stride ? cfg.stride : width;
-+	if (map.planes()[0].size() < static_cast<size_t>(stride) * height)
++	if (map.planes()[0].size() < static_cast<size_t>(stride) * height) {
++		LOG(SimplePipeline, Warning)
++			<< "BPS exposure loop: luma plane of " << map.planes()[0].size()
++			<< " bytes, " << stride << " x " << height << " expected";
++		bpsAe_ = false;
 +		return;
++	}
 +
 +	/* About 64 x 48 samples over the whole image */
 +	const unsigned int stepX = std::max(width / 64, 1u);
@@ -159,6 +167,12 @@ index 34552be..c18111d 100644
 +	factor = std::clamp(factor, 0.5, 2.0);
 +	if (brightRatio > 0.05 && factor > 1.0)
 +		factor = 1.0;
++
++	LOG(SimplePipeline, Debug)
++		<< "BPS exposure loop: mean " << mean << ", bright " << brightRatio
++		<< ", factor " << factor << " (exposure " << bpsExposure_
++		<< ", gain " << bpsGain_ << ")";
++
 +	if (std::abs(factor - 1.0) < 0.04)
 +		return;
 +
@@ -171,8 +185,7 @@ index 34552be..c18111d 100644
 +		return;
 +
 +	LOG(SimplePipeline, Debug)
-+		<< "BPS exposure loop: mean " << mean << ", bright " << brightRatio
-+		<< ", exposure " << bpsExposure_ << " -> " << exposure
++		<< "BPS exposure loop: exposure " << bpsExposure_ << " -> " << exposure
 +		<< ", gain " << bpsGain_ << " -> " << gain;
 +
 +	bpsExposure_ = exposure;
@@ -194,7 +207,7 @@ index 34552be..c18111d 100644
  	/* Complete the buffer and the request. */
  	Request *request = buffer->request();
  	if (pipe->completeBuffer(request, buffer))
-@@ -1715,6 +1844,9 @@ int SimplePipelineHandler::start(Camera *camera, [[maybe_unused]] const ControlL
+@@ -1715,6 +1857,9 @@ int SimplePipelineHandler::start(Camera *camera, [[maybe_unused]] const ControlL
  	video->bufferReady.connect(data, &SimpleCameraData::imageBufferReady);
  
  	data->delayedCtrls_->reset();
