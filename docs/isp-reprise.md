@@ -155,8 +155,14 @@ contrôle `bps_parameters` (modèle CamX : réglages envoyés par requête). Ess
 Mise au point : pas d'autofocus sur ce chemin ; l'objectif garde la position réglée avant
 (`vcm=$(media-ctl -d /dev/media0 -e "ak7375 3-000c")`, `v4l2-ctl -d $vcm --set-ctrl
 focus_absolute=150` pour une pièce à quelques mètres ; plus haut = plus proche, 0-1023).
-Reste : matrice selon la température de couleur, autofocus, exposition au-delà de 1/30 s
-(blanking), essai dans plasma-camera.
+**plasma-camera** : `LIBCAMERA_QCOM_BPS=1 plasma-camera` affiche l'aperçu par le BPS (1920 × 1080
+NV12, converti en RGB par l'appli). Il plantait (SIGSEGV) tant que `TRY_FMT` de la sortie
+renvoyait le format de la dernière entrée au lieu de la taille demandée (pas des lignes faux).
+Photo de basse qualité : aperçu dans le mode 1080p à 120 i/s, pas de bloc 50 MP, BPS sans ABF,
+BPC, LSC ni netteté.
+Reste : sorties réduites DS4/DS16 du BPS pour l'aperçu depuis le 12 MP, photo pleine taille,
+modules de qualité (ABF, BPC, LSC), matrice selon la température de couleur, autofocus,
+exposition au-delà de 1/30 s (blanking).
 
 **HP1 en 4096 × 3072 par le BPS, à 30 i/s, en continu** (27 nov. 2026) :
 `LIBCAMERA_QCOM_BPS=1 cam -c N -s role=viewfinder,pixelformat=NV12,width=4096,height=3072`.
