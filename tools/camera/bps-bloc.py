@@ -3,7 +3,7 @@
 
   bps-bloc.py ENTREE.bin                          # décrit le bloc
   bps-bloc.py ENTREE.bin SORTIE.bin [--iq o,v,...] [--regs a,v,...] [--lut prog,dmi,FICHIER]...
-              [--sl FICHIER] [--sans-lut PROG]
+              [--sl FICHIER] [--sans-lut PROG] [--lsc FICHIER]
 
 --iq     octets (mots de 32 bits) de BpsIQSettings à écrire
 --regs   registres à ajouter ; un registre déjà présent est remplacé
@@ -11,6 +11,7 @@
          registre DMI avec le sélecteur en bits 24-31 (ex. 0x01003c08), fichier de données ;
          une table de même programme et même registre est remplacée
 --sans-lut PROG  retire les tables d'un programme
+--lsc    tables d'ombrage de bps-lsc.py --table (3 × 884 octets)
 --sl     découpage recalculé (obligatoire dès que des octets de BpsIQSettings changent la
          géométrie des modules : LSC, ABF…)
 
@@ -86,6 +87,7 @@ def main():
     ap.add_argument('--lut', action='append', default=[])
     ap.add_argument('--sans-lut', type=int, action='append', default=[])
     ap.add_argument('--sl')
+    ap.add_argument('--lsc')
     a = ap.parse_args()
 
     version, w, h, parts = lire(a.entree)
@@ -119,6 +121,10 @@ def main():
 
     if a.sl:
         parts['sl'] = open(a.sl, 'rb').read()
+    if a.lsc:
+        parts['lsc'] = open(a.lsc, 'rb').read()
+        if len(parts['lsc']) != 3 * 17 * 13 * 4:
+            sys.exit('--lsc : 2652 octets attendus')
     n = ecrire(a.sortie, w, h, parts)
     print(f'{a.sortie} : {n} octets')
     decrire(3, w, h, parts)

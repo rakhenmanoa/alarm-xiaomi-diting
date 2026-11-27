@@ -60,16 +60,26 @@ def bilin(g, u, v):
             + (g[y0 + 1][x0] * (1 - fx) + g[y0 + 1][x0 + 1] * fx) * fy)
 
 
-def gains(ee, w, h, force, couleur):
-    """Gains (R, Gr, Gb, B) aux nœuds de la grille matérielle, 1,0 = 1 024."""
+NATIF = (16384, 12288)    # champ entier du HP1 (pixels natifs)
+
+
+def gains(ee, w, h, force, couleur, champ=None):
+    """Gains (R, Gr, Gb, B) aux nœuds de la grille matérielle, 1,0 = 1 024.
+
+    champ : partie du capteur que couvre l'image (x, y, largeur, hauteur en pixels natifs,
+    recadrage analogique du mode, ex. 0,1536,16384,9216 en 1920 x 1080) ; la table de
+    l'EEPROM couvre tout le capteur."""
     _, _, _, bw, bh = geometrie(w, h)
     wb, hb = w // 2, h // 2
+    cx, cy, cw, ch = champ or (0, 0) + NATIF
     centre = [g[GH // 2][GW // 2] for g in ee]
     out = [[[0] * GW for _ in range(GH)] for _ in range(4)]
     for j in range(GH):
         for i in range(GW):
             # position du nœud matériel rapportée à la grille de l'EEPROM (champ entier)
-            u, v = i * bw * (GW - 1) / wb, j * bh * (GH - 1) / hb
+            fx = (cx + i * bw / wb * cw) / NATIF[0]
+            fy = (cy + j * bh / hb * ch) / NATIF[1]
+            u, v = fx * (GW - 1), fy * (GH - 1)
             g = [centre[c] / bilin(ee[c], u, v) for c in range(4)]
             gv = (g[1] + g[2]) / 2
             lum = gv ** force
@@ -144,7 +154,7 @@ def ajouter(a, w, h):
     paires += list(zip(nv[0::2], nv[1::2]))
     regs_b = struct.pack(f'<{2 * len(paires)}I', *(x for p in paires for x in p))
     b = open(a.eeprom, 'rb').read()
-    lsc_b = tables(gains(eeprom_lsc(b), w, h, a.force, not a.sans_couleur))
+    lsc_b = tables(gains(eeprom_lsc(b), w, h, a.force, not a.sans_couleur, a.champ_t))
     sl_b = open(a.sl, 'rb').read()
     blobs = [bytes(iq_b), regs_b, parts[2], sl_b, lsc_b]
     off, data, secs = 56, b'', []
@@ -169,6 +179,8 @@ def main():
     ap.add_argument('--force', type=float, default=0.85)
     ap.add_argument('--noir', type=float, default=64)
     ap.add_argument('--sans-couleur', action='store_true')
+    ap.add_argument('--champ', help='recadrage du mode en pixels natifs x,y,l,h '
+                    '(défaut : tout le capteur ; 1920x1080 : 0,1536,16384,9216)')
     ap.add_argument('--montrer', action='store_true', help='affiche la grille de gains (Gr)')
     ap.add_argument('--ajouter', nargs=2, metavar=('ENTREE', 'SORTIE'),
                     help="ajoute l'ombrage à un bloc de bps-params.py existant")
@@ -176,6 +188,8 @@ def main():
     a = ap.parse_args()
 
     w, h = (int(x) for x in a.taille.lower().split('x'))
+    champ = tuple(int(x) for x in a.champ.split(',')) if a.champ else None
+    a.champ_t = champ
     if a.ajouter:
         ajouter(a, w, h)
         return
@@ -183,7 +197,7 @@ def main():
         print(','.join(str(x) for x in iq(w, h)))
         return
     b = open(a.eeprom, 'rb').read()
-    gn = gains(eeprom_lsc(b), w, h, a.force, not a.sans_couleur)
+    gn = gains(eeprom_lsc(b), w, h, a.force, not a.sans_couleur, champ)
     if a.montrer:
         intp, sw, sh, bw, bh = geometrie(w, h)
         print(f'sous-blocs 2^{intp}, sous-bloc {sw}x{sh}, bloc {bw}x{bh}', file=sys.stderr)

@@ -497,3 +497,10 @@ Vérifié le 27 nov. 2026 (HP1 12 Mpx, objectif couvert pendant la capture) : «
 17 settings, gains 1-256 », puis réglages 4, 8, 16, 32, 64 choisis au fil de la montée du gain
 (130 → 2048), sans erreur du BPS. Rappel après un redémarrage : le numéro `cam` du HP1 change
 (`N=$(cam -l | grep 'i2c-bus@1/camera@10' | cut -d: -f1)`) et le module se recharge à la main.
+
+**1920 × 1080 (aperçu de plasma-camera).** Le mode 1080p du HP1 lit le recadrage 16:9
+`0,1536,16384,9216` du capteur (pilote `s5khp1`, `.crop`) : `bps-lsc.py --champ
+0,1536,16384,9216` place la table de l'EEPROM en conséquence (blocs 60 × 48, 4 sous-blocs de
+15 × 12). Débruitage : `camx-abf.py --taille 1920x1080` (centre radial −960, −540). Découpage
+`sl-1920x1080-lsc-abf.bin` (5 bandes) avec les octets de référence, ceux du LSC et 384,1,392,1.
+Bloc : `bps-bloc.py --lsc` ajoute les tables d'ombrage à un bloc existant.
