@@ -54,7 +54,7 @@ reprise du travail : [isp-reprise.md](../../docs/isp-reprise.md).
 | Gamma (GLUT 1.5.1) | 🟡 | gamma 2,2 fixe, léger voile dans les noirs à vérifier |
 | Conversion YUV (CST 1.2) | ✅ | BT.601 plage pleine, NV12 |
 | Réduction du bruit (ABF 4.1) | ⬜ | valeurs dans le fichier de réglage, format des registres à décoder |
-| Pixels défectueux / PDAF (BPC-PDPC 3.1.1) | ⬜ | idem |
+| Pixels défectueux / PDAF (BPC-PDPC 3.1.1) | ➖ | inutile en 12 Mpx : sur image uniforme et image noire (`raw-defauts.py`), 4 pixels hors seuil sur 12,6 millions, aucun motif de pixels de phase ni pixel chaud ; le HP1 les corrige lui-même en mode regroupé. Format relevé (table 512 octets à 0x3008, registres 0x3068-0x30d8) pour les modes 50/200 Mpx |
 | Ombrage de l'objectif (LSC 4.1.1) | ✅ | tables (DMI 0x3608, programme 5), 13 registres à 0x3668 et octets 444-488 de `BpsIQSettings` relevés ; `bps-lsc.py` depuis l'EEPROM, section `lsc` du bloc (version 2) ; découpage avec LSC calculé ; validé sur image uniforme : coins de 0,3 à 0,8 du centre, teinte des coins corrigée ; en service en 4096 × 3072, 1920 × 1080 à faire |
 | Mappage de tons (GTM, LTM) | ⬜ | |
 | Sorties réduites DS4 / DS16 | ⬜ | pour un aperçu léger depuis le 12 Mpx, comme sous Android |
@@ -87,7 +87,7 @@ oublier. Sources en bas de page.
 | HDR décalé (Staggered HDR, 3 expositions, 100 dB) | ⬜ | trames multiples par canaux virtuels CSI, fusion (BPS/IFE HDR ou logiciel) |
 | Smart-ISO / Smart-ISO Pro (double gain de conversion) | ⬜ | registres du capteur ; Smart-ISO Pro = HDR vidéo par fusion des deux gains |
 | Multi-échantillonnage (lectures multiples moyennées) | ⬜ | registres du capteur, basse lumière |
-| Double Super PD (pixels de phase sous micro-lentilles) | ⬜ | voir PDAF plus haut ; correction de ces pixels par le module PDPC du BPS |
+| Double Super PD (pixels de phase sous micro-lentilles) | ⬜ | voir PDAF plus haut ; en 12 Mpx, invisibles dans l'image (corrigés par le capteur) ; à revoir en 50/200 Mpx |
 | Calibration du module (EEPROM P24C128F 16 Ko, `3-0051`, pilote `at24` déjà actif) | 🟡 | lue et décodée par `hp1-eeprom.py` (sommes de contrôle bonnes) : ombrage LSC 17 × 13 × 4 canaux, balance des blancs d'usine (module et référence), cartes de gain PDAF gauche/droite 17 × 13, blocs PDAF « PD01 » et « PDXT » ; LSC appliqué par le BPS ; reste à identifier les blocs 01, 02, 05, 06 |
 | Composant inconnu à 0x59 sur le bus du HP1 (répond, sans pilote) | ⬜ | peut-être le contrôleur de l'OIS ; à identifier |
 | Capteur de spectre de couleur / anti-scintillement | ⬜ | capteur d'ambiance annoncé (« colour spectrum sensor ») : aide pour la balance des blancs et le scintillement des éclairages ; à identifier |

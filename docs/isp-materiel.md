@@ -432,3 +432,17 @@ de l'EEPROM étalée sur tout le champ). Le côté droit reste un peu plus sombr
 correction : éclairage du papier venu de la fenêtre. Fichier en service :
 `/lib/firmware/bps-params-4096x3072.bin` avec la section `lsc` ; reste à faire le 1920 × 1080
 (découpage propre) et, plus tard, des tables selon l'éclairage comme CamX.
+
+## Pixels défectueux et pixels de phase (BPSBPCPDPC311Titan680)
+
+Format relevé dans `camera.qcom.so` : table de 512 octets (positions des pixels de phase) en DMI
+à `0x3008`, sélecteur 1 ; registres `0x3068` (noir), `0x3070` (seuil BPC), `0x3078`-`0x308c`
+(gains R/G, B/G, G/R, G/B propres aux pixels de phase, début et fin de la zone du motif),
+`0x30b4`-`0x30b8` et `0x30d4`-`0x30d8` (décalages de tuile, rapport de seuil). Les pixels chauds
+isolés sont aussi traités par `BPSBPCABF411` (avec le débruitage).
+
+Mesure du 27 nov. 2026 (`tools/camera/raw-defauts.py`) sur des images brutes 4096 × 3072 : image
+uniforme, 4 pixels hors seuil sur 12,6 millions, aucun motif régulier ; image noire (doigt sur
+l'objectif, gain au plus haut), aucun pixel chaud. En mode regroupé 4 × 4, le HP1 corrige
+lui-même pixels de phase et défauts : module PDPC inutile en 12 Mpx. À reprendre pour les
+modes 50 et 200 Mpx (remosaïquage).
