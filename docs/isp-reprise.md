@@ -60,7 +60,10 @@ cam -c 1 -s role=viewfinder -s role=raw,width=1920,height=1080 --capture=5 --fil
 sudo rmmod qcom_camss_icp; sudo insmod qcom-camss-icp.ko && sudo dmesg | tail -20
 # jamais de rmmod après « create handle: -110 » (le téléphone se fige) : redémarrer
 # le bloc caméra se met aussi en veille après une longue inactivité (~2 h) : même symptôme,
-# même remède (redémarrage) ; une capture cam avant chaque essai l'évite
+# même remède (redémarrage) ; une capture cam avant chaque essai l'évite.
+# Le réveil ne dure pas : charger le module JUSTE après la capture cam (5 min plus tard,
+# « -110 » le 27 nov. 2026). Sauver les fichiers de /tmp avant un redémarrage.
+# Le numéro de caméra du HP1 change à chaque démarrage : cam -l | grep i2c-bus@1/camera@10
 ```
 
 Conversion d'essai et visualisation :
@@ -98,7 +101,15 @@ disponible, ses paramètres sont décrits dans `isp-materiel.md`.
 
 ## Ce qui reste à faire, dans l'ordre conseillé
 
-### 1. Photo en pleine taille (4096 × 3072)
+### 1. Photo en pleine taille (4096 × 3072) — fait le 27 nov. 2026 en 3264 × 2448
+
+**Première photo entière du HP1 traitée par le BPS** (3264 × 2448, 8 MP, nette et en couleur,
+une passe de 8 bandes). Selon la demande, libcamera met le capteur en 4096 × 3072 ou en
+3264 × 2448 (taille du fichier brut : 15 728 640 ou 9 987 840 octets) ; découpages calculés
+pour les deux (`sl-4096x3072.bin`, 10 bandes, et `sl-3264x2448.bin`, avec
+`--iq 492,1,652,1,660,1,664,1,780,255,788,255,988,1,992,3,1060,1`), dans `/lib/firmware`.
+Entrée : le fichier brut de `cam` plus 16 lignes nulles (16 × 4080 octets en 3264 de large).
+Gains par moyenne grise avec `raw10-phases.py fichier 3264 2448`.
 
 But : traiter la photo brute entière, sans recadrage.
 
@@ -113,7 +124,11 @@ But : traiter la photo brute entière, sans recadrage.
 4. Si la photo est trop grande pour une passe, la bibliothèque produit plusieurs passes : à
    vérifier dans sa sortie (`-v`).
 
-### 2. Paramètres selon la taille, dans le pilote (écrit le 27 nov. 2026, à tester)
+### 2. Paramètres selon la taille, dans le pilote — fait le 27 nov. 2026
+
+Vérifié : avec `/lib/firmware/bps-params-3264x2448.bin`, `v4l2-ctl` en 3264 × 2448 sans rien
+d'autre donne la photo (branche `isp-libcamera`).
+
 
 Le découpage n'est valable que pour une taille. Faire chercher au pilote, à la mise en route
 du flux, `bps-params-LARGEURxHAUTEUR.bin` avant `bps-params.bin` (fonction
