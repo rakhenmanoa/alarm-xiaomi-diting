@@ -14,6 +14,8 @@ reprise du travail : [isp-reprise.md](../../docs/isp-reprise.md).
 |---|:---:|---|
 | Principale HP1 (S5KHP1, 200 Mpx) | ✅ | modes 1920 × 1080 (≈ 120 i/s), 4096 × 2304, 4096 × 3072 (30 i/s), 8192 × 6144 ; GBRG, noir à 64 (mesuré sur image noire) |
 | Exposition et gain en cours de flux | 🟡 | appliqués en 4096 × 3072 ; sans effet en 1920 × 1080 (mode 120 i/s) |
+| Autofocus à détection de phase (PDAF) | ⬜ | le HP1 a des pixels de phase ; sous Android, les données de phase du capteur et la calibration (mémoire OTP du module) vont à la bibliothèque PDAF propriétaire de Qualcomm. À explorer : flux des données de phase (canal virtuel CSI ?), calibration, puis algorithme libre |
+| Stabilisation optique (OIS) | ⬜ | contrôleur OIS séparé sur le bus du module (puce et firmware à identifier dans le device tree Android) ; aucun pilote sous Linux : objectif ni stabilisé ni piloté |
 | Moteur de mise au point (AK7375) | ✅ | `focus_absolute` 0-1023, plus haut = plus proche ; ≈ 150 pour une pièce, plus bas pour le lointain |
 | Ultra grand-angle (S5K4H7) | ✅ | 3264 × 2448 et 3264 × 1836, GBRG ; traité aussi par le BPS (photo 8 Mpx) |
 | Frontale (IMX596), macro (GC02M1) | ✅ | ISP logiciel, 30 i/s |
