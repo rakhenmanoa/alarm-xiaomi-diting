@@ -388,3 +388,29 @@ Décodage : `tools/camera/hp1-eeprom.py`. Le fichier brut reste hors du dépôt 
 - Blocs 09 « PD01 » et 0b « PDXT » : données PDAF (défocalisation, diaphonie), à décoder.
 - Bloc 02 (0x45) : 0x02a0, 0x025e, 0x03ff, peut-être les codes de mise au point du VCM.
 - 0x59 répond aussi sur ce bus sans pilote : à identifier (OIS ?).
+
+## Ombrage de l'objectif (LSC 4.1.1, `BPSLSC411Titan680`)
+
+Relevé le 27 nov. 2026 dans `camera.qcom.so` (`CreateCmdList`, `PackIQRegisterSetting`,
+`UpdateFirmwareData`, noms des champs dans les journaux de `LSC411CalculateSetting`) et dans le
+DWARF du firmware (`LensRollOffParameters_480`, `_ProgramType`).
+
+- **Tables** : 3 DMI de 884 octets (17 × 13 mots de 32 bits, ligne par ligne) au registre
+  `0x3608`, sélecteurs 1, 2, 3, programme de type 5 (`BPS_LENS_ROLLOFF_LUT_PROGRAM`).
+  Table 1 : R | Gr << 14 ; table 2 : B | Gb << 14 ; table 3 : ALSC (gain moyen 12 bits |
+  moyenne 18 bits << 12), inutile sans ALSC. Gains sur 14 bits, 1,0 = 1 024.
+- **Registres** (13 à `0x3668`) : 0 : gains horizontaux − 2 (bits 0-3), verticaux − 2 (4-7) ;
+  1 : largeur de bloc − 1 (0-10), hauteur − 1 (16-25) ; 2 : largeur de sous-bloc − 1 (0-10),
+  `x_delta` (12-28) ; 3 : hauteur de sous-bloc − 1 (0-9), `y_delta` (12-28) ; 4 : `Bx_d1`, `By_e1`
+  (départ dans le sous-bloc) ; 5 : décalage ajouté (bits 14-31) ; 6 : `By_init_e1` (0-19) ;
+  7, 8, 12 : pondération de luminance (ALSC) ; 9, 10 : recadrage ; 11 : décalage retranché
+  (bits 14-31). Profondeur du module : 18 bits (noir 10 bits × 256).
+- **`BpsIQSettings`, octets 444 à 488** : `EN`, `ALSC_EN`, `NUM_SUBBLOCKS` (facteur
+  d'interpolation, 2^n sous-blocs par bloc), largeur de sous-bloc − 1, largeur de bloc − 1,
+  bloc, sous-bloc et pixel de départ, gains horizontaux − 2, puis départs verticaux.
+- Tout est dans le domaine Bayer (demi-largeur). La bibliothèque de découpage le confirme :
+  position = x/2 + départs, bloc = position / largeur de bloc, sous-bloc et pixel ensuite. Le
+  découpage doit être recalculé avec ces octets de `BpsIQSettings` (bandes calées sur les blocs).
+- `tools/camera/bps-lsc.py` fait tout depuis l'EEPROM : en 4096 × 3072, blocs de 128 × 128,
+  8 sous-blocs de 16, `x_delta` = 2^20 / 16 (hypothèse : pas de 2^20, à vérifier sur image).
+- Pilote : section `lsc` du bloc de paramètres (version 2 ; la version 1 reste acceptée).

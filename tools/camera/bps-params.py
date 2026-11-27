@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assemble le bloc de paramètres du pilote V4L2 du BPS (camss-bps.c, version 1).
+"""Assemble le bloc de paramètres du pilote V4L2 du BPS (camss-bps.c, version 2).
 
 Le pilote le lit soit dans le contrôle « BPS Parameters », soit, par défaut, dans
 /lib/firmware/bps-params.bin (paramètre de module bps_params_file).
@@ -11,6 +11,7 @@ Usage : bps-params.py SORTIE.bin --taille 1920x1080 [options]
   --wb   G,B,R       ajoute les gains de balance des blancs (1.0 = neutre)
   --gamma FICHIER    tables gamma de bps-gamma.py (3 × 1 Ko)
   --sl   FICHIER     découpage de bps-striping.py (même taille et mêmes --iq)
+  --lsc  FICHIER     tables d'ombrage de bps-lsc.py (3 × 884 octets, version 2 du bloc)
 
 Exemple (chaîne du 23 nov. 2026) :
   bps-params.py bps-params.bin --taille 1920x1080 \\
@@ -19,8 +20,9 @@ Exemple (chaîne du 23 nov. 2026) :
 import argparse
 import struct
 
-MAGIC, VERSION = 0x50535042, 1
+MAGIC, VERSION = 0x50535042, 2
 IQ_SIZE, GLUT_SIZE, SL_MAX, REGS_MAX = 1276, 0xc00, 0x4000, (0x1000 - 4) // 8
+LSC_SIZE = 3 * 17 * 13 * 4
 TOTAL_MAX = 32768
 
 CST_601 = [
@@ -46,6 +48,7 @@ p.add_argument('--wb-noir', type=float, default=0,
                help='noir sur 10 bits gardé par la balance des blancs (54 pour le HP1, avec le BLS)')
 p.add_argument('--gamma')
 p.add_argument('--sl')
+p.add_argument('--lsc')
 a = p.parse_args()
 
 w, h = (int(v) for v in a.taille.lower().split('x'))
@@ -81,12 +84,15 @@ glut = open(a.gamma, 'rb').read() if a.gamma else b''
 if glut and len(glut) != GLUT_SIZE:
     raise SystemExit(f'--gamma : {GLUT_SIZE} octets attendus')
 sl = open(a.sl, 'rb').read() if a.sl else b''
+lsc = open(a.lsc, 'rb').read() if a.lsc else b''
+if lsc and len(lsc) != LSC_SIZE:
+    raise SystemExit(f'--lsc : {LSC_SIZE} octets attendus')
 if len(sl) > SL_MAX:
     raise SystemExit(f'--sl : {SL_MAX} octets au plus')
 
-HEADER = 48
+HEADER = 56
 sections, data, off = [], b'', HEADER
-for blob in (bytes(iq), regs, glut, sl):
+for blob in (bytes(iq), regs, glut, sl, lsc):
     sections += [off if blob else 0, len(blob)]
     data += blob
     off += len(blob)
@@ -95,10 +101,10 @@ for blob in (bytes(iq), regs, glut, sl):
     data += bytes(pad)
     off += pad
 
-out = struct.pack('<4I8I', MAGIC, VERSION, w, h, *sections) + data
+out = struct.pack('<4I10I', MAGIC, VERSION, w, h, *sections) + data
 if len(out) > TOTAL_MAX:
     raise SystemExit(f'bloc de {len(out)} octets, {TOTAL_MAX} au plus')
 open(a.sortie, 'wb').write(out)
 print(f'{a.sortie} : {len(out)} octets, {w}x{h}, {len(regs) // 8} registres, '
-      f'gamma {"oui" if glut else "non"}, découpage {len(sl)} octets'
+      f'gamma {"oui" if glut else "non"}, ombrage {"oui" if lsc else "non"}, découpage {len(sl)} octets'
       + ('' if sl else ' (ATTENTION : sans découpage, le BPS ne traite rien)'))

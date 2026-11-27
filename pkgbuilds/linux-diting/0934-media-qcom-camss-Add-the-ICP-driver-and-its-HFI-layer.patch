@@ -52,7 +52,7 @@ new file mode 100644
 index 0000000..b808815
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-bps.c
-@@ -0,0 +1,1063 @@
+@@ -0,0 +1,1106 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * V4L2 memory to memory driver for the BPS (Bayer Processing Segment) of
@@ -106,10 +106,16 @@ index 0000000..b808815
 +#define BPS_GLUT_SIZE		0xc00
 +#define BPS_GLUT_TABLE		0x400
 +#define BPS_GLUT_DMI_ADDR	0x5208
++/* Lens roll-off (LSC 4.1.1): 3 tables of 17 x 13 u32 (R/Gr, B/Gb gains, ALSC) */
++#define BPS_SHM_LSC		0xe000
++#define BPS_LSC_TABLE		(17 * 13 * 4)
++#define BPS_LSC_SIZE		(3 * BPS_LSC_TABLE)
++#define BPS_LSC_DMI_ADDR	0x3608
 +
 +/* CDM program types, as CamX uses them on Titan 680 */
 +#define BPS_PROG_GENERIC	72
 +#define BPS_PROG_GLUT		7
++#define BPS_PROG_LSC		5	/* BPS_LENS_ROLLOFF_LUT_PROGRAM */
 +
 +#define BPS_TIMEOUT_MS		5000
 +
@@ -118,7 +124,7 @@ index 0000000..b808815
 + * blob; a section of length 0 is absent.
 + */
 +#define BPS_PARAMS_MAGIC	0x50535042	/* "BPSP" */
-+#define BPS_PARAMS_VERSION	1
++#define BPS_PARAMS_VERSION	2	/* version 1 has no lsc section */
 +#define BPS_PARAMS_MAX		SZ_32K
 +
 +struct bps_params_section {
@@ -135,7 +141,15 @@ index 0000000..b808815
 +	struct bps_params_section regs;	/* (register, value) pairs of u32 */
 +	struct bps_params_section glut;	/* 3 gamma tables of 256 u32 */
 +	struct bps_params_section sl;	/* BpsStripingLibOutMultiFrame */
++	struct bps_params_section lsc;	/* version 2: 3 roll-off tables */
 +} __packed;
++
++#define BPS_PARAMS_V1_HEADER	offsetof(struct bps_params_header, lsc)
++
++static bool bps_params_has_lsc(const struct bps_params_header *h)
++{
++	return le32_to_cpu(h->version) >= 2 && h->lsc.length;
++}
 +
 +#define V4L2_CID_CAMSS_BPS_PARAMS	(V4L2_CID_USER_BASE + 0x10f0)
 +
@@ -215,15 +229,22 @@ index 0000000..b808815
 +	const struct bps_params_section *s;
 +	static const size_t max[] = {
 +		HFI_BPS_IQ_SETTINGS_SIZE, BPS_SHM_REGS_SIZE - 4,
-+		BPS_GLUT_SIZE, BPS_SHM_SL_SIZE,
++		BPS_GLUT_SIZE, BPS_SHM_SL_SIZE, BPS_LSC_SIZE,
 +	};
-+	int i;
++	u32 version;
++	int i, nsec;
 +
-+	if (len < sizeof(*h) || le32_to_cpu(h->magic) != BPS_PARAMS_MAGIC ||
-+	    le32_to_cpu(h->version) != BPS_PARAMS_VERSION)
++	if (len < BPS_PARAMS_V1_HEADER ||
++	    le32_to_cpu(h->magic) != BPS_PARAMS_MAGIC)
++		return -EINVAL;
++	version = le32_to_cpu(h->version);
++	if (version < 1 || version > BPS_PARAMS_VERSION)
++		return -EINVAL;
++	nsec = version == 1 ? 4 : 5;
++	if (version >= 2 && len < sizeof(*h))
 +		return -EINVAL;
 +
-+	for (i = 0, s = &h->iq; i < 4; i++, s++) {
++	for (i = 0, s = &h->iq; i < nsec; i++, s++) {
 +		u32 off = le32_to_cpu(s->offset), n = le32_to_cpu(s->length);
 +
 +		if (!n)
@@ -234,6 +255,8 @@ index 0000000..b808815
 +	if (le32_to_cpu(h->regs.length) % 8)
 +		return -EINVAL;
 +	if (h->glut.length && le32_to_cpu(h->glut.length) != BPS_GLUT_SIZE)
++		return -EINVAL;
++	if (bps_params_has_lsc(h) && le32_to_cpu(h->lsc.length) != BPS_LSC_SIZE)
 +		return -EINVAL;
 +
 +	return 0;
@@ -301,7 +324,7 @@ index 0000000..b808815
 +	switch (ctrl->id) {
 +	case V4L2_CID_CAMSS_BPS_PARAMS:
 +		/* a short array (the initial value) keeps the current parameters */
-+		if (ctrl->new_elems < sizeof(struct bps_params_header))
++		if (ctrl->new_elems < BPS_PARAMS_V1_HEADER)
 +			return 0;
 +		return bps_params_set(ctx, ctrl->p_new.p_u8, ctrl->new_elems);
 +	}
@@ -503,6 +526,26 @@ index 0000000..b808815
 +			cmd[3 * i + 2] = ((i + 1) << 24) | BPS_GLUT_DMI_ADDR;
 +		}
 +		bps_add_prog(prog, cmd_iova, 3 * 12, BPS_PROG_GLUT);
++	}
++
++	if (bps_params_has_lsc(h)) {
++		u32 lut_iova, cmd_iova;
++		void *lut = icp_hfi_shmem(hfi, BPS_SHM_LSC, BPS_LSC_SIZE, &lut_iova);
++		u32 *cmd = icp_hfi_shmem(hfi, BPS_SHM_LSC + BPS_LSC_SIZE, 3 * 12,
++					 &cmd_iova);
++
++		if (!lut || !cmd) {
++			ret = -ENOMEM;
++			goto unlock;
++		}
++		memcpy(lut, ctx->params + le32_to_cpu(h->lsc.offset), BPS_LSC_SIZE);
++		/* same DMI commands as CamX (BPSLSC411Titan680::CreateCmdList) */
++		for (i = 0; i < 3; i++) {
++			cmd[3 * i] = (1 << 24) | (BPS_LSC_TABLE - 1);
++			cmd[3 * i + 1] = lut_iova + i * BPS_LSC_TABLE;
++			cmd[3 * i + 2] = ((i + 1) << 24) | BPS_LSC_DMI_ADDR;
++		}
++		bps_add_prog(prog, cmd_iova, 3 * 12, BPS_PROG_LSC);
 +	}
 +
 +fill:
