@@ -476,3 +476,11 @@ du capteur 1 à 256 ; l'instance 65 a 27 régions).
   recalculé avec 384,1,392,1 (recouvrement des bandes).
 - Pilote : bloc de paramètres version 3 avec une section `luts` générique (programme, DMI,
   données) ; `tools/camera/bps-bloc.py` ajoute registres, octets et tables à un bloc existant.
+
+**27 nov. 2026 : premier essai du débruitage.** Même image brute (pièce peu éclairée) passée avec et
+sans le module (réglage Xiaomi du gain 16, instance 65) : aucune erreur, 4 programmes envoyés
+(registres, gamma, ombrage, table ABF). Bruit haute fréquence mesuré sur zones unies : −6 à −14 %
+(mur clair 3,29 → 3,07, sol 2,58 → 2,23), image par ailleurs identique (écart moyen 0,46 niveau).
+Le réglage du BPS est volontairement léger : chez Qualcomm, le gros du débruitage se fait dans
+l'IPE (ANR, filtrage temporel). Piège rencontré : stockage plein (images ARGB de 50 Mo de `cam` dans
+`/tmp`) → fichiers de sortie tronqués sans message d'erreur clair.
