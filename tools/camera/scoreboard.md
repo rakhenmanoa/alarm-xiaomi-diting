@@ -75,6 +75,33 @@ reprise du travail : [isp-reprise.md](../../docs/isp-reprise.md).
 | plasma-camera | 🟡 | aperçu ✅ (1920 × 1080, mode 120 i/s du capteur : sombre et bruité en intérieur) ; photo = image de l'aperçu (2 Mpx) |
 | Photo pleine résolution | ⬜ | 12 Mpx prêt côté BPS ; 50 Mpx demande découpage et bloc |
 
+## Fonctions du matériel (fiche technique), à couvrir
+
+Relevé des caractéristiques annoncées du module photo et du capteur (Xiaomi, Samsung), pour ne rien
+oublier. Sources en bas de page.
+
+| Fonction | État | Ce qu'il faudrait sous Linux |
+|---|:---:|---|
+| Regroupement de pixels HP1 (ChameleonCell : 16 en 1 → 12,5 Mpx, 4 en 1 → 50 Mpx, plein 200 Mpx) | 🟡 | modes 12,5 et 50 Mpx exposés par le pilote ; 200 Mpx (16384 × 12288) : patch `0908` côté CSI, à vérifier (remosaïquage dans le capteur ?) |
+| Zoom dans le capteur (recadrage 2×/4× sans perte, « in-sensor zoom ») | ⬜ | modes recadrés du capteur à décrire dans le pilote `s5khp1` |
+| HDR décalé (Staggered HDR, 3 expositions, 100 dB) | ⬜ | trames multiples par canaux virtuels CSI, fusion (BPS/IFE HDR ou logiciel) |
+| Smart-ISO / Smart-ISO Pro (double gain de conversion) | ⬜ | registres du capteur ; Smart-ISO Pro = HDR vidéo par fusion des deux gains |
+| Multi-échantillonnage (lectures multiples moyennées) | ⬜ | registres du capteur, basse lumière |
+| Double Super PD (pixels de phase sous micro-lentilles) | ⬜ | voir PDAF plus haut ; correction de ces pixels par le module PDPC du BPS |
+| Calibration du module (mémoire OTP/EEPROM : ombrage, balance des blancs, PDAF) | ⬜ | lire l'EEPROM du module (adresse dans le device tree Android) ; utile pour LSC, AWB et PDAF |
+| Capteur de spectre de couleur / anti-scintillement | ⬜ | capteur d'ambiance annoncé (« colour spectrum sensor ») : aide pour la balance des blancs et le scintillement des éclairages ; à identifier |
+| Flash double LED bicolore | 🟡 | une seule voie pilotée (patch `0912`) ; la seconde teinte et le flash synchronisé à la prise de vue manquent |
+| Ultra grand-angle, mise au point fixe (infini) ; macro, mise au point fixe (~4 cm) | ✅ | rien à piloter |
+| Stabilisation électronique (EIS, gyroscope) | ⬜ | gyroscope disponible côté capteurs ; stabilisation logicielle ou par l'IPE |
+| Vidéo 8K 24 i/s, 4K 30/60 i/s, 1080p jusqu'à 240 i/s, HDR10+ | ⬜ | modes capteur ; encodeur matériel (pilote `qcom_iris` chargé, à essayer) ; débit mémoire/horloges du BPS-IPE |
+| Ralenti jusqu'à 1920 i/s (résolution réduite) | ⬜ | sans doute interpolé ou mode capteur dédié, faible priorité |
+| Photo RAW (DNG), formats HEIF/JPEG | 🟡 | brut disponible (`cam` rôle raw) ; JPEG matériel non commencé |
+
+Sources : [Xiaomi 12T Pro, fiche technique](https://www.mi.com/global/xiaomi-12t-pro/specs/),
+[GSMArena, test du 12T Pro](https://m.gsmarena.com/xiaomi_12t_pro-review-2484.php),
+[Samsung, ISOCELL HP1](https://news.samsung.com/global/isocell-hp1-resolution-redefined),
+[GSMArena, fonctions du HP1](https://m.gsmarena.com/samsung_details_the_cutting_edge_features_of_its_200mp_isocell_hp1_sensor-news-51047.php).
+
 ## Outils (`tools/camera`)
 
 | Outil | Rôle |
