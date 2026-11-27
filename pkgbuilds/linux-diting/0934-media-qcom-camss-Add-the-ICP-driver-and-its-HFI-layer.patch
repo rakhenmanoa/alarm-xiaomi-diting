@@ -1105,7 +1105,7 @@ new file mode 100644
 index 0000000..26efa78
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-icp-hfi.c
-@@ -0,0 +1,639 @@
+@@ -0,0 +1,650 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Qualcomm CAMSS ICP - HFI (Host Firmware Interface) queue handling
@@ -1268,6 +1268,17 @@ index 0000000..26efa78
 +
 +	/* Make the tables visible to the firmware before it is started */
 +	wmb();
++
++	/*
++	 * Image buffers (BPS input and output, CDM programs) go to the firmware
++	 * "io" region 1, 0x10c00000-0xe0000000. Under the 256 MiB mask kept
++	 * for the HFI memory, four 4096x3072 frames already exhaust the IOVA
++	 * space: libcamera's NV12 buffers then fail to map ("failed to map
++	 * dmabuf"). The IOVA allocator works top-down from the mask.
++	 */
++	ret = dma_set_mask_and_coherent(hfi->dev, 0xdfffffffULL);
++	if (ret)
++		dev_warn(hfi->dev, "image buffers stay under 256 MiB: %d\n", ret);
 +	return 0;
 +err:
 +	icp_hfi_deinit_queues(hfi);
