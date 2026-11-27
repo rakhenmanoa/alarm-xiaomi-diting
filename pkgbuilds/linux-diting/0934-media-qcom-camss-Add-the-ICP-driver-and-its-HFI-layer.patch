@@ -52,7 +52,7 @@ new file mode 100644
 index 0000000..b808815
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-bps.c
-@@ -0,0 +1,991 @@
+@@ -0,0 +1,1037 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * V4L2 memory to memory driver for the BPS (Bayer Processing Segment) of
@@ -616,8 +616,17 @@ index 0000000..b808815
 +	struct bps_ctx *ctx = vb2_get_drv_priv(vb->vb2_queue);
 +	struct v4l2_pix_format *pix = bps_pix(ctx, vb->vb2_queue->type);
 +
-+	if (vb2_plane_size(vb, 0) < pix->sizeimage)
++	/*
++	 * The input may come straight from the CSI receiver (libcamera imports
++	 * its buffers): require the image only, without the spare lines.
++	 */
++	if (vb2_plane_size(vb, 0) < (V4L2_TYPE_IS_OUTPUT(vb->vb2_queue->type) ?
++				     pix->bytesperline * pix->height : pix->sizeimage)) {
++		dev_dbg(ctx->bps->dev, "%s buffer too small: %lu\n",
++			V4L2_TYPE_IS_OUTPUT(vb->vb2_queue->type) ? "input" : "output",
++			vb2_plane_size(vb, 0));
 +		return -EINVAL;
++	}
 +	if (V4L2_TYPE_IS_CAPTURE(vb->vb2_queue->type))
 +		vb2_set_plane_payload(vb, 0, pix->sizeimage);
 +	return 0;
@@ -812,7 +821,41 @@ index 0000000..b808815
 +	ctx->out_fmt = bps_find_fmt(ctx->out.pixelformat);
 +	bps_set_sizes(&ctx->out, &ctx->cap);
 +	bps_params_load_default(ctx);
++	dev_info(ctx->bps->dev, "input %ux%u %.4s, %u bytes per line\n",
++		 ctx->out.width, ctx->out.height, (char *)&ctx->out.pixelformat,
++		 ctx->out.bytesperline);
 +	return 0;
++}
++
++/*
++ * No cropping or scaling: the selection is always the whole input image. It is
++ * still reported, as libcamera's converter asks for it.
++ */
++static int bps_g_selection(struct file *file, void *priv, struct v4l2_selection *s)
++{
++	struct bps_ctx *ctx = file_to_ctx(file);
++
++	if (s->type != V4L2_BUF_TYPE_VIDEO_OUTPUT)
++		return -EINVAL;
++
++	switch (s->target) {
++	case V4L2_SEL_TGT_CROP:
++	case V4L2_SEL_TGT_CROP_DEFAULT:
++	case V4L2_SEL_TGT_CROP_BOUNDS:
++		s->r.left = 0;
++		s->r.top = 0;
++		s->r.width = ctx->out.width;
++		s->r.height = ctx->out.height;
++		return 0;
++	}
++	return -EINVAL;
++}
++
++static int bps_s_selection(struct file *file, void *priv, struct v4l2_selection *s)
++{
++	if (s->target != V4L2_SEL_TGT_CROP)
++		return -EINVAL;
++	return bps_g_selection(file, priv, s);
 +}
 +
 +static int bps_s_fmt_cap(struct file *file, void *priv, struct v4l2_format *f)
@@ -834,6 +877,9 @@ index 0000000..b808815
 +	.vidioc_s_fmt_vid_cap = bps_s_fmt_cap,
 +
 +	.vidioc_enum_framesizes = bps_enum_framesizes,
++
++	.vidioc_g_selection = bps_g_selection,
++	.vidioc_s_selection = bps_s_selection,
 +
 +	.vidioc_reqbufs = v4l2_m2m_ioctl_reqbufs,
 +	.vidioc_querybuf = v4l2_m2m_ioctl_querybuf,
