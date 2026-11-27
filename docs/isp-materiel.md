@@ -370,3 +370,21 @@ et commandes d'essai : [isp-pilote.md](isp-pilote.md).
 Reste à faire : découpage en pleine taille (4096 × 3072), gestionnaire libcamera `diting` et
 son IPA (balance des blancs, exposition, choix de la matrice de couleurs, noir), module de
 soustraction du noir (BLS), puis l'IPE et le JPEG.
+
+## EEPROM de calibration du module HP1
+
+Puya P24C128F (16 Ko) à l'adresse 0x51 du bus CCI du HP1 (`i2c-3`), déjà déclarée dans le DTS
+et gérée par `at24` : `sudo cat /sys/bus/i2c/devices/3-0051/eeprom > ~/hp1-eeprom.bin`
+(le capteur doit être alimenté : `echo on > /sys/bus/i2c/devices/3-0010/power/control`).
+Décodage : `tools/camera/hp1-eeprom.py`. Le fichier brut reste hors du dépôt (numéro de série).
+
+- Blocs « 00 id 01 … somme », somme = octets depuis 01 jusqu'avant la somme, modulo 255.
+- Bloc 03 (0x60) : ombrage 17 × 13, R Gr Gb B en 16 bits gros-boutiste dès 0x67, centre
+  normalisé à 1023. Chute aux coins : gain de correction ≈ 5,5 à 6,5 (R chute le plus vite).
+- Bloc 04 (0x770) : balance des blancs, moyennes R Gr Gb B du module puis de la référence.
+  Avec le noir 64 : gains du module R 1,62, B 1,80 (le gain B de 1,80 réglé à la main était juste).
+- Bloc 07 (0xf30) : cartes de gain PDAF gauche et droite 17 × 13 (minimum décalé à droite
+  pour la gauche et inversement), précédées des dimensions.
+- Blocs 09 « PD01 » et 0b « PDXT » : données PDAF (défocalisation, diaphonie), à décoder.
+- Bloc 02 (0x45) : 0x02a0, 0x025e, 0x03ff, peut-être les codes de mise au point du VCM.
+- 0x59 répond aussi sur ce bus sans pilote : à identifier (OIS ?).
