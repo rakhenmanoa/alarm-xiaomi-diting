@@ -52,7 +52,7 @@ new file mode 100644
 index 0000000..b808815
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-bps.c
-@@ -0,0 +1,1212 @@
+@@ -0,0 +1,1223 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * V4L2 memory to memory driver for the BPS (Bayer Processing Segment) of
@@ -652,6 +652,8 @@ index 0000000..b808815
 +		bps_luts_walk(ctx->params + le32_to_cpu(h->luts.offset),
 +			      le32_to_cpu(h->luts.length), bps_luts_add, &f);
 +		bps_luts_flush(&f);
++		dev_dbg(ctx->bps->dev, "%u DMI tables, %u programs\n", f.ncmd,
++			*(u32 *)(prog + 4));
 +	}
 +
 +fill:
@@ -691,8 +693,14 @@ index 0000000..b808815
 +		goto done;
 +
 +	frame = icp_hfi_shmem(bps->hfi, BPS_SHM_FRAME, sizeof(*frame), &frame_iova);
-+	if (!frame || bps_fill_frame(ctx, frame))
++	if (!frame)
 +		goto done;
++	ret = bps_fill_frame(ctx, frame);
++	if (ret) {
++		dev_err(bps->dev, "frame %u: cannot fill the frame: %d\n",
++			ctx->cap_seq, ret);
++		goto done;
++	}
 +
 +	in = vb2_dma_contig_plane_dma_addr(&src->vb2_buf, 0);
 +	out = vb2_dma_contig_plane_dma_addr(&dst->vb2_buf, 0);
@@ -720,6 +728,9 @@ index 0000000..b808815
 +	dst->sequence = ctx->cap_seq++;
 +	vb2_set_plane_payload(&dst->vb2_buf, 0, ctx->cap.sizeimage);
 +	v4l2_m2m_buf_copy_metadata(src, dst);
++	if (state != VB2_BUF_STATE_DONE)
++		dev_warn_ratelimited(bps->dev, "frame %u returned with an error\n",
++				     dst->sequence);
 +	v4l2_m2m_buf_done(src, state);
 +	v4l2_m2m_buf_done(dst, state);
 +finish:
