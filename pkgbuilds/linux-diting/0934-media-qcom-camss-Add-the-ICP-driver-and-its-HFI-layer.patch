@@ -52,7 +52,7 @@ new file mode 100644
 index 0000000..b808815
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-bps.c
-@@ -0,0 +1,1047 @@
+@@ -0,0 +1,1063 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * V4L2 memory to memory driver for the BPS (Bayer Processing Segment) of
@@ -807,8 +807,24 @@ index 0000000..b808815
 +	return 0;
 +}
 +
-+/* The output has the size of the input: the CAPTURE format follows */
++/*
++ * The output has the size of the input. TRY answers for the size asked (an
++ * NV12 image of that size, as the input of the same size would give: libcamera
++ * takes the stride and the frame size from it before configuring); S_FMT keeps
++ * the size of the current input.
++ */
 +static int bps_try_fmt_cap(struct file *file, void *priv, struct v4l2_format *f)
++{
++	struct v4l2_pix_format out = {
++		.width = f->fmt.pix.width,
++		.height = f->fmt.pix.height,
++	};
++
++	bps_set_sizes(&out, &f->fmt.pix);
++	return 0;
++}
++
++static int bps_s_fmt_cap_get(struct file *file, void *priv, struct v4l2_format *f)
 +{
 +	struct bps_ctx *ctx = file_to_ctx(file);
 +
@@ -870,7 +886,7 @@ index 0000000..b808815
 +
 +static int bps_s_fmt_cap(struct file *file, void *priv, struct v4l2_format *f)
 +{
-+	return bps_try_fmt_cap(file, priv, f);
++	return bps_s_fmt_cap_get(file, priv, f);
 +}
 +
 +static const struct v4l2_ioctl_ops bps_ioctl_ops = {
