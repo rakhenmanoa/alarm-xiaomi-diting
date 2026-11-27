@@ -356,7 +356,9 @@ par les gains laissait un excès de rouge et de bleu. Les registres 3 à 8 de la
 (`0x3874`-`0x3888`, champ de 18 bits aux bits 14-31, même valeur partout dans CamX) sont un noir
 préservé : sortie = (entrée − noir) × gain + noir, échelle noir10 × 256 (`--wb-noir 54` dans
 `bps-params.py`). Avec lui, les gains se calculent sur l'image brute sans le noir (1,71 et 1,91
-pour la photo de test) et mur comme ombres sont neutres. Matrice selon l'éclairage :
+pour la photo de test) et mur comme ombres sont neutres. Le noir lui-même a été mesuré sur une
+image noire (objectif masqué) : **64** sur les quatre positions ; avec 54, les ombres gardaient un
+reste magenta. Valeurs retenues : `--wb 1,1.80,2.04 --wb-noir 64` et `bps-bls.py 64`. Matrice selon l'éclairage :
 `tools/camera/chromatix-cc13.py`.
 
 **23 nov. 2026 : pilote V4L2 du BPS.** Le BPS est un périphérique mémoire à mémoire

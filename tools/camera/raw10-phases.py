@@ -3,10 +3,11 @@
 (MIPI, 4 pixels sur 5 octets), dans des rectangles : sert à vérifier l'ordre Bayer et
 que les quatre positions portent bien des couleurs différentes.
 
-  raw10-phases.py IMAGE.bin LARGEUR HAUTEUR [x0,x1,y0,y1 ...] [--pas OCTETS] [--noir 54]
+  raw10-phases.py IMAGE.bin LARGEUR HAUTEUR [x0,x1,y0,y1 ...] [--pas OCTETS] [--noir 64]
 
 Sans rectangle : l'image entière. Affiche pour chaque rectangle les moyennes des
-positions (0,0) (0,1) (1,0) (1,1), noir retiré. Pour un capteur GBRG : G B / R G.
+positions (0,0) (0,1) (1,0) (1,1), noir retiré (64 : mesuré le 27 nov. 2026 sur une
+image noire du HP1, identique sur les quatre positions ; --noir 0 pour le lire). Pour un capteur GBRG : G B / R G.
 """
 import argparse
 
@@ -16,7 +17,7 @@ p.add_argument('largeur', type=int)
 p.add_argument('hauteur', type=int)
 p.add_argument('rect', nargs='*')
 p.add_argument('--pas', type=int, help='octets par ligne (défaut : largeur × 5/4)')
-p.add_argument('--noir', type=float, default=54)
+p.add_argument('--noir', type=float, default=64)
 a = p.parse_args()
 
 w, h = a.largeur, a.hauteur

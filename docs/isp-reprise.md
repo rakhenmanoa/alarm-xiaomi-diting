@@ -68,9 +68,9 @@ Conversion d'essai et visualisation :
 ```
 python3 ../../tools/camera/bps-params.py /tmp/bps-params.bin --taille 1920x1080 \
     --iq 492,1,652,1,660,1,664,1,780,255,788,255,988,1,992,3,1060,1 --cst \
-    --wb 1,1.71,1.91 --wb-noir 54 \
-    --regs $(python3 ../../tools/camera/bps-ccm.py $(python3 ../../tools/camera/chromatix-cc13.py TUNED.bin --lux 300 --cct 4000)) \
-    --regs $(python3 ../../tools/camera/bps-bls.py 54) \
+    --wb 1,1.80,2.04 --wb-noir 64 \
+    --regs $(python3 ../../tools/camera/bps-ccm.py $(python3 ../../tools/camera/chromatix-cc13.py TUNED.bin --lux 300 --gains 1,1.80,2.04)) \
+    --regs $(python3 ../../tools/camera/bps-bls.py 64) \
     --gamma /lib/firmware/glut-sans-noir.bin --sl /lib/firmware/sl-1920x1080-bls.bin
 sudo cp /tmp/bps-params.bin /lib/firmware/
 cat /lib/firmware/hp1p.bin <(head -c 38400 /dev/zero) > /tmp/hp1-pad.raw
@@ -80,6 +80,16 @@ v4l2-ctl -d /dev/video18 --set-fmt-video-out=width=1920,height=1080,pixelformat=
 ffmpeg -loglevel error -f rawvideo -pix_fmt nv12 -s 1920x1080 -i /tmp/sortie.nv12 \
     -frames:v 1 -y /tmp/sortie.png
 ```
+
+Noir du HP1 : **64** sur les quatre positions du motif, mesuré le 27 nov. 2026 sur une image
+noire (objectif masqué) avec `raw10-phases.py … --noir 0`. Le 54 retenu à l'œil le 25 nov.
+laissait les ombres magenta. Gains de la photo de test avec ce noir : `--wb 1,1.80,2.04`.
+
+**Piège :** toujours donner la taille du flux brut du HP1 (`role=raw,width=1920,height=1080`, le
+capteur passe alors en 4096 × 3072). Sans taille, le 27 nov. 2026, le bus I2C du capteur et du
+moteur de mise au point a décroché (« Connection timed out ») et le téléphone s'est figé.
+Le numéro de caméra du HP1 change d'un démarrage à l'autre : le trouver avec
+`cam -l | grep i2c-bus@1/camera@10`.
 
 Photo brute du capteur arrière (HP1) : `cam -c 1 -s role=viewfinder -s
 role=raw,width=1920,height=1080 --capture=30 --file=hp1-#.raw` (4096 × 3072 SGBRG10_CSI2P ;
