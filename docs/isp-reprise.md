@@ -143,8 +143,13 @@ role=viewfinder,pixelformat=NV12 --capture=3 --file=/tmp/bps-#.nv12` donne des i
 très sombres : sans ISP logiciel, pas d'exposition automatique ; réglages du BPS figés
 (`bps-params.bin` 1920 × 1080). Corrections qu'il a fallu : `queue_setup` doit donner pour
 l'entrée la taille exacte de l'image (vb2 s'en sert comme minimum des tampons importés), et le
-pilote répond aux requêtes de sélection (recadrage = image entière). Suite : exposition
-(contrôles du capteur, puis IPA), `bps-params-1920x1080.bin` avec un découpage refait avec
+pilote répond aux requêtes de sélection (recadrage = image entière). Exposition à la main : régler le capteur **avant** de lancer `cam`
+(`sd=$(media-ctl -d /dev/media0 -e "s5khp1 3-0010")`, puis `v4l2-ctl -d $sd --set-ctrl
+exposure=2584,analogue_gain=2048` : image lisible dans une pièce sombre). libcamera remet le
+blanking vertical au minimum à la configuration (exposition plafonnée à 2584 lignes en
+1920 × 1080), et les changements faits pendant le flux sont affichés par le capteur mais sans
+effet sur l'image : à vérifier dans le pilote s5khp1 (écriture des contrôles en cours de flux)
+avant l'IPA. Suite : exposition automatique (IPA + pilote du capteur), `bps-params-1920x1080.bin` avec un découpage refait avec
 `992,3`, essai dans plasma-camera.
 
 Fait sur la branche `isp-libcamera` : dans `camss-bps.c` (patch 0934), un périphérique média
