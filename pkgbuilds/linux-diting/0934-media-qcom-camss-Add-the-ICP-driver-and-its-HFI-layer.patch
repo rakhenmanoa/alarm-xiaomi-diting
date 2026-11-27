@@ -52,7 +52,7 @@ new file mode 100644
 index 0000000..b808815
 --- /dev/null
 +++ b/drivers/media/platform/qcom/camss/camss-bps.c
-@@ -0,0 +1,1037 @@
+@@ -0,0 +1,1047 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * V4L2 memory to memory driver for the BPS (Bayer Processing Segment) of
@@ -596,18 +596,34 @@ index 0000000..b808815
 +	return V4L2_TYPE_IS_OUTPUT(type) ? &ctx->out : &ctx->cap;
 +}
 +
++/*
++ * Smallest buffer accepted. The input may come straight from the CSI receiver
++ * (libcamera imports its buffers, vb2 checks their size against this): the
++ * image only, without the spare lines that sizeimage adds for our own buffers.
++ */
++static unsigned int bps_min_size(struct bps_ctx *ctx, enum v4l2_buf_type type)
++{
++	struct v4l2_pix_format *pix = bps_pix(ctx, type);
++
++	return V4L2_TYPE_IS_OUTPUT(type) ? pix->bytesperline * pix->height :
++					   pix->sizeimage;
++}
++
 +static int bps_queue_setup(struct vb2_queue *vq, unsigned int *nbuffers,
 +			   unsigned int *nplanes, unsigned int sizes[],
 +			   struct device *alloc_devs[])
 +{
 +	struct bps_ctx *ctx = vb2_get_drv_priv(vq);
-+	struct v4l2_pix_format *pix = bps_pix(ctx, vq->type);
 +
 +	if (*nplanes)
-+		return sizes[0] < pix->sizeimage ? -EINVAL : 0;
++		return sizes[0] < bps_min_size(ctx, vq->type) ? -EINVAL : 0;
 +
 +	*nplanes = 1;
-+	sizes[0] = pix->sizeimage;
++	/*
++	 * vb2 also takes this size as the minimum of imported buffers: the
++	 * input (OUTPUT queue) has no spare lines, the NV12 output keeps them.
++	 */
++	sizes[0] = bps_min_size(ctx, vq->type);
 +	return 0;
 +}
 +
@@ -616,14 +632,8 @@ index 0000000..b808815
 +	struct bps_ctx *ctx = vb2_get_drv_priv(vb->vb2_queue);
 +	struct v4l2_pix_format *pix = bps_pix(ctx, vb->vb2_queue->type);
 +
-+	/*
-+	 * The input may come straight from the CSI receiver (libcamera imports
-+	 * its buffers): require the image only, without the spare lines.
-+	 */
-+	if (vb2_plane_size(vb, 0) < (V4L2_TYPE_IS_OUTPUT(vb->vb2_queue->type) ?
-+				     pix->bytesperline * pix->height : pix->sizeimage)) {
-+		dev_dbg(ctx->bps->dev, "%s buffer too small: %lu\n",
-+			V4L2_TYPE_IS_OUTPUT(vb->vb2_queue->type) ? "input" : "output",
++	if (vb2_plane_size(vb, 0) < bps_min_size(ctx, vb->vb2_queue->type)) {
++		dev_dbg(ctx->bps->dev, "buffer too small: %lu\n",
 +			vb2_plane_size(vb, 0));
 +		return -EINVAL;
 +	}
