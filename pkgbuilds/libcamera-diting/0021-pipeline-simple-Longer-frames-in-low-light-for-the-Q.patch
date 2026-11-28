@@ -1,0 +1,108 @@
+From 9da7a7c5b7e535bc615a04d4f68424b14b1f3998 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 28 Nov 2026 07:04:21 +0300
+Subject: [PATCH] pipeline: simple: Longer frames in low light for the Qualcomm
+ BPS
+
+The BPS exposure loop was limited to the frame of the sensor mode: 8 ms
+in the 120 fps 1080p mode of the S5KHP1, far too short indoors. Lengthen
+the frame with VBLANK down to 30 fps when the exposure needs it, the
+exposure limit following VBLANK (height + VBLANK - margin), and go back
+to the mode's frame rate in brighter light.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/libcamera/pipeline/simple/simple.cpp | 49 +++++++++++++++++++++++-
+ 1 file changed, 48 insertions(+), 1 deletion(-)
+
+diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
+index 41cf943..a327642 100644
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -311,6 +311,10 @@ public:
+ 	int32_t bpsExposureMax_ = 1;
+ 	int32_t bpsGainMin_ = 1;
+ 	int32_t bpsGainMax_ = 1;
++	int32_t bpsVblank_ = -1;
++	Size bpsSensorSize_;
++	int32_t bpsVblankMin_ = 0;
++	int32_t bpsExposureMargin_ = 0;
+ 
+ 	/*
+ 	 * White balance for the BPS: the parameter block of the driver
+@@ -1099,6 +1103,38 @@ void SimpleCameraData::bpsAeStart()
+ 
+ 	const std::array<uint32_t, 2> ids = { V4L2_CID_EXPOSURE, V4L2_CID_ANALOGUE_GAIN };
+ 	ControlList cur = sensor_->getControls(ids);
++
++	/*
++	 * In low light, lengthen the frame down to 30 fps so that the exposure
++	 * can grow beyond the frame of a fast mode (8 ms at 120 fps for the
++	 * 1080p mode of the S5KHP1). The driver resets VBLANK to the mode
++	 * default on a mode change, and the exposure limit follows VBLANK:
++	 * exposure max = height + VBLANK - margin.
++	 */
++	bpsVblank_ = -1;
++	auto vb = infos.find(V4L2_CID_VBLANK);
++	auto hb = infos.find(V4L2_CID_HBLANK);
++	auto pr = infos.find(V4L2_CID_PIXEL_RATE);
++	if (vb != infos.end() && hb != infos.end() && pr != infos.end() && !bpsSensorSize_.isNull()) {
++		const std::array<uint32_t, 3> tids = { V4L2_CID_VBLANK, V4L2_CID_HBLANK,
++						       V4L2_CID_PIXEL_RATE };
++		ControlList t = sensor_->getControls(tids);
++		const int32_t height = bpsSensorSize_.height;
++		const int64_t line = bpsSensorSize_.width +
++				     t.get(V4L2_CID_HBLANK).get<int32_t>();
++		const int64_t rate = t.get(V4L2_CID_PIXEL_RATE).get<int64_t>();
++		const int32_t vblank = t.get(V4L2_CID_VBLANK).get<int32_t>();
++		const int64_t lines = line > 0 ? rate / (line * 30) : 0;
++		const int32_t vbMax = std::min<int64_t>(vb->second.max().get<int32_t>(),
++							lines - height);
++		bpsExposureMargin_ = height + vblank - bpsExposureMax_;
++		if (vbMax > vblank && bpsExposureMargin_ >= 0) {
++			bpsVblank_ = vblank;
++			bpsVblankMin_ = vblank;
++			bpsExposureMax_ = height + vbMax - bpsExposureMargin_;
++		}
++	}
++
+ 	bpsExposure_ = std::clamp(cur.get(V4L2_CID_EXPOSURE).get<int32_t>(),
+ 				  bpsExposureMin_, bpsExposureMax_);
+ 	bpsGain_ = std::clamp(cur.get(V4L2_CID_ANALOGUE_GAIN).get<int32_t>(),
+@@ -1108,7 +1144,8 @@ void SimpleCameraData::bpsAeStart()
+ 
+ 	LOG(SimplePipeline, Info)
+ 		<< "BPS exposure loop: exposure " << bpsExposureMin_ << "-"
+-		<< bpsExposureMax_ << ", gain " << bpsGainMin_ << "-" << bpsGainMax_;
++		<< bpsExposureMax_ << ", gain " << bpsGainMin_ << "-" << bpsGainMax_
++		<< (bpsVblank_ >= 0 ? ", longer frames down to 30 fps" : "");
+ }
+ 
+ void SimpleCameraData::bpsAwbLoad()
+@@ -1464,6 +1501,15 @@ void SimpleCameraData::bpsAeMeasure(const FrameBuffer *buffer)
+ 	bpsGain_ = gain;
+ 
+ 	ControlList ctrls(sensor_->controls());
++	if (bpsVblank_ >= 0) {
++		const int32_t vblank = std::max(bpsVblankMin_,
++						exposure + bpsExposureMargin_ -
++						static_cast<int32_t>(bpsSensorSize_.height));
++		if (vblank != bpsVblank_) {
++			ctrls.set(V4L2_CID_VBLANK, vblank);
++			bpsVblank_ = vblank;
++		}
++	}
+ 	ctrls.set(V4L2_CID_EXPOSURE, exposure);
+ 	ctrls.set(V4L2_CID_ANALOGUE_GAIN, gain);
+ 	setSensorControls(ctrls, ControlList());
+@@ -2024,6 +2070,7 @@ int SimplePipelineHandler::configure(Camera *camera, CameraConfiguration *c)
+ 
+ 	ret = data->setupFormats(&format, V4L2Subdevice::ActiveFormat,
+ 				 config->combinedTransform());
++	data->bpsSensorSize_ = format.size;
+ 	if (ret < 0)
+ 		return ret;
+ 
+-- 
+2.43.0
+
