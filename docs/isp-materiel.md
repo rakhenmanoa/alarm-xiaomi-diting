@@ -537,3 +537,15 @@ dedans. La balance des blancs de libcamera linéarisait la sortie avec la puissa
 à 48 : avec la nouvelle courbe, elle oscillait (couleurs qui clignotent) et se posait sur un voile
 jaune. Patch libcamera 0023 : elle inverse la table gamma du bloc, divise la chrominance par le
 gain de la CST et avance par pas amortis (exposant 0,35, ±10 %) ; gains stables à ±1 %.
+
+### Matrice de couleurs selon l'éclairage (28 nov. 2026)
+
+`tools/camera/bps-ccm-table.py TUNED.bin bps-ccm.bin` précalcule les matrices CC 1.3 du fichier
+de réglage (instance 929) sur une grille indice de luminosité (195 à 650 ; la région « plein
+soleil » 1-145, bien plus saturée, est écartée car la CST ajoute déjà 1,2 de saturation) ×
+température de couleur (2300 à 7500 K), avec le lieu des corps noirs (points de référence
+D75, D65, D50, A, Horizon). Patch libcamera 0025 : température estimée à partir des gains de
+balance des blancs (projection de log R/V, log B/V sur le lieu), indice de luminosité
+100 + 78 × log10(pose × gain / 0,6 ms), matrice interpolée (mired pour la température) écrite
+dans les registres 0x4b68-0x4b8c du bloc quand un coefficient change de plus de 0,02. Vérifié :
+4100 à 4400 K et indice 320-350 dans une pièce éclairée par la fenêtre.
