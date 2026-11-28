@@ -579,6 +579,11 @@ Recherche complète, sans rien trouver à piloter :
   avdd 2,9 V GPIO 70, avdd2 1,86 V GPIO 97), actionneur sans alimentation propre ;
 - bus I2C du HP1 : rien à l'adresse d'une puce OIS ; `0x59` renvoie `0xff` partout (sans doute
   la page d'identification de l'EEPROM P24C128F en `0x51`).
+Vérifié aussi sur le téléphone : la broche 97 (`camera_wide_avdd2_ldo`, 1,86 V, `cam_v_custom1`
+d'Android, jamais allumée sous Linux, le pilote s5khp1 prenant « vdda2 » sur le WL2866D) mise à 1
+à la main ne fait apparaître aucune puce ; balayage des quatre bus CCI : seulement les capteurs,
+l'autofocus 0x0c et l'EEPROM (0x59 n'apparaît que capteur alimenté : page d'identification de
+l'EEPROM).
 Le 12T Pro est pourtant annoncé avec OIS : stabilisation autonome dans le module (contrôleur et
 gyroscope intégrés), démarrée à la mise sous tension, sans commande du téléphone. Rien à faire
 sous Linux. Outil : `tools/dtbo-noeuds.py`.
