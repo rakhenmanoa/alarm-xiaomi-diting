@@ -549,3 +549,18 @@ balance des blancs (projection de log R/V, log B/V sur le lieu), indice de lumin
 100 + 78 × log10(pose × gain / 0,6 ms), matrice interpolée (mired pour la température) écrite
 dans les registres 0x4b68-0x4b8c du bloc quand un coefficient change de plus de 0,02. Vérifié :
 4100 à 4400 K et indice 320-350 dans une pièce éclairée par la fenêtre.
+
+### Démarrage automatique (28 nov. 2026)
+
+Plus de réveil ni de variable à la main :
+- libcamera (patch 0026, `libcamera-diting` pkgrel 30) utilise le BPS dès que le convertisseur
+  `qcom-camss-bps` est présent, et seulement pour les caméras qui ont un bloc
+  `/lib/firmware/bps-params-LxH.bin` pour une de leurs tailles (HP1) ; frontale et macro
+  gardent l'ISP logiciel (un seul flux par caméra tant que le BPS est chargé : pas de flux brut
+  en plus). `LIBCAMERA_QCOM_BPS=0` coupe le BPS.
+- `extra/camss-icp/camera-icp.service` : au démarrage, capture brute de 5 images du HP1 avec
+  `cam` (réveil du sous-système caméra), puis `modprobe qcom-camss-icp`. Installation :
+  `sudo install -Dm644 extra/camss-icp/qcom-camss-icp.ko /usr/lib/modules/$(uname -r)/extra/qcom-camss-icp.ko`,
+  `sudo depmod -a`, `sudo install -Dm644 extra/camss-icp/camera-icp.service /etc/systemd/system/camera-icp.service`,
+  `sudo systemctl enable camera-icp.service`. Le module est à recompiler et réinstaller après
+  chaque mise à jour du noyau (`make extraire && make` dans `extra/camss-icp`).

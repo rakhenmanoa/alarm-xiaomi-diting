@@ -1,0 +1,138 @@
+From f51e5f97df61a937f5634cfc48624b7e6ab3e159 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 28 Nov 2026 12:37:49 +0300
+Subject: [PATCH] pipeline: simple: Qualcomm BPS by default for cameras with a
+ parameter block
+
+The BPS replaced the software ISP for every camera of the CAMSS, and
+only with LIBCAMERA_QCOM_BPS set. Use it whenever the qcom-camss-bps
+converter is present (module qcom-camss-icp loaded), but only for the
+cameras that have a BPS parameter block for one of their sensor sizes
+(/lib/firmware/bps-params-<w>x<h>.bin); the others keep the software
+ISP. LIBCAMERA_QCOM_BPS=0 turns the BPS off.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/libcamera/pipeline/simple/simple.cpp | 49 ++++++++++++++++++++----
+ 1 file changed, 42 insertions(+), 7 deletions(-)
+
+diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
+index c7c56c3..58fd0a7 100644
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -314,6 +314,8 @@ public:
+ 	int32_t bpsGainMax_ = 1;
+ 	int32_t bpsVblank_ = -1;
+ 	Size bpsSensorSize_;
++	/* This camera goes through the Qualcomm BPS */
++	bool bps_ = false;
+ 
+ 	/*
+ 	 * Contrast autofocus for the BPS: focus measure on the processed NV12
+@@ -564,6 +566,7 @@ public:
+ 	V4L2Subdevice *subdev(const MediaEntity *entity);
+ 	std::shared_ptr<MediaDevice> converter() { return converter_; }
+ 	bool swIspEnabled() const { return swIspEnabled_; }
++	bool bpsConverter() const { return bpsConverter_; }
+ 
+ protected:
+ 	int queueRequestDevice(Camera *camera, Request *request) override;
+@@ -597,6 +600,7 @@ private:
+ 
+ 	std::shared_ptr<MediaDevice> converter_;
+ 	bool swIspEnabled_;
++	bool bpsConverter_ = false;
+ };
+ 
+ /* -----------------------------------------------------------------------------
+@@ -743,6 +747,32 @@ int SimpleCameraData::init()
+ 
+ 	/* Open the converter, if any. */
+ 	std::shared_ptr<MediaDevice> converter = pipe->converter();
++
++	/*
++	 * The Qualcomm BPS needs a parameter block for the sensor size
++	 * (/lib/firmware/bps-params-<w>x<h>.bin, tools/camera/bps-params.py):
++	 * cameras without one keep the software ISP.
++	 */
++	bool bpsBlock = false;
++	if (converter && pipe->bpsConverter()) {
++		for (unsigned int code : sensor_->mbusCodes()) {
++			for (const Size &size : sensor_->sizes(code)) {
++				const std::string name = "/lib/firmware/bps-params-" +
++							 std::to_string(size.width) + "x" +
++							 std::to_string(size.height) + ".bin";
++				if (std::ifstream(name).good())
++					bpsBlock = true;
++			}
++		}
++		if (!bpsBlock) {
++			LOG(SimplePipeline, Info)
++				<< "No BPS parameter block for " << sensor_->model()
++				<< ": software ISP";
++			converter.reset();
++		}
++	}
++	bps_ = bpsBlock;
++
+ 	if (converter) {
+ 		converter_ = ConverterFactoryBase::create(converter);
+ 		if (!converter_) {
+@@ -758,7 +788,7 @@ int SimpleCameraData::init()
+ 	/*
+ 	 * Instantiate Soft ISP if this is enabled for the given driver and no converter is used.
+ 	 */
+-	if (!converter_ && pipe->swIspEnabled()) {
++	if (!converter_ && (pipe->swIspEnabled() || (pipe->bpsConverter() && !bps_))) {
+ 		swIsp_ = std::make_unique<SoftwareIsp>(pipe, sensor_.get(), &controlInfo_);
+ 		if (!swIsp_->isValid()) {
+ 			LOG(SimplePipeline, Warning)
+@@ -2635,7 +2665,7 @@ SimplePipelineHandler::generateConfiguration(Camera *camera, Span<const StreamRo
+ 		 * within kStreamMaxArea: the BPS has parameter blocks and
+ 		 * striping up to 4096 x 3072, not for the 50 MP mode.
+ 		 */
+-		const bool bps = data->converter_ && utils::secure_getenv("LIBCAMERA_QCOM_BPS");
++		const bool bps = data->converter_ && data->bps_;
+ 		if (role != StreamRole::Raw && (role != StreamRole::StillCapture || bps) &&
+ 		    !streamSize.isNull() &&
+ 		    static_cast<uint64_t>(cfg.size.width) * cfg.size.height >
+@@ -2831,7 +2861,7 @@ int SimplePipelineHandler::start(Camera *camera, [[maybe_unused]] const ControlL
+ 	data->delayedCtrls_->reset();
+ 	data->bpsAe_ = false;
+ 	data->bpsAfState_ = SimpleCameraData::BpsAfState::Off;
+-	if (data->converter_ && utils::secure_getenv("LIBCAMERA_QCOM_BPS")) {
++	if (data->converter_ && data->bps_) {
+ 		data->bpsAeStart();
+ 		if (data->bpsAe_)
+ 			data->bpsAfStart();
+@@ -3061,11 +3091,15 @@ bool SimplePipelineHandler::matchDevice(std::shared_ptr<MediaDevice> media,
+ 	bool swIspEnabled = info.swIspEnabled;
+ 
+ 	/*
+-	 * Qualcomm CAMSS: the hardware BPS (qcom-camss-bps, memory-to-memory)
+-	 * replaces the software ISP when LIBCAMERA_QCOM_BPS is set. It has
+-	 * fixed settings (no 3A yet), so it stays opt-in.
++	 * Qualcomm CAMSS: the hardware BPS (qcom-camss-bps, memory-to-memory,
++	 * module qcom-camss-icp) replaces the software ISP when it is present,
++	 * for the cameras that have a BPS parameter block (see
++	 * SimpleCameraData::init()). LIBCAMERA_QCOM_BPS=0 keeps the software
++	 * ISP everywhere.
+ 	 */
+-	if (!strcmp(info.driver, "qcom-camss") && utils::secure_getenv("LIBCAMERA_QCOM_BPS"))
++	const char *bpsEnv = utils::secure_getenv("LIBCAMERA_QCOM_BPS");
++	const bool bps = !strcmp(info.driver, "qcom-camss") && !(bpsEnv && !strcmp(bpsEnv, "0"));
++	if (bps)
+ 		converters = { { "qcom-camss-bps", 1 } };
+ 
+ 	for (const auto &[name, streams] : converters) {
+@@ -3073,6 +3107,7 @@ bool SimplePipelineHandler::matchDevice(std::shared_ptr<MediaDevice> media,
+ 		converter_ = acquireMediaDevice(enumerator, converterMatch);
+ 		if (converter_) {
+ 			numStreams = streams;
++			bpsConverter_ = bps;
+ 			break;
+ 		}
+ 	}
+-- 
+2.43.0
+

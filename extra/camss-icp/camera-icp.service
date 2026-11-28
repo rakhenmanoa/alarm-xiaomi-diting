@@ -1,0 +1,30 @@
+# ISP matériel de la caméra principale (ICP, BPS) au démarrage.
+#
+# Le firmware de l'ICP ne répond à sa première commande (« create handle ») que si le
+# sous-système caméra a déjà été alimenté : une courte capture brute du HP1 avec cam
+# (chaîne logicielle, module pas encore chargé), puis le module, tout de suite après (le
+# réveil ne dure pas). Ensuite libcamera fait passer par le BPS les caméras qui ont un bloc
+# /lib/firmware/bps-params-LxH.bin (patch libcamera 0026), sans variable d'environnement.
+#
+# Installation : voir docs/isp-materiel.md, « Démarrage automatique ». Le module
+# qcom-camss-icp.ko doit être dans /usr/lib/modules/$(uname -r)/extra/ (à refaire après
+# chaque mise à jour du noyau).
+# Ne jamais décharger le module (rmmod) après une erreur « create handle: -110 » :
+# le téléphone se fige ; redémarrer.
+
+[Unit]
+Description=ISP matériel de la caméra (réveil du capteur puis module qcom-camss-icp)
+After=systemd-modules-load.service local-fs.target systemd-udev-settle.service
+ConditionPathExists=/usr/bin/cam
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=LIBCAMERA_QCOM_BPS=0
+ExecStartPre=/usr/bin/modprobe -a v4l2-mem2mem videobuf2-dma-contig
+ExecStart=/usr/bin/cam -c /base/soc@0/cci@ac15000/i2c-bus@1/camera@10 -s role=raw --capture=5
+ExecStart=/usr/bin/modprobe qcom-camss-icp
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target
