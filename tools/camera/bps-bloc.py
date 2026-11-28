@@ -3,7 +3,7 @@
 
   bps-bloc.py ENTREE.bin                          # décrit le bloc
   bps-bloc.py ENTREE.bin SORTIE.bin [--iq o,v,...] [--regs a,v,...] [--lut prog,dmi,FICHIER]...
-              [--sl FICHIER] [--sans-lut PROG] [--lsc FICHIER]
+              [--sl FICHIER] [--sans-lut PROG] [--lsc FICHIER] [--gamma FICHIER]
 
 --iq     octets (mots de 32 bits) de BpsIQSettings à écrire
 --regs   registres à ajouter ; un registre déjà présent est remplacé
@@ -12,6 +12,7 @@
          une table de même programme et même registre est remplacée
 --sans-lut PROG  retire les tables d'un programme
 --lsc    tables d'ombrage de bps-lsc.py --table (3 × 884 octets)
+--gamma  tables gamma de bps-gamma.py (3 × 1 Ko)
 --sl     découpage recalculé (obligatoire dès que des octets de BpsIQSettings changent la
          géométrie des modules : LSC, ABF…)
 
@@ -88,6 +89,7 @@ def main():
     ap.add_argument('--sans-lut', type=int, action='append', default=[])
     ap.add_argument('--sl')
     ap.add_argument('--lsc')
+    ap.add_argument('--gamma')
     a = ap.parse_args()
 
     version, w, h, parts = lire(a.entree)
@@ -125,6 +127,10 @@ def main():
         parts['lsc'] = open(a.lsc, 'rb').read()
         if len(parts['lsc']) != 3 * 17 * 13 * 4:
             sys.exit('--lsc : 2652 octets attendus')
+    if a.gamma:
+        parts['glut'] = open(a.gamma, 'rb').read()
+        if len(parts['glut']) != 3 * 1024:
+            sys.exit('--gamma : 3072 octets attendus')
     n = ecrire(a.sortie, w, h, parts)
     print(f'{a.sortie} : {n} octets')
     decrire(3, w, h, parts)
