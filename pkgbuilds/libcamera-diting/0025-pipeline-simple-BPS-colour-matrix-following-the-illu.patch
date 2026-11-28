@@ -1,0 +1,242 @@
+From 0b2a9c64e6f9f6818d6c512b11227df333cd0130 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 28 Nov 2026 12:26:07 +0300
+Subject: [PATCH] pipeline: simple: BPS colour matrix following the illuminant
+
+One fixed colour matrix (daylight) served every light. Load a table of
+the matrices of the tuning file on a brightness index x colour
+temperature grid (/lib/firmware/bps-ccm.bin), estimate the colour
+temperature from the white balance gains on the black body locus of the
+file and the brightness index from the exposure time and gain (about 78
+per decade, as CamX counts it), and write the interpolated matrix into
+the CC 1.3 registers of the parameter block when it changes visibly.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/libcamera/pipeline/simple/simple.cpp | 182 +++++++++++++++++++++++
+ 1 file changed, 182 insertions(+)
+
+diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
+index f00f7d8..c7c56c3 100644
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -398,6 +398,24 @@ public:
+ 	};
+ 	void bpsAbfLoad();
+ 	void bpsAbfUpdate();
++
++	/*
++	 * Colour matrix following the illuminant: matrices of the tuning file
++	 * on a brightness index x colour temperature grid (bps-ccm.bin,
++	 * tools/camera/bps-ccm-table.py); the colour temperature is estimated
++	 * from the white balance gains on the black body locus of the file,
++	 * the brightness index from the exposure, and the interpolated matrix
++	 * written into the CC 1.3 registers of the parameter block.
++	 */
++	void bpsCcmLoad();
++	void bpsCcmUpdate();
++	bool bpsCcm_ = false;
++	std::vector<float> bpsCcmLux_, bpsCcmMired_, bpsCcmTable_;
++	std::vector<std::array<float, 3>> bpsCcmLocus_;
++	std::array<size_t, 10> bpsCcmOffsets_ = {};
++	int bpsCcmQ_ = 2;
++	std::array<double, 9> bpsCcmCurrent_ = {};
++	double bpsCct_ = 0.0;
+ 	std::vector<BpsAbfEntry> bpsAbfEntries_;
+ 	std::array<size_t, 23> bpsAbfRegOffsets_ = {};
+ 	size_t bpsAbfLutOffset_ = 0;
+@@ -1456,6 +1474,167 @@ void SimpleCameraData::bpsAbfLoad()
+ 		<< bpsAbfEntries_.back().gain;
+ }
+ 
++void SimpleCameraData::bpsCcmLoad()
++{
++	bpsCcm_ = false;
++	if (bpsParams_.size() < 48)
++		return;
++
++	std::ifstream file("/lib/firmware/bps-ccm.bin", std::ios::binary);
++	if (!file)
++		return;
++	std::vector<uint8_t> d{ std::istreambuf_iterator<char>(file),
++				std::istreambuf_iterator<char>() };
++	auto u32 = [&d](size_t off) {
++		uint32_t v;
++		memcpy(&v, d.data() + off, sizeof(v));
++		return v;
++	};
++	auto f32 = [&d](size_t off) {
++		float v;
++		memcpy(&v, d.data() + off, sizeof(v));
++		return v;
++	};
++	if (d.size() < 20 || memcmp(d.data(), "CCMT", 4) || u32(4) != 1)
++		return;
++	const uint32_t nl = u32(8), nc = u32(12), np = u32(16);
++	if (!nl || nc < 2 || np < 2 || nl > 64 || nc > 64 || np > 16 ||
++	    d.size() < 20 + 4 * (nl + nc + 3 * np + 9 * nl * nc))
++		return;
++	size_t off = 20;
++	bpsCcmLux_.resize(nl);
++	for (auto &v : bpsCcmLux_) { v = f32(off); off += 4; }
++	bpsCcmMired_.resize(nc);
++	for (auto &v : bpsCcmMired_) { v = f32(off); off += 4; }
++	bpsCcmLocus_.resize(np);
++	for (auto &p : bpsCcmLocus_)
++		for (auto &v : p) { v = f32(off); off += 4; }
++	bpsCcmTable_.resize(9 * nl * nc);
++	for (auto &v : bpsCcmTable_) { v = f32(off); off += 4; }
++
++	/* CC 1.3.1 registers at 0x4b68-0x4b8c in the parameter block */
++	auto pu32 = [this](size_t o) {
++		uint32_t v;
++		memcpy(&v, bpsParams_.data() + o, sizeof(v));
++		return v;
++	};
++	const uint32_t regsOff = pu32(24), regsLen = pu32(28);
++	unsigned int found = 0;
++	for (size_t o = regsOff; o + 8 <= regsOff + regsLen && o + 8 <= bpsParams_.size(); o += 8) {
++		const uint32_t reg = pu32(o);
++		if (reg < 0x4b68 || reg > 0x4b8c || (reg - 0x4b68) % 4)
++			continue;
++		bpsCcmOffsets_[(reg - 0x4b68) / 4] = o + 4;
++		found |= 1 << ((reg - 0x4b68) / 4);
++	}
++	if (found != 0x3ff) {
++		LOG(SimplePipeline, Warning)
++			<< "BPS colour matrix: no CC 1.3 registers in the parameter block";
++		return;
++	}
++	bpsCcmQ_ = pu32(bpsCcmOffsets_[9]) & 3;
++	bpsCcmCurrent_ = {};
++	bpsCcm_ = true;
++
++	LOG(SimplePipeline, Info)
++		<< "BPS colour matrix: " << nl << " x " << nc << " matrices, brightness index "
++		<< bpsCcmLux_.front() << "-" << bpsCcmLux_.back();
++}
++
++void SimpleCameraData::bpsCcmUpdate()
++{
++	if (!bpsCcm_ || !bpsAwb_)
++		return;
++
++	/* Colour temperature: projection of log R/G, log B/G on the locus */
++	const double x = std::log(bpsWbGains_[0] / bpsWbGains_[2]);
++	const double y = std::log(bpsWbGains_[0] / bpsWbGains_[1]);
++	double best = -1.0, mired = bpsCcmLocus_[0][2];
++	for (size_t i = 0; i + 1 < bpsCcmLocus_.size(); i++) {
++		const auto &a = bpsCcmLocus_[i], &b = bpsCcmLocus_[i + 1];
++		const double dx = b[0] - a[0], dy = b[1] - a[1];
++		const double len = dx * dx + dy * dy;
++		if (len <= 0)
++			continue;
++		double u = ((x - a[0]) * dx + (y - a[1]) * dy) / len;
++		u = std::clamp(u, i == 0 ? -1.0 : 0.0, i + 2 == bpsCcmLocus_.size() ? 2.0 : 1.0);
++		const double d = std::hypot(x - a[0] - u * dx, y - a[1] - u * dy);
++		if (best < 0 || d < best) {
++			best = d;
++			mired = a[2] + u * (b[2] - a[2]);
++		}
++	}
++	mired = std::max(mired, 50.0);
++
++	/*
++	 * Brightness index as CamX counts it, about 78 per decade of exposure
++	 * time x gain (1.03 per step): 100 for 0.6 ms at the lowest gain (sun).
++	 */
++	const double eg = std::max(bpsLastExposureTime_, 1e-6) *
++			  std::max(1.0, static_cast<double>(bpsGain_) / bpsGainMin_);
++	const double lux = 100.0 + 78.0 * std::log10(eg / 0.0006);
++
++	auto locate = [](const std::vector<float> &v, double t, size_t *i, double *f) {
++		if (t <= v.front()) { *i = 0; *f = 0; return; }
++		if (t >= v.back()) { *i = v.size() - 2; *f = 1; return; }
++		size_t k = 0;
++		while (k + 2 < v.size() && v[k + 1] < t)
++			k++;
++		*i = k;
++		*f = (t - v[k]) / (v[k + 1] - v[k]);
++	};
++	size_t li, ci;
++	double lf, cf;
++	if (bpsCcmLux_.size() == 1) {
++		li = 0;
++		lf = 0;
++	} else {
++		locate(bpsCcmLux_, lux, &li, &lf);
++	}
++	locate(bpsCcmMired_, mired, &ci, &cf);
++
++	const size_t nc = bpsCcmMired_.size();
++	auto at = [&](size_t l, size_t c, int k) {
++		return bpsCcmTable_[9 * (l * nc + c) + k];
++	};
++	std::array<double, 9> m;
++	const size_t l1 = std::min(li + 1, bpsCcmLux_.size() - 1);
++	for (int k = 0; k < 9; k++) {
++		const double a = at(li, ci, k) * (1 - cf) + at(li, ci + 1, k) * cf;
++		const double b = at(l1, ci, k) * (1 - cf) + at(l1, ci + 1, k) * cf;
++		m[k] = a * (1 - lf) + b * lf;
++	}
++
++	/* Only rewrite on a visible change */
++	double diff = 0;
++	for (int k = 0; k < 9; k++)
++		diff = std::max(diff, std::abs(m[k] - bpsCcmCurrent_[k]));
++	if (diff < 0.02)
++		return;
++	bpsCcmCurrent_ = m;
++	bpsCct_ = 1e6 / mired;
++
++	/* bps-ccm.py: signed 12 bits, scale 2^(7+q), grouped by input G, B, R */
++	const double scale = 1 << (7 + bpsCcmQ_);
++	std::array<uint32_t, 9> f;
++	for (int k = 0; k < 9; k++)
++		f[k] = static_cast<uint32_t>(std::clamp<long>(std::lround(m[k] * scale), -2048, 2047)) & 0xfff;
++	const std::array<uint32_t, 10> regs = {
++		f[4] | f[7] << 16, f[1],
++		f[5] | f[8] << 16, f[2],
++		f[3] | f[6] << 16, f[0],
++		0, 0, 0, static_cast<uint32_t>(bpsCcmQ_),
++	};
++	for (int i = 0; i < 10; i++)
++		memcpy(bpsParams_.data() + bpsCcmOffsets_[i], &regs[i], sizeof(uint32_t));
++	bpsParamsDirty_ = true;
++
++	LOG(SimplePipeline, Debug)
++		<< "BPS colour matrix: " << std::lround(bpsCct_) << " K (locus distance "
++		<< best << "), brightness index " << std::lround(lux) << ", diagonal "
++		<< m[0] << " " << m[4] << " " << m[8];
++}
++
+ void SimpleCameraData::bpsAbfUpdate()
+ {
+ 	if (!bpsAbf_)
+@@ -1493,6 +1672,7 @@ void SimpleCameraData::bpsAeProcess(const FrameBuffer *buffer)
+ 		bpsAfProcess(buffer);
+ 	bpsAeMeasure(buffer);
+ 	bpsAbfUpdate();
++	bpsCcmUpdate();
+ 	if (bpsParamsDirty_)
+ 		bpsParamsSend();
+ }
+@@ -2657,6 +2837,7 @@ int SimplePipelineHandler::start(Camera *camera, [[maybe_unused]] const ControlL
+ 			data->bpsAfStart();
+ 		data->bpsAwbLoad();
+ 		data->bpsAbfLoad();
++		data->bpsCcmLoad();
+ 	}
+ 	if (frameStartEmitter) {
+ 		ret = frameStartEmitter->setFrameStartEnabled(true);
+@@ -2696,6 +2877,7 @@ int SimplePipelineHandler::start(Camera *camera, [[maybe_unused]] const ControlL
+ 		 */
+ 		if (data->converter_ && (data->bpsAwb_ || data->bpsAbf_)) {
+ 			data->bpsAbfUpdate();
++			data->bpsCcmUpdate();
+ 			data->bpsParamsSend();
+ 		}
+ 
+-- 
+2.43.0
+

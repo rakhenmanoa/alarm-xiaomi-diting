@@ -6,7 +6,7 @@ pkgname=libcamera-diting
 _tag=v0.7.0
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=0.7.0
-pkgrel=28
+pkgrel=29
 pkgdesc="libcamera avec la prise en charge des caméras du Xiaomi diting"
 arch=(aarch64)
 url="https://libcamera.org"
@@ -39,8 +39,9 @@ source=("libcamera::git+https://github.com/libcamera-org/libcamera.git#tag=${_ta
         0021-pipeline-simple-Longer-frames-in-low-light-for-the-Q.patch
         0022-pipeline-simple-Contrast-autofocus-for-the-Qualcomm-.patch
         0023-pipeline-simple-BPS-white-balance-on-the-tone-curve-.patch
-        0024-pipeline-simple-12-MP-still-captures-through-the-Qua.patch)
-sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+        0024-pipeline-simple-12-MP-still-captures-through-the-Qua.patch
+        0025-pipeline-simple-BPS-colour-matrix-following-the-illu.patch)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 prepare() {
   cd libcamera
@@ -87,6 +88,7 @@ prepare() {
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0022-pipeline-simple-Contrast-autofocus-for-the-Qualcomm-.patch"
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0023-pipeline-simple-BPS-white-balance-on-the-tone-curve-.patch"
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0024-pipeline-simple-12-MP-still-captures-through-the-Qua.patch"
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0025-pipeline-simple-BPS-colour-matrix-following-the-illu.patch"
 }
 build() {
   arch-meson libcamera build \
