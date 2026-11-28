@@ -1,4 +1,4 @@
-From 25fe4d1ead253b529e8588b2ecaaf2cc2c691b8e Mon Sep 17 00:00:00 2001
+From 15a02c31f34f636b235ab90feddf95e0f98422cf Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 28 Nov 2026 07:04:21 +0300
 Subject: [PATCH] pipeline: simple: Longer frames in low light for the Qualcomm
@@ -6,7 +6,7 @@ Subject: [PATCH] pipeline: simple: Longer frames in low light for the Qualcomm
 
 The BPS exposure loop was limited to the frame of the sensor mode: 8 ms
 in the 120 fps 1080p mode of the S5KHP1, far too short indoors. Lengthen
-the frame with VBLANK down to LIBCAMERA_QCOM_BPS_MIN_FPS (30 fps by
+the frame with VBLANK down to LIBCAMERA_QCOM_BPS_MIN_FPS (60 fps by
 default, 0 keeps the mode frame rate) when the exposure needs it, the
 exposure limit following VBLANK (height + VBLANK - margin), and go back
 to the mode's frame rate in brighter light.
@@ -17,7 +17,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  1 file changed, 52 insertions(+), 1 deletion(-)
 
 diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
-index 41cf943..92bebc4 100644
+index 41cf943..6eb4516 100644
 --- a/src/libcamera/pipeline/simple/simple.cpp
 +++ b/src/libcamera/pipeline/simple/simple.cpp
 @@ -7,6 +7,7 @@
@@ -46,7 +46,7 @@ index 41cf943..92bebc4 100644
 +
 +	/*
 +	 * In low light, lengthen the frame down to LIBCAMERA_QCOM_BPS_MIN_FPS
-+	 * (30 fps when unset, 0 keeps the mode frame rate) so that the exposure can grow
++	 * (60 fps when unset, 0 keeps the mode frame rate) so that the exposure can grow
 +	 * beyond the frame of a fast mode (8 ms at 120 fps for the 1080p mode
 +	 * of the S5KHP1). The driver resets VBLANK to the mode
 +	 * default on a mode change, and the exposure limit follows VBLANK:
@@ -66,7 +66,7 @@ index 41cf943..92bebc4 100644
 +		const int64_t rate = t.get(V4L2_CID_PIXEL_RATE).get<int64_t>();
 +		const int32_t vblank = t.get(V4L2_CID_VBLANK).get<int32_t>();
 +		const char *env = utils::secure_getenv("LIBCAMERA_QCOM_BPS_MIN_FPS");
-+		const int fps = env ? std::atoi(env) : 30;
++		const int fps = env ? std::atoi(env) : 60;
 +		const int64_t lines = line > 0 && fps > 0 ? rate / (line * fps) : 0;
 +		const int32_t vbMax = std::min<int64_t>(vb->second.max().get<int32_t>(),
 +							lines - height);

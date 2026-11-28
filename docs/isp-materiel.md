@@ -520,7 +520,7 @@ avec 8,3 ms et 64×, le brut 12 Mpx 138 avec 50 ms et 42× ; rapportée à la po
 la sensibilité est la même. La limite venait de la trame à 120 i/s (pose ≤ 8 ms), que la
 boucle d'exposition du BPS ne pouvait pas dépasser. Patch libcamera 0021 : avec
 `LIBCAMERA_QCOM_BPS_MIN_FPS=N`, la boucle allonge la trame (VBLANK) jusqu'à N i/s en basse
-lumière (30 i/s par défaut, 0 garde la cadence du mode ; à 120 i/s la pièce reste sombre même à
+lumière (60 i/s par défaut, meilleur compromis jugé à l'usage ; 0 garde la cadence du mode ; à 120 i/s la pièce reste sombre même à
 64×, le gain étant pourtant bien appliqué : 64× → 16× fait chuter la luminosité), la pose maximale suivant VBLANK
 (hauteur + VBLANK − marge). Vérifié : pose jusqu'à 10 402 lignes (33 ms), 30 i/s en
 intérieur, luminosité stable vers 90-100 avec un gain de 7 à 12×.
