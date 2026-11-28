@@ -564,3 +564,21 @@ Plus de réveil ni de variable à la main :
   `sudo depmod -a`, `sudo install -Dm644 extra/camss-icp/camera-icp.service /etc/systemd/system/camera-icp.service`,
   `sudo systemctl enable camera-icp.service`. Le module est à recompiler et réinstaller après
   chaque mise à jour du noyau (`make extraire && make` dans `extra/camss-icp`).
+
+### OIS de la caméra principale : autonome (28 nov. 2026)
+
+Recherche complète, sans rien trouver à piloter :
+- module CamX `diting_semco_s5khp1_wide` : section OIS (`diting_ois`) entièrement vide,
+  alimentation comprise ;
+- `camera.ko` d'Android (`vendor_dlkm`, ROM OS2.0.204.0) : pilote OIS générique de Qualcomm et
+  mise à jour de firmware pour deux puces, SEM1217S (registres 16 bits d'adresse : `0x0000`
+  commande, `0x0001` état, `0x0200`/`0x0201` autofocus, `0x1008` version sur 4 octets,
+  `0x1000`-`0x1100` mise à jour) et RUMBAS4H, utilisées par d'autres téléphones Xiaomi ;
+- `dtbo.img` (entrée 2, « Diting ») : aucun nœud OIS, contrairement à Mayfly, Unicorn, Thor,
+  Zizhan… ; caméra principale alimentée par trois régulateurs seulement (dvdd 1,1 V GPIO 2,
+  avdd 2,9 V GPIO 70, avdd2 1,86 V GPIO 97), actionneur sans alimentation propre ;
+- bus I2C du HP1 : rien à l'adresse d'une puce OIS ; `0x59` renvoie `0xff` partout (sans doute
+  la page d'identification de l'EEPROM P24C128F en `0x51`).
+Le 12T Pro est pourtant annoncé avec OIS : stabilisation autonome dans le module (contrôleur et
+gyroscope intégrés), démarrée à la mise sous tension, sans commande du téléphone. Rien à faire
+sous Linux. Outil : `tools/dtbo-noeuds.py`.

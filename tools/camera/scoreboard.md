@@ -13,6 +13,7 @@ reprise du travail : [isp-reprise.md](../../docs/isp-reprise.md).
 | Élément | État | Détails |
 |---|:---:|---|
 | Principale HP1 (S5KHP1, 200 Mpx) | ✅ | modes 1920 × 1080 (≈ 120 i/s), 4096 × 2304, 4096 × 3072 (30 i/s), 8192 × 6144 ; GBRG, noir à 64 (mesuré sur image noire) |
+| OIS | ➖ | autonome dans le module : aucun nœud OIS dans le dtbo du diting, section OIS vide dans CamX ; rien à piloter (docs/isp-materiel.md) |
 | Démarrage automatique du BPS | ✅ | module dans `/usr/lib/modules/…/extra`, service `camera-icp`, BPS par défaut pour les caméras qui ont un bloc (patch libcamera 0026) ; vérifié : plasma-camera depuis le menu, frontale sur l'ISP logiciel |
 | Matrice de couleurs selon l'éclairage | ✅ | table `bps-ccm.bin` (`bps-ccm-table.py`, matrices CC 1.3 du fichier de réglage, indice 195-650 × 2300-7500 K), température estimée sur le lieu des corps noirs (patch libcamera 0025) ; vérifié : 4100-4400 K en intérieur éclairé par la fenêtre |
 | Photo 12 Mpx (BPS) | ✅ | aperçu 1920 × 1080, photo 4096 × 3072 (StillCapture), pose et gain total conservés entre les modes (patch libcamera 0024) |
