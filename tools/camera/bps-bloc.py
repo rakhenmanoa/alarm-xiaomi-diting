@@ -4,6 +4,7 @@
   bps-bloc.py ENTREE.bin                          # décrit le bloc
   bps-bloc.py ENTREE.bin SORTIE.bin [--iq o,v,...] [--regs a,v,...] [--lut prog,dmi,FICHIER]...
               [--sl FICHIER] [--sans-lut PROG] [--lsc FICHIER] [--gamma FICHIER]
+              [--saturation S]
 
 --iq     octets (mots de 32 bits) de BpsIQSettings à écrire
 --regs   registres à ajouter ; un registre déjà présent est remplacé
@@ -13,6 +14,9 @@
 --sans-lut PROG  retire les tables d'un programme
 --lsc    tables d'ombrage de bps-lsc.py --table (3 × 884 octets)
 --gamma  tables gamma de bps-gamma.py (3 × 1 Ko)
+--saturation S  multiplie les coefficients de chrominance de la conversion YUV (CST,
+         registres 0x5480-0x5484 pour Cb et 0x5498-0x549c pour Cr, 13 bits signés) : 1,2 =
+         couleurs 20 % plus saturées ; s'applique aux valeurs du bloc
 --sl     découpage recalculé (obligatoire dès que des octets de BpsIQSettings changent la
          géométrie des modules : LSC, ABF…)
 
@@ -78,6 +82,30 @@ def decrire(version, w, h, parts):
         print(f'  table : programme {prog}, DMI {dmi:#010x}, {len(d)} octets')
 
 
+def saturer(regs, k):
+    """Coefficients Cb et Cr de la CST multipliés par k (deux par mot aux bits 0-12 et
+    16-28, le troisième au mot suivant, bits 0-12)."""
+    vals = [list(struct.unpack_from('<2I', regs, i)) for i in range(0, len(regs), 8)]
+    pos = {r[0]: i for i, r in enumerate(vals)}
+
+    def s13(v):
+        return v - 0x2000 if v & 0x1000 else v
+
+    def u13(v):
+        return max(-4096, min(4095, round(v))) & 0x1fff
+
+    for base in (0x5480, 0x5498):
+        if base not in pos or base + 4 not in pos:
+            sys.exit(f'--saturation : registres {base:#x} absents du bloc')
+        w0, w1 = vals[pos[base]][1], vals[pos[base + 4]][1]
+        c0, c1, c2 = s13(w0 & 0x1fff), s13((w0 >> 16) & 0x1fff), s13(w1 & 0x1fff)
+        vals[pos[base]][1] = (w0 & ~0x1fff1fff) | u13(c0 * k) | u13(c1 * k) << 16
+        vals[pos[base + 4]][1] = (w1 & ~0x1fff) | u13(c2 * k)
+        print(f'CST {base:#x} : {c0} {c1} {c2} -> {s13(u13(c0 * k))} {s13(u13(c1 * k))} '
+              f'{s13(u13(c2 * k))}')
+    return b''.join(struct.pack('<2I', *r) for r in vals)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -90,6 +118,7 @@ def main():
     ap.add_argument('--sl')
     ap.add_argument('--lsc')
     ap.add_argument('--gamma')
+    ap.add_argument('--saturation', type=float)
     a = ap.parse_args()
 
     version, w, h, parts = lire(a.entree)
@@ -127,6 +156,8 @@ def main():
         parts['lsc'] = open(a.lsc, 'rb').read()
         if len(parts['lsc']) != 3 * 17 * 13 * 4:
             sys.exit('--lsc : 2652 octets attendus')
+    if a.saturation:
+        parts['regs'] = saturer(parts['regs'], a.saturation)
     if a.gamma:
         parts['glut'] = open(a.gamma, 'rb').read()
         if len(parts['glut']) != 3 * 1024:
