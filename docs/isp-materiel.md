@@ -504,3 +504,21 @@ Vérifié le 27 nov. 2026 (HP1 12 Mpx, objectif couvert pendant la capture) : «
 15 × 12). Débruitage : `camx-abf.py --taille 1920x1080` (centre radial −960, −540). Découpage
 `sl-1920x1080-lsc-abf.bin` (5 bandes) avec les octets de référence, ceux du LSC et 384,1,392,1.
 Bloc : `bps-bloc.py --lsc` ajoute les tables d'ombrage à un bloc existant.
+
+### Aperçu 1080p sombre : la trame, pas le capteur
+
+Le mode 1080p du HP1 (`mode6` : 8 × 8 pixels regroupés, 120 i/s, classé « HFR » par CamX)
+semblait ignorer la pose et le gain. Le module CamX (`sensormodule-champs.py`) ne contient
+aucun réglage d'exposition propre à ce mode : mêmes registres, gain maximal 64×, effet après
+2 images. La comparaison des tables (`camregs-diff.py`, adresses sur 32 bits avec la page
+0xfcfc) montre que les modes 1080p à 120 et 240 i/s ne diffèrent que par la trame ; recopier
+dans le 1080p les réglages internes du 12 Mpx (`camregs-patch.py`) n'a rien apporté, et la
+copie complète des pages 0x2000-0x2002 empêche toute image.
+
+La mesure de l'image brute a tranché : face à une lampe, le brut 1080p donne 105 (noir 63)
+avec 8,3 ms et 64×, le brut 12 Mpx 138 avec 50 ms et 42× ; rapportée à la pose et au gain,
+la sensibilité est la même. La limite venait de la trame à 120 i/s (pose ≤ 8 ms), que la
+boucle d'exposition du BPS ne pouvait pas dépasser. Patch libcamera 0021 : la boucle allonge
+la trame (VBLANK) jusqu'à 30 i/s en basse lumière, la pose maximale suivant VBLANK
+(hauteur + VBLANK − marge). Vérifié : pose jusqu'à 10 402 lignes (33 ms), 30 i/s en
+intérieur, luminosité stable vers 90-100 avec un gain de 7 à 12×.
