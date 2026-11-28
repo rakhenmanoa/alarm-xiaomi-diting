@@ -1,0 +1,123 @@
+From 7878bff6ea3aa682a214d29b6a11eeee85c7636c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 28 Nov 2026 11:55:07 +0300
+Subject: [PATCH] pipeline: simple: 12 MP still captures through the Qualcomm
+ BPS
+
+With the BPS as converter, the StillCapture role got the largest output,
+the 50 MP mode, which the BPS cannot process yet (no parameter block nor
+striping): the configuration failed and applications fell back on a
+viewfinder image. Keep still captures within kStreamMaxArea (4096 x 3072)
+on that path.
+
+The sensor keeps its exposure in lines across configurations, but a line
+lasts 3.2 us in the 1080p mode of the S5KHP1 and 7 us in 4096 x 3072: the
+still was overexposed. Keep the exposure time and the total gain instead,
+written to the sensor before the stream starts.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/libcamera/pipeline/simple/simple.cpp | 52 +++++++++++++++++++++++-
+ 1 file changed, 51 insertions(+), 1 deletion(-)
+
+diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
+index cb5b84b..10b5663 100644
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -350,6 +350,14 @@ public:
+ 	bool bpsAfNeedRef_ = false;
+ 	int32_t bpsVblankMin_ = 0;
+ 	int32_t bpsExposureMargin_ = 0;
++	/*
++	 * Exposure time kept across configurations: the sensor keeps its
++	 * exposure in lines, whose duration differs between modes (3.2 us in
++	 * the 1080p mode of the S5KHP1, 7 us in 4096 x 3072).
++	 */
++	double bpsLineTime_ = 0.0;	/* seconds */
++	double bpsLastExposureTime_ = 0.0;
++	int32_t bpsLastGain_ = 0;
+ 
+ 	/*
+ 	 * White balance for the BPS: the parameter block of the driver
+@@ -1159,6 +1167,7 @@ void SimpleCameraData::bpsAeStart()
+ 	 * exposure max = height + VBLANK - margin.
+ 	 */
+ 	bpsVblank_ = -1;
++	bpsLineTime_ = 0.0;
+ 	auto vb = infos.find(V4L2_CID_VBLANK);
+ 	auto hb = infos.find(V4L2_CID_HBLANK);
+ 	auto pr = infos.find(V4L2_CID_PIXEL_RATE);
+@@ -1171,6 +1180,7 @@ void SimpleCameraData::bpsAeStart()
+ 				     t.get(V4L2_CID_HBLANK).get<int32_t>();
+ 		const int64_t rate = t.get(V4L2_CID_PIXEL_RATE).get<int64_t>();
+ 		const int32_t vblank = t.get(V4L2_CID_VBLANK).get<int32_t>();
++		bpsLineTime_ = rate > 0 ? static_cast<double>(line) / rate : 0.0;
+ 		const char *env = utils::secure_getenv("LIBCAMERA_QCOM_BPS_MIN_FPS");
+ 		const int fps = env ? std::atoi(env) : 60;
+ 		const int64_t lines = line > 0 && fps > 0 ? rate / (line * fps) : 0;
+@@ -1191,6 +1201,36 @@ void SimpleCameraData::bpsAeStart()
+ 	bpsAeFrame_ = 0;
+ 	bpsAe_ = true;
+ 
++	/* Same exposure time and total gain as the previous configuration */
++	if (bpsLineTime_ > 0 && bpsLastExposureTime_ > 0 && bpsLastGain_ > 0) {
++		const double total = bpsLastExposureTime_ / bpsLineTime_ * bpsLastGain_;
++		int32_t exposure = std::clamp<int32_t>(std::lround(bpsLastExposureTime_ / bpsLineTime_),
++						       bpsExposureMin_, bpsExposureMax_);
++		int32_t g = std::clamp<int32_t>(std::lround(total / exposure),
++						bpsGainMin_, bpsGainMax_);
++		ControlList ctrls(sensor_->controls());
++		if (bpsVblank_ >= 0) {
++			const int32_t vblank = std::max(bpsVblankMin_,
++							exposure + bpsExposureMargin_ -
++							static_cast<int32_t>(bpsSensorSize_.height));
++			ctrls.set(V4L2_CID_VBLANK, vblank);
++			bpsVblank_ = vblank;
++		}
++		ctrls.set(V4L2_CID_EXPOSURE, exposure);
++		ctrls.set(V4L2_CID_ANALOGUE_GAIN, g);
++		sensor_->setControls(&ctrls);
++		LOG(SimplePipeline, Debug)
++			<< "BPS exposure loop: " << bpsLastExposureTime_ * 1e3
++			<< " ms kept, exposure " << bpsExposure_ << " -> " << exposure
++			<< ", gain " << bpsGain_ << " -> " << g;
++		bpsExposure_ = exposure;
++		bpsGain_ = g;
++	}
++	if (bpsLineTime_ > 0) {
++		bpsLastExposureTime_ = bpsExposure_ * bpsLineTime_;
++		bpsLastGain_ = bpsGain_;
++	}
++
+ 	LOG(SimplePipeline, Info)
+ 		<< "BPS exposure loop: exposure " << bpsExposureMin_ << "-"
+ 		<< bpsExposureMax_ << ", gain " << bpsGainMin_ << "-" << bpsGainMax_
+@@ -1874,6 +1914,10 @@ void SimpleCameraData::bpsAeMeasure(const FrameBuffer *buffer)
+ 	ctrls.set(V4L2_CID_EXPOSURE, exposure);
+ 	ctrls.set(V4L2_CID_ANALOGUE_GAIN, gain);
+ 	setSensorControls(ctrls, ControlList());
++	if (bpsLineTime_ > 0) {
++		bpsLastExposureTime_ = exposure * bpsLineTime_;
++		bpsLastGain_ = gain;
++	}
+ }
+ 
+ void SimpleCameraData::conversionOutputDone(FrameBuffer *buffer)
+@@ -2396,7 +2440,13 @@ SimplePipelineHandler::generateConfiguration(Camera *camera, Span<const StreamRo
+ 		StreamConfiguration cfg{ StreamFormats{ formats } };
+ 		cfg.pixelFormat = formats.begin()->first;
+ 		cfg.size = formats.begin()->second[0].max;
+-		if (role != StreamRole::Raw && role != StreamRole::StillCapture &&
++		/*
++		 * With the Qualcomm BPS as converter, still captures too stay
++		 * within kStreamMaxArea: the BPS has parameter blocks and
++		 * striping up to 4096 x 3072, not for the 50 MP mode.
++		 */
++		const bool bps = data->converter_ && utils::secure_getenv("LIBCAMERA_QCOM_BPS");
++		if (role != StreamRole::Raw && (role != StreamRole::StillCapture || bps) &&
+ 		    !streamSize.isNull())
+ 			cfg.size = std::min(cfg.size, streamSize);
+ 
+-- 
+2.43.0
+
