@@ -1,0 +1,42 @@
+From a696df9ff22da75bb3c0b55d84802c5d4c9ecdd2 Mon Sep 17 00:00:00 2001
+From: alarm <alarm@localhost>
+Date: Sat, 28 Nov 2026 14:21:25 +0300
+Subject: [PATCH] media: qcom: camss: csid-680: Virtual channel n on RDI n
+
+The CSID 680 configured every RDI on virtual channel 0, so a second
+stream on another virtual channel, such as the phase detection data of
+the Samsung S5KHP1 on VC 1, could not be captured. Take virtual channel
+n on RDI n: RDI0 keeps the image on VC 0.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/media/platform/qcom/camss/camss-csid-680.c | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/camss/camss-csid-680.c b/drivers/media/platform/qcom/camss/camss-csid-680.c
+index 345a67c..a9b25c9 100644
+--- a/drivers/media/platform/qcom/camss/camss-csid-680.c
++++ b/drivers/media/platform/qcom/camss/camss-csid-680.c
+@@ -302,11 +302,16 @@ static void csid_configure_stream(struct csid_device *csid, u8 enable)
+ 
+ 	__csid_configure_top(csid);
+ 
+-	/* Loop through all enabled ports and configure a stream for each */
++	/*
++	 * Loop through all enabled ports and configure a stream for each.
++	 * RDI n takes virtual channel n: RDI0 the image (VC 0), RDI1 the
++	 * phase detection data some sensors send on VC 1 (S5KHP1 in its
++	 * 4096 x 3072 mode, 1360 x 1528 RAW10).
++	 */
+ 	for (i = 0; i < MSM_CSID_MAX_SRC_STREAMS; i++) {
+ 		if (csid->phy.en_vc & BIT(i)) {
+-			__csid_configure_rdi_stream(csid, enable, i, 0);
+-			__csid_configure_rx(csid, &csid->phy, 0);
++			__csid_configure_rdi_stream(csid, enable, i, i);
++			__csid_configure_rx(csid, &csid->phy, i);
+ 			__csid_ctrl_rdi(csid, enable, i);
+ 		}
+ 	}
+-- 
+2.43.0
+

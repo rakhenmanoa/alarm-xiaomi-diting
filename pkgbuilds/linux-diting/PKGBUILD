@@ -7,7 +7,7 @@ pkgname=linux-diting
 _kver=7.2.10
 _ditingcommit=c68ff47db94792fb5fd608e98d1ae489c2e592b1
 pkgver=${_kver}
-pkgrel=40
+pkgrel=41
 pkgdesc="Linux ${_kver} pour le Xiaomi 12T Pro / Redmi K50 Ultra (diting, SM8475)"
 arch=(aarch64)
 url="https://github.com/royka1/diting-ubuntu"
@@ -52,8 +52,10 @@ source=("https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${_kver}.tar.xz"
         0932-ACPI-platform_profile-Work-with-ACPI-disabled.patch
         0933-soc-qcom-Add-the-diting-platform-profile-driver.patch
         0934-media-qcom-camss-Add-the-ICP-driver-and-its-HFI-layer.patch
-        0935-arm64-dts-qcom-sm8475-Add-the-camera-ICP-node.patch)
+        0935-arm64-dts-qcom-sm8475-Add-the-camera-ICP-node.patch
+        0936-media-qcom-camss-csid-680-Virtual-channel-n-on-RDI-n.patch)
 sha256sums=('2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -175,6 +177,8 @@ prepare() {
   # pilote ICP de l'ISP matériel et son nœud device tree, désactivé (voir docs/isp-materiel.md)
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0934-media-qcom-camss-Add-the-ICP-driver-and-its-HFI-layer.patch"
   patch -Np1 --no-backup-if-mismatch < "$srcdir/0935-arm64-dts-qcom-sm8475-Add-the-camera-ICP-node.patch"
+  # canal virtuel n sur la sortie RDI n du CSID (données de phase du S5KHP1 sur VC 1)
+  patch -Np1 --no-backup-if-mismatch < "$srcdir/0936-media-qcom-camss-csid-680-Virtual-channel-n-on-RDI-n.patch"
 
   _make defconfig
   scripts/kconfig/merge_config.sh -m .config "$srcdir/diting-ubuntu/kernel/config/diting.config"
