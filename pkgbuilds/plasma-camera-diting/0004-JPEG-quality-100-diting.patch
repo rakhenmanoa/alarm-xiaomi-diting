@@ -1,0 +1,28 @@
+From 1668022dd7696b29e07eddc3e53292c837ef51e5 Mon Sep 17 00:00:00 2001
+From: alarm <alarm@localhost>
+Date: Sat, 28 Nov 2026 12:14:46 +0300
+Subject: [PATCH] JPEG quality 100 (diting)
+
+---
+ src/plasmacameramanager.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/plasmacameramanager.cpp b/src/plasmacameramanager.cpp
+index ceedb3a..3ae9705 100644
+--- a/src/plasmacameramanager.cpp
++++ b/src/plasmacameramanager.cpp
+@@ -557,9 +557,9 @@ void PlasmaCameraManager::processCaptureImage(const QQueue<QImage> &frames)
+     transform.rotate(outputOrientationDegrees());
+     image = image.transformed(transform);
+ 
+-    // TODO: set format and quality
++    // diting: full quality, the default of 50 smeared the details of 12 MP photos
+     qDebug() << "saving image to " << fileName;
+-    const bool res = image.save(&file, "JPEG", 50);
++    const bool res = image.save(&file, "JPEG", 100);
+     if (!res) {
+         setError(0, ResourceError, QStringLiteral("Could not save to file: %1").arg(fileName));
+     }
+-- 
+2.43.0
+
