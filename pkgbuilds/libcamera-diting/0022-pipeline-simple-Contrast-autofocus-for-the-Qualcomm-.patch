@@ -1,4 +1,4 @@
-From 193544b14b0b8ea4a82773c0ece2fc3f843dcdaf Mon Sep 17 00:00:00 2001
+From d10e5a1c221e463fdd343dca28ce7710fd6ee571 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 28 Nov 2026 08:03:38 +0300
 Subject: [PATCH] pipeline: simple: Contrast autofocus for the Qualcomm BPS
@@ -16,11 +16,11 @@ turns it off.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/libcamera/pipeline/simple/simple.cpp | 313 +++++++++++++++++++++++
- 1 file changed, 313 insertions(+)
+ src/libcamera/pipeline/simple/simple.cpp | 325 +++++++++++++++++++++++
+ 1 file changed, 325 insertions(+)
 
 diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
-index 6eb4516..04f40f9 100644
+index 6eb4516..d5b846d 100644
 --- a/src/libcamera/pipeline/simple/simple.cpp
 +++ b/src/libcamera/pipeline/simple/simple.cpp
 @@ -314,6 +314,40 @@ public:
@@ -386,6 +386,25 @@ index 6eb4516..04f40f9 100644
  		data->bpsAwbLoad();
  		data->bpsAbfLoad();
  	}
+@@ -2247,6 +2560,18 @@ int SimplePipelineHandler::start(Camera *camera, [[maybe_unused]] const ControlL
+ 			return ret;
+ 		}
+ 
++		/*
++		 * BPS: send the parameter block before the first image, with the
++		 * white balance kept from the previous run and the noise
++		 * reduction for the current gain. Otherwise the first images, the
++		 * one a still capture keeps among them, are processed with the
++		 * gains of the file.
++		 */
++		if (data->converter_ && (data->bpsAwb_ || data->bpsAbf_)) {
++			data->bpsAbfUpdate();
++			data->bpsParamsSend();
++		}
++
+ 		/* Queue all internal buffers for capture. */
+ 		if (!data->rawStream_)
+ 			for (std::unique_ptr<FrameBuffer> &buffer : data->conversionBuffers_)
 -- 
 2.43.0
 
