@@ -1,0 +1,332 @@
+From 8613366bebf29a6dfde8c9897d5d30843a16892c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 28 Nov 2026 08:03:38 +0300
+Subject: [PATCH] pipeline: simple: Contrast autofocus for the Qualcomm BPS
+
+The autofocus of the soft IPA does not run when the BPS replaces the
+software ISP: the lens stays at rest and every image is blurred. Add a
+contrast autofocus to the BPS loop: focus measure on the centre third of
+the processed NV12 image (absolute second difference of luma divided by
+the luma sum), a full scan of the lens from the near end that stops past
+the first clear peak, half steps on either side and the vertex of the
+parabola through the three measures. Once locked, the scene is watched
+every sixth frame and focused anew when it has changed and is steady
+again. Two images per position in low light. LIBCAMERA_QCOM_BPS_AF=0
+turns it off.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/libcamera/pipeline/simple/simple.cpp | 275 +++++++++++++++++++++++
+ 1 file changed, 275 insertions(+)
+
+diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
+index 6eb4516..1003d9e 100644
+--- a/src/libcamera/pipeline/simple/simple.cpp
++++ b/src/libcamera/pipeline/simple/simple.cpp
+@@ -314,6 +314,37 @@ public:
+ 	int32_t bpsGainMax_ = 1;
+ 	int32_t bpsVblank_ = -1;
+ 	Size bpsSensorSize_;
++
++	/*
++	 * Contrast autofocus for the BPS: focus measure on the processed NV12
++	 * image, full scan of the lens from the near end, parabola through the
++	 * best three, refocus when the scene has changed and is steady again.
++	 */
++	enum class BpsAfState { Off, Scan, Fine, Locked };
++	void bpsAfStart();
++	void bpsAfProcess(const FrameBuffer *buffer);
++	bool bpsAfMeasure(const FrameBuffer *buffer, double *focus, double *mean);
++	void bpsAfMove(int32_t position);
++	void bpsAfBeginScan();
++	BpsAfState bpsAfState_ = BpsAfState::Off;
++	int32_t bpsAfMin_ = 0;
++	int32_t bpsAfMax_ = 0;
++	int32_t bpsAfStep_ = 1;
++	int32_t bpsAfPos_ = 0;
++	unsigned int bpsAfWait_ = 0;
++	unsigned int bpsAfFrame_ = 0;
++	unsigned int bpsAfSamples_ = 0;
++	double bpsAfAcc_ = 0.0;
++	double bpsAfSceneMean_ = 0.0;
++	unsigned int bpsAfRestarts_ = 0;
++	std::vector<std::pair<int32_t, double>> bpsAfScan_;
++	std::array<std::pair<int32_t, double>, 3> bpsAfFine_ = {};
++	unsigned int bpsAfFineIndex_ = 0;
++	double bpsAfRefFocus_ = 0.0;
++	double bpsAfRefMean_ = 0.0;
++	unsigned int bpsAfChanged_ = 0;
++	unsigned int bpsAfSteady_ = 0;
++	double bpsAfLastFocus_ = 0.0;
+ 	int32_t bpsVblankMin_ = 0;
+ 	int32_t bpsExposureMargin_ = 0;
+ 
+@@ -1363,12 +1394,253 @@ void SimpleCameraData::bpsAbfUpdate()
+ 
+ void SimpleCameraData::bpsAeProcess(const FrameBuffer *buffer)
+ {
++	if (bpsAfState_ != BpsAfState::Off)
++		bpsAfProcess(buffer);
+ 	bpsAeMeasure(buffer);
+ 	bpsAbfUpdate();
+ 	if (bpsParamsDirty_)
+ 		bpsParamsSend();
+ }
+ 
++namespace {
++
++/* Frames between a lens move and the first image taken at the new position */
++constexpr unsigned int kBpsAfSettle = 5;
++/* Coarse scan steps over the lens range */
++constexpr int kBpsAfSteps = 20;
++
++} /* namespace */
++
++void SimpleCameraData::bpsAfStart()
++{
++	bpsAfState_ = BpsAfState::Off;
++
++	const char *env = utils::secure_getenv("LIBCAMERA_QCOM_BPS_AF");
++	if (env && !strcmp(env, "0"))
++		return;
++
++	CameraLens *lens = sensor_->focusLens();
++	if (!lens)
++		return;
++	const ControlInfoMap &infos = lens->controls();
++	auto it = infos.find(V4L2_CID_FOCUS_ABSOLUTE);
++	if (it == infos.end())
++		return;
++
++	bpsAfMin_ = it->second.min().get<int32_t>();
++	bpsAfMax_ = it->second.max().get<int32_t>();
++	if (bpsAfMax_ <= bpsAfMin_)
++		return;
++	bpsAfStep_ = std::max((bpsAfMax_ - bpsAfMin_) / kBpsAfSteps, 1);
++	bpsAfRestarts_ = 0;
++	bpsAfBeginScan();
++
++	LOG(SimplePipeline, Info)
++		<< "BPS autofocus: lens " << bpsAfMin_ << "-" << bpsAfMax_
++		<< ", step " << bpsAfStep_;
++}
++
++void SimpleCameraData::bpsAfMove(int32_t position)
++{
++	position = std::clamp(position, bpsAfMin_, bpsAfMax_);
++	CameraLens *lens = sensor_->focusLens();
++	if (lens && position != lastFocusPosition_) {
++		lens->setFocusPosition(position);
++		lastFocusPosition_ = position;
++	}
++	bpsAfPos_ = position;
++	bpsAfWait_ = kBpsAfSettle;
++	bpsAfSamples_ = 0;
++	bpsAfAcc_ = 0.0;
++}
++
++void SimpleCameraData::bpsAfBeginScan()
++{
++	/* From the near end (highest code): the first peak is the closest subject */
++	bpsAfScan_.clear();
++	bpsAfSceneMean_ = 0.0;
++	bpsAfState_ = BpsAfState::Scan;
++	bpsAfMove(bpsAfMax_);
++}
++
++/*
++ * Focus measure: absolute second difference of luma (2 pixel spacing) in
++ * the centre third of the image, divided by the luma sum so that exposure
++ * changes do not count as focus changes.
++ */
++bool SimpleCameraData::bpsAfMeasure(const FrameBuffer *buffer, double *focus, double *mean)
++{
++	const StreamConfiguration &cfg = streams_[0].configuration();
++	if (cfg.pixelFormat != formats::NV12)
++		return false;
++
++	MappedFrameBuffer map(buffer, MappedFrameBuffer::MapFlag::Read);
++	if (!map.isValid() || map.planes().empty())
++		return false;
++
++	const unsigned int width = cfg.size.width;
++	const unsigned int height = cfg.size.height;
++	const unsigned int stride = map.planes()[0].size() / height;
++	if (stride < width || width < 64 || height < 64)
++		return false;
++
++	const uint8_t *y = map.planes()[0].data();
++	const unsigned int x0 = width / 3, x1 = 2 * width / 3;
++	const unsigned int y0 = height / 3, y1 = 2 * height / 3;
++	const unsigned int stepY = std::max((y1 - y0) / 96, 1u);
++	uint64_t sum = 0, edge = 0;
++	unsigned int n = 0;
++	for (unsigned int j = y0; j < y1; j += stepY) {
++		const uint8_t *l = y + static_cast<size_t>(j) * stride;
++		for (unsigned int i = x0 + 2; i + 2 < x1; i += 2) {
++			edge += std::abs(l[i - 2] + l[i + 2] - 2 * l[i]);
++			sum += l[i];
++			n++;
++		}
++	}
++	if (!n || !sum)
++		return false;
++
++	*mean = static_cast<double>(sum) / n;
++	*focus = 1000.0 * edge / sum;
++	return true;
++}
++
++void SimpleCameraData::bpsAfProcess(const FrameBuffer *buffer)
++{
++	if (bpsAfWait_) {
++		bpsAfWait_--;
++		return;
++	}
++
++	/* Locked: watch the scene on every sixth frame only */
++	if (bpsAfState_ == BpsAfState::Locked && bpsAfFrame_++ % 6)
++		return;
++
++	double focus, mean;
++	if (!bpsAfMeasure(buffer, &focus, &mean))
++		return;
++
++	if (bpsAfState_ == BpsAfState::Locked) {
++		const bool changed = std::abs(mean - bpsAfRefMean_) > 0.2 * bpsAfRefMean_ ||
++				     focus < 0.6 * bpsAfRefFocus_ || focus > 1.6 * bpsAfRefFocus_;
++		const bool steady = std::abs(focus - bpsAfLastFocus_) < 0.1 * focus;
++		bpsAfLastFocus_ = focus;
++
++		bpsAfChanged_ = changed ? bpsAfChanged_ + 1 : 0;
++		bpsAfSteady_ = steady ? bpsAfSteady_ + 1 : 0;
++		/* The scene changed and stays still again: focus anew */
++		if (bpsAfChanged_ >= 4 && bpsAfSteady_ >= 3) {
++			LOG(SimplePipeline, Debug)
++				<< "BPS autofocus: scene changed (focus " << focus
++				<< " / " << bpsAfRefFocus_ << ", mean " << mean
++				<< " / " << bpsAfRefMean_ << ")";
++			bpsAfChanged_ = 0;
++			bpsAfRestarts_ = 0;
++			bpsAfBeginScan();
++		}
++		return;
++	}
++
++	/* In low light (high gain), average two images per position */
++	bpsAfAcc_ += focus;
++	bpsAfSamples_++;
++	const unsigned int needed = bpsGain_ > 16 * bpsGainMin_ ? 2 : 1;
++	if (bpsAfSamples_ < needed) {
++		return;
++	}
++	focus = bpsAfAcc_ / bpsAfSamples_;
++	bpsAfSamples_ = 0;
++	bpsAfAcc_ = 0.0;
++
++	if (bpsAfState_ == BpsAfState::Scan) {
++		/* A scene change during the scan mixes two scenes: start again */
++		if (bpsAfSceneMean_ == 0.0) {
++			bpsAfSceneMean_ = mean;
++		} else if (std::abs(mean - bpsAfSceneMean_) > 0.25 * bpsAfSceneMean_ &&
++			   bpsAfRestarts_ < 2) {
++			bpsAfRestarts_++;
++			LOG(SimplePipeline, Debug) << "BPS autofocus: scene moved, scan again";
++			bpsAfBeginScan();
++			return;
++		}
++
++		bpsAfScan_.emplace_back(bpsAfPos_, focus);
++		LOG(SimplePipeline, Debug)
++			<< "BPS autofocus: lens " << bpsAfPos_ << " focus " << focus;
++
++		auto best = std::max_element(bpsAfScan_.begin(), bpsAfScan_.end(),
++					     [](const auto &a, const auto &b) { return a.second < b.second; });
++		const double low = std::min_element(bpsAfScan_.begin(), bpsAfScan_.end(),
++						    [](const auto &a, const auto &b) { return a.second < b.second; })->second;
++		const size_t bi = best - bpsAfScan_.begin();
++		/* Past a clear peak: two lower measures after it */
++		const bool pastPeak = bi + 2 < bpsAfScan_.size() &&
++				      best->second > 1.15 * low &&
++				      bpsAfScan_[bi + 1].second < 0.8 * best->second &&
++				      bpsAfScan_[bi + 2].second < 0.8 * best->second;
++		const bool end = bpsAfPos_ <= bpsAfMin_;
++		if (!pastPeak && !end) {
++			bpsAfMove(bpsAfPos_ - bpsAfStep_);
++			return;
++		}
++
++		if (best->second < 1.1 * low) {
++			/* No texture or too dark: towards infinity, wait for a change */
++			LOG(SimplePipeline, Info) << "BPS autofocus: no peak found";
++			bpsAfMove(bpsAfMin_ + (bpsAfMax_ - bpsAfMin_) / 5);
++			bpsAfRefFocus_ = best->second;
++			bpsAfRefMean_ = mean;
++			bpsAfLastFocus_ = best->second;
++			bpsAfState_ = BpsAfState::Locked;
++			return;
++		}
++
++		/* Fine: half steps on either side of the best position */
++		const int32_t p = best->first;
++		const int32_t h = std::max(bpsAfStep_ / 2, 1);
++		bpsAfFine_ = { { { p - h, 0.0 }, { p, best->second }, { p + h, 0.0 } } };
++		bpsAfFineIndex_ = 0;
++		bpsAfState_ = BpsAfState::Fine;
++		bpsAfMove(p - h);
++		return;
++	}
++
++	/* Fine search */
++	bpsAfFine_[bpsAfFineIndex_].second = focus;
++	if (bpsAfFineIndex_ == 0) {
++		bpsAfFineIndex_ = 2;
++		bpsAfMove(bpsAfFine_[2].first);
++		return;
++	}
++
++	/* Vertex of the parabola through the three measures */
++	const double fa = bpsAfFine_[0].second, fb = bpsAfFine_[1].second,
++		     fc = bpsAfFine_[2].second;
++	const double h = bpsAfFine_[1].first - bpsAfFine_[0].first;
++	const double den = fa - 2 * fb + fc;
++	double target = bpsAfFine_[1].first;
++	if (den < 0)
++		target += std::clamp(0.5 * h * (fa - fc) / den, -h, h);
++	else
++		target = (fa > fc ? bpsAfFine_[0] : bpsAfFine_[2]).first;
++	if (fb >= std::max(fa, fc) && den >= 0)
++		target = bpsAfFine_[1].first;
++
++	const double peak = std::max({ fa, fb, fc });
++	bpsAfMove(static_cast<int32_t>(std::lround(target)));
++	bpsAfRefFocus_ = peak;
++	bpsAfRefMean_ = mean;
++	bpsAfLastFocus_ = peak;
++	bpsAfChanged_ = 0;
++	bpsAfSteady_ = 0;
++	bpsAfState_ = BpsAfState::Locked;
++
++	LOG(SimplePipeline, Info)
++		<< "BPS autofocus: lens at " << bpsAfPos_ << " (focus " << peak
++		<< ", " << bpsAfScan_.size() << " scan steps)";
++}
++
+ void SimpleCameraData::bpsAeMeasure(const FrameBuffer *buffer)
+ {
+ 	/* The sensor applies new values two frames later: measure every third one */
+@@ -2213,8 +2485,11 @@ int SimplePipelineHandler::start(Camera *camera, [[maybe_unused]] const ControlL
+ 
+ 	data->delayedCtrls_->reset();
+ 	data->bpsAe_ = false;
++	data->bpsAfState_ = SimpleCameraData::BpsAfState::Off;
+ 	if (data->converter_ && utils::secure_getenv("LIBCAMERA_QCOM_BPS")) {
+ 		data->bpsAeStart();
++		if (data->bpsAe_)
++			data->bpsAfStart();
+ 		data->bpsAwbLoad();
+ 		data->bpsAbfLoad();
+ 	}
+-- 
+2.43.0
+

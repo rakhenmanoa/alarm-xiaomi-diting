@@ -72,7 +72,7 @@ reprise du travail : [isp-reprise.md](../../docs/isp-reprise.md).
 | Balance des blancs automatique | 🟡 | patch 0019 : moyenne grise, gains réécrits dans le bloc et renvoyés au pilote ; converge en ~6 mesures |
 | Matrice selon la température de couleur | ⬜ | calcul prêt (`chromatix-cc13.py --gains`), à porter dans libcamera |
 | Autofocus | ❌ | pas sur ce chemin ; régler `focus_absolute` à la main avant |
-| plasma-camera | 🟡 | aperçu ✅ (1920 × 1080, 60 à 120 i/s selon la lumière) ; pas d'autofocus avec le BPS ; photo = image de l'aperçu (2 Mpx) |
+| plasma-camera | 🟡 | aperçu ✅ (1920 × 1080, 60 à 120 i/s selon la lumière) ; autofocus BPS par contraste (patch libcamera 0022, à vérifier) ; photo = image de l'aperçu (2 Mpx) |
 | Photo pleine résolution | ⬜ | 12 Mpx prêt côté BPS ; 50 Mpx demande découpage et bloc |
 
 ## Fonctions du matériel (fiche technique), à couvrir
