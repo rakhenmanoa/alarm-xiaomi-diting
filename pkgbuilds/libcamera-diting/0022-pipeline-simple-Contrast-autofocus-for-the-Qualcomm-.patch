@@ -1,4 +1,4 @@
-From 8613366bebf29a6dfde8c9897d5d30843a16892c Mon Sep 17 00:00:00 2001
+From 193544b14b0b8ea4a82773c0ece2fc3f843dcdaf Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 28 Nov 2026 08:03:38 +0300
 Subject: [PATCH] pipeline: simple: Contrast autofocus for the Qualcomm BPS
@@ -16,14 +16,14 @@ turns it off.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/libcamera/pipeline/simple/simple.cpp | 275 +++++++++++++++++++++++
- 1 file changed, 275 insertions(+)
+ src/libcamera/pipeline/simple/simple.cpp | 313 +++++++++++++++++++++++
+ 1 file changed, 313 insertions(+)
 
 diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
-index 6eb4516..1003d9e 100644
+index 6eb4516..04f40f9 100644
 --- a/src/libcamera/pipeline/simple/simple.cpp
 +++ b/src/libcamera/pipeline/simple/simple.cpp
-@@ -314,6 +314,37 @@ public:
+@@ -314,6 +314,40 @@ public:
  	int32_t bpsGainMax_ = 1;
  	int32_t bpsVblank_ = -1;
  	Size bpsSensorSize_;
@@ -58,10 +58,43 @@ index 6eb4516..1003d9e 100644
 +	unsigned int bpsAfChanged_ = 0;
 +	unsigned int bpsAfSteady_ = 0;
 +	double bpsAfLastFocus_ = 0.0;
++	/* Last focused position, kept across restarts (still captures) */
++	int32_t bpsAfLastGood_ = -1;
++	bool bpsAfNeedRef_ = false;
  	int32_t bpsVblankMin_ = 0;
  	int32_t bpsExposureMargin_ = 0;
  
-@@ -1363,12 +1394,253 @@ void SimpleCameraData::bpsAbfUpdate()
+@@ -331,6 +365,9 @@ public:
+ 	std::array<size_t, 3> bpsWbOffsets_ = {};	/* G, B, R values in bpsParams_ */
+ 	std::array<double, 3> bpsWbGains_ = { 1.0, 1.0, 1.0 };
+ 	bool bpsAwb_ = false;
++	/* Gains kept across restarts (a still capture restarts the camera) */
++	bool bpsWbKept_ = false;
++	std::array<double, 3> bpsWbLast_ = { 1.0, 1.0, 1.0 };
+ 
+ 	/*
+ 	 * Noise reduction (ABF) following the sensor gain: settings computed
+@@ -1206,6 +1243,10 @@ void SimpleCameraData::bpsAwbLoad()
+ 	}
+ 
+ 	bpsAwb_ = true;
++	if (bpsWbKept_) {
++		bpsWbGains_ = bpsWbLast_;
++		bpsAwbApply();
++	}
+ 	LOG(SimplePipeline, Info)
+ 		<< "BPS white balance: block of " << bpsParams_.size()
+ 		<< " bytes, gains G " << bpsWbGains_[0] << " B " << bpsWbGains_[1]
+@@ -1214,6 +1255,8 @@ void SimpleCameraData::bpsAwbLoad()
+ 
+ void SimpleCameraData::bpsAwbApply()
+ {
++	bpsWbLast_ = bpsWbGains_;
++	bpsWbKept_ = true;
+ 	for (unsigned int i = 0; i < 3; i++) {
+ 		uint32_t v = std::min(0x7fff, static_cast<int>(std::lround(bpsWbGains_[i] * 1024))) << 17;
+ 		memcpy(bpsParams_.data() + bpsWbOffsets_[i], &v, sizeof(v));
+@@ -1363,12 +1406,279 @@ void SimpleCameraData::bpsAbfUpdate()
  
  void SimpleCameraData::bpsAeProcess(const FrameBuffer *buffer)
  {
@@ -104,7 +137,22 @@ index 6eb4516..1003d9e 100644
 +		return;
 +	bpsAfStep_ = std::max((bpsAfMax_ - bpsAfMin_) / kBpsAfSteps, 1);
 +	bpsAfRestarts_ = 0;
-+	bpsAfBeginScan();
++	bpsAfChanged_ = 0;
++	bpsAfSteady_ = 0;
++	if (bpsAfLastGood_ >= bpsAfMin_ && bpsAfLastGood_ <= bpsAfMax_) {
++		/*
++		 * A restart (still capture, new configuration): stay where the
++		 * last search ended, take the reference measure there and watch
++		 * the scene as usual.
++		 */
++		/* The lens may have been powered down: write the position again */
++		lastFocusPosition_ = -1;
++		bpsAfMove(bpsAfLastGood_);
++		bpsAfNeedRef_ = true;
++		bpsAfState_ = BpsAfState::Locked;
++	} else {
++		bpsAfBeginScan();
++	}
 +
 +	LOG(SimplePipeline, Info)
 +		<< "BPS autofocus: lens " << bpsAfMin_ << "-" << bpsAfMax_
@@ -192,6 +240,14 @@ index 6eb4516..1003d9e 100644
 +	if (!bpsAfMeasure(buffer, &focus, &mean))
 +		return;
 +
++	if (bpsAfState_ == BpsAfState::Locked && bpsAfNeedRef_) {
++		bpsAfRefFocus_ = focus;
++		bpsAfRefMean_ = mean;
++		bpsAfLastFocus_ = focus;
++		bpsAfNeedRef_ = false;
++		return;
++	}
++
 +	if (bpsAfState_ == BpsAfState::Locked) {
 +		const bool changed = std::abs(mean - bpsAfRefMean_) > 0.2 * bpsAfRefMean_ ||
 +				     focus < 0.6 * bpsAfRefFocus_ || focus > 1.6 * bpsAfRefFocus_;
@@ -263,6 +319,7 @@ index 6eb4516..1003d9e 100644
 +			bpsAfRefFocus_ = best->second;
 +			bpsAfRefMean_ = mean;
 +			bpsAfLastFocus_ = best->second;
++			bpsAfNeedRef_ = false;
 +			bpsAfState_ = BpsAfState::Locked;
 +			return;
 +		}
@@ -306,6 +363,8 @@ index 6eb4516..1003d9e 100644
 +	bpsAfChanged_ = 0;
 +	bpsAfSteady_ = 0;
 +	bpsAfState_ = BpsAfState::Locked;
++	bpsAfNeedRef_ = false;
++	bpsAfLastGood_ = bpsAfPos_;
 +
 +	LOG(SimplePipeline, Info)
 +		<< "BPS autofocus: lens at " << bpsAfPos_ << " (focus " << peak
@@ -315,7 +374,7 @@ index 6eb4516..1003d9e 100644
  void SimpleCameraData::bpsAeMeasure(const FrameBuffer *buffer)
  {
  	/* The sensor applies new values two frames later: measure every third one */
-@@ -2213,8 +2485,11 @@ int SimplePipelineHandler::start(Camera *camera, [[maybe_unused]] const ControlL
+@@ -2213,8 +2523,11 @@ int SimplePipelineHandler::start(Camera *camera, [[maybe_unused]] const ControlL
  
  	data->delayedCtrls_->reset();
  	data->bpsAe_ = false;
