@@ -13,6 +13,7 @@ reprise du travail : [isp-reprise.md](../../docs/isp-reprise.md).
 | Élément | État | Détails |
 |---|:---:|---|
 | Principale HP1 (S5KHP1, 200 Mpx) | ✅ | modes 1920 × 1080 (≈ 120 i/s), 4096 × 2304, 4096 × 3072 (30 i/s), 8192 × 6144 ; GBRG, noir à 64 (mesuré sur image noire) |
+| Courbe de tons et saturation | ✅ | sRGB, noir écrasé 2,5, contraste 0,25, saturation 1,2 (`bps-gamma.py`, `bps-bloc.py --gamma --saturation`) ; balance des blancs sur la courbe du bloc (patch libcamera 0023) |
 | Exposition et gain en cours de flux | ✅ | appliqués dans tous les modes essayés ; en 1920 × 1080 (mode 120 i/s, pose limitée à 8 ms), la boucle du BPS peut allonger la trame jusqu'à 60 i/s par défaut (`LIBCAMERA_QCOM_BPS_MIN_FPS`, patch libcamera 0021) |
 | Autofocus à détection de phase (PDAF) | ⬜ | le HP1 a des pixels de phase ; sous Android, les données de phase du capteur et la calibration (mémoire OTP du module) vont à la bibliothèque PDAF propriétaire de Qualcomm. À explorer : flux des données de phase (canal virtuel CSI ?), calibration, puis algorithme libre |
 | Stabilisation optique (OIS) | ⬜ | contrôleur OIS séparé sur le bus du module (puce et firmware à identifier dans le device tree Android) ; aucun pilote sous Linux : objectif ni stabilisé ni piloté |

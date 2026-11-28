@@ -524,3 +524,16 @@ lumière (60 i/s par défaut, meilleur compromis jugé à l'usage ; 0 garde la c
 64×, le gain étant pourtant bien appliqué : 64× → 16× fait chuter la luminosité), la pose maximale suivant VBLANK
 (hauteur + VBLANK − marge). Vérifié : pose jusqu'à 10 402 lignes (33 ms), 30 i/s en
 intérieur, luminosité stable vers 90-100 avec un gain de 7 à 12×.
+
+### Courbe de tons, saturation et balance des blancs (28 nov. 2026)
+
+Image délavée : la table gamma des blocs était une puissance pure 1/2,2 (`bps-gamma.py 2.2`),
+dont la pente presque verticale au noir change le bruit des ombres (gain, ombrage dans les coins)
+en gris clair ; le noir lui-même était bien retiré (BLS 64, noir préservé de la balance des blancs
+64). Réglage retenu : `bps-gamma.py G --srgb --coupe 2.5 --contraste 0.25` (sRGB avec partie
+linéaire, 2,5/255 de noir écrasé, courbe en S à 25 %) et `bps-bloc.py … --gamma G --saturation 1.2`
+(coefficients de chrominance de la CST × 1,2). Couleurs jugées proches de la réalité dehors et
+dedans. La balance des blancs de libcamera linéarisait la sortie avec la puissance 2,2 et un noir
+à 48 : avec la nouvelle courbe, elle oscillait (couleurs qui clignotent) et se posait sur un voile
+jaune. Patch libcamera 0023 : elle inverse la table gamma du bloc, divise la chrominance par le
+gain de la CST et avance par pas amortis (exposant 0,35, ±10 %) ; gains stables à ±1 %.
