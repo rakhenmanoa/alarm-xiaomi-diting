@@ -13,7 +13,7 @@ reprise du travail : [isp-reprise.md](../../docs/isp-reprise.md).
 | Élément | État | Détails |
 |---|:---:|---|
 | Principale HP1 (S5KHP1, 200 Mpx) | ✅ | modes 1920 × 1080 (≈ 120 i/s), 4096 × 2304, 4096 × 3072 (30 i/s), 8192 × 6144 ; GBRG, noir à 64 (mesuré sur image noire) |
-| Exposition et gain en cours de flux | ✅ | appliqués dans tous les modes essayés ; en 1920 × 1080 (mode 120 i/s, pose limitée à 8 ms), la boucle du BPS peut allonger la trame (`LIBCAMERA_QCOM_BPS_MIN_FPS`, patch libcamera 0021 ; essayé à 30 i/s : bien exposé mais aperçu lent) |
+| Exposition et gain en cours de flux | ✅ | appliqués dans tous les modes essayés ; en 1920 × 1080 (mode 120 i/s, pose limitée à 8 ms), la boucle du BPS peut allonger la trame jusqu'à 30 i/s par défaut (`LIBCAMERA_QCOM_BPS_MIN_FPS`, patch libcamera 0021) |
 | Autofocus à détection de phase (PDAF) | ⬜ | le HP1 a des pixels de phase ; sous Android, les données de phase du capteur et la calibration (mémoire OTP du module) vont à la bibliothèque PDAF propriétaire de Qualcomm. À explorer : flux des données de phase (canal virtuel CSI ?), calibration, puis algorithme libre |
 | Stabilisation optique (OIS) | ⬜ | contrôleur OIS séparé sur le bus du module (puce et firmware à identifier dans le device tree Android) ; aucun pilote sous Linux : objectif ni stabilisé ni piloté |
 | Moteur de mise au point (AK7375) | ✅ | `focus_absolute` 0-1023, plus haut = plus proche ; ≈ 150 pour une pièce, plus bas pour le lointain |
@@ -72,7 +72,7 @@ reprise du travail : [isp-reprise.md](../../docs/isp-reprise.md).
 | Balance des blancs automatique | 🟡 | patch 0019 : moyenne grise, gains réécrits dans le bloc et renvoyés au pilote ; converge en ~6 mesures |
 | Matrice selon la température de couleur | ⬜ | calcul prêt (`chromatix-cc13.py --gains`), à porter dans libcamera |
 | Autofocus | ❌ | pas sur ce chemin ; régler `focus_absolute` à la main avant |
-| plasma-camera | 🟡 | aperçu ✅ (1920 × 1080, 120 i/s ; sombre en intérieur sauf `LIBCAMERA_QCOM_BPS_MIN_FPS`) ; photo = image de l'aperçu (2 Mpx) |
+| plasma-camera | 🟡 | aperçu ✅ (1920 × 1080, 30 à 120 i/s selon la lumière) ; pas d'autofocus avec le BPS ; photo = image de l'aperçu (2 Mpx) |
 | Photo pleine résolution | ⬜ | 12 Mpx prêt côté BPS ; 50 Mpx demande découpage et bloc |
 
 ## Fonctions du matériel (fiche technique), à couvrir
