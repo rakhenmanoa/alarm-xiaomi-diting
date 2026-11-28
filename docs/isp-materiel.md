@@ -518,7 +518,8 @@ copie complète des pages 0x2000-0x2002 empêche toute image.
 La mesure de l'image brute a tranché : face à une lampe, le brut 1080p donne 105 (noir 63)
 avec 8,3 ms et 64×, le brut 12 Mpx 138 avec 50 ms et 42× ; rapportée à la pose et au gain,
 la sensibilité est la même. La limite venait de la trame à 120 i/s (pose ≤ 8 ms), que la
-boucle d'exposition du BPS ne pouvait pas dépasser. Patch libcamera 0021 : la boucle allonge
-la trame (VBLANK) jusqu'à 30 i/s en basse lumière, la pose maximale suivant VBLANK
+boucle d'exposition du BPS ne pouvait pas dépasser. Patch libcamera 0021 : avec
+`LIBCAMERA_QCOM_BPS_MIN_FPS=N`, la boucle allonge la trame (VBLANK) jusqu'à N i/s en basse
+lumière (sans la variable, la cadence du mode est gardée : aperçu à 30 i/s jugé trop lent), la pose maximale suivant VBLANK
 (hauteur + VBLANK − marge). Vérifié : pose jusqu'à 10 402 lignes (33 ms), 30 i/s en
 intérieur, luminosité stable vers 90-100 avec un gain de 7 à 12×.
