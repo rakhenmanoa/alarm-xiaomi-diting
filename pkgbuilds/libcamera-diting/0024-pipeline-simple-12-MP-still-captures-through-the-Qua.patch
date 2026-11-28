@@ -1,4 +1,4 @@
-From 7878bff6ea3aa682a214d29b6a11eeee85c7636c Mon Sep 17 00:00:00 2001
+From b1dafb4cc9f52f24f6d138cef5e01130ae56083b Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 28 Nov 2026 11:55:07 +0300
 Subject: [PATCH] pipeline: simple: 12 MP still captures through the Qualcomm
@@ -17,11 +17,11 @@ written to the sensor before the stream starts.
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
- src/libcamera/pipeline/simple/simple.cpp | 52 +++++++++++++++++++++++-
- 1 file changed, 51 insertions(+), 1 deletion(-)
+ src/libcamera/pipeline/simple/simple.cpp | 86 +++++++++++++++++++++++-
+ 1 file changed, 83 insertions(+), 3 deletions(-)
 
 diff --git a/src/libcamera/pipeline/simple/simple.cpp b/src/libcamera/pipeline/simple/simple.cpp
-index cb5b84b..10b5663 100644
+index cb5b84b..f00f7d8 100644
 --- a/src/libcamera/pipeline/simple/simple.cpp
 +++ b/src/libcamera/pipeline/simple/simple.cpp
 @@ -350,6 +350,14 @@ public:
@@ -103,11 +103,23 @@ index cb5b84b..10b5663 100644
  }
  
  void SimpleCameraData::conversionOutputDone(FrameBuffer *buffer)
-@@ -2396,7 +2440,13 @@ SimplePipelineHandler::generateConfiguration(Camera *camera, Span<const StreamRo
+@@ -2396,9 +2440,45 @@ SimplePipelineHandler::generateConfiguration(Camera *camera, Span<const StreamRo
  		StreamConfiguration cfg{ StreamFormats{ formats } };
  		cfg.pixelFormat = formats.begin()->first;
  		cfg.size = formats.begin()->second[0].max;
 -		if (role != StreamRole::Raw && role != StreamRole::StillCapture &&
+-		    !streamSize.isNull())
+-			cfg.size = std::min(cfg.size, streamSize);
++		/*
++		 * A converter whose output is the input size (the Qualcomm BPS)
++		 * gives one range per sensor mode, which do not merge: take
++		 * the largest of all, not that of the first range.
++		 */
++		for (const SizeRange &range : formats.begin()->second) {
++			if (static_cast<uint64_t>(range.max.width) * range.max.height >
++			    static_cast<uint64_t>(cfg.size.width) * cfg.size.height)
++				cfg.size = range.max;
++		}
 +		/*
 +		 * With the Qualcomm BPS as converter, still captures too stay
 +		 * within kStreamMaxArea: the BPS has parameter blocks and
@@ -115,9 +127,31 @@ index cb5b84b..10b5663 100644
 +		 */
 +		const bool bps = data->converter_ && utils::secure_getenv("LIBCAMERA_QCOM_BPS");
 +		if (role != StreamRole::Raw && (role != StreamRole::StillCapture || bps) &&
- 		    !streamSize.isNull())
- 			cfg.size = std::min(cfg.size, streamSize);
++		    !streamSize.isNull() &&
++		    static_cast<uint64_t>(cfg.size.width) * cfg.size.height >
++		    static_cast<uint64_t>(streamSize.width) * streamSize.height)
++			cfg.size = streamSize;
++		/*
++		 * BPS streaming roles: a full size mode (4096 x 3072 at 30 fps)
++		 * would slow the viewfinder down; keep the largest mode at most
++		 * 2048 pixels wide (1920 x 1080 for the S5KHP1, up to 120 fps).
++		 */
++		if (bps && role != StreamRole::Raw && role != StreamRole::StillCapture) {
++			Size small;
++			for (const SizeRange &range : formats.begin()->second) {
++				if (range.max.width <= 2048 &&
++				    static_cast<uint64_t>(range.max.width) * range.max.height >
++				    static_cast<uint64_t>(small.width) * small.height)
++					small = range.max;
++			}
++			if (!small.isNull())
++				cfg.size = small;
++		}
++		LOG(SimplePipeline, Debug)
++			<< "Default size for role " << role << ": " << cfg.size;
  
+ 		config->addConfiguration(cfg);
+ 	}
 -- 
 2.43.0
 
